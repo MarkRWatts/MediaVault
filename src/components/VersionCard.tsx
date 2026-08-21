@@ -1,4 +1,5 @@
 import FormatBadge from "@/components/FormatBadge";
+import ResolutionBadge from "@/components/ResolutionBadge";
 import type { VersionView } from "@/lib/queries";
 
 export default function VersionCard({ version }: { version: VersionView }) {
@@ -14,6 +15,7 @@ export default function VersionCard({ version }: { version: VersionView }) {
     <div className="rounded-lg border border-border bg-bg-elevated p-4">
       <div className="flex flex-wrap items-center gap-2.5">
         <FormatBadge kind={version.format} className="px-2 py-1 text-[11px]" />
+        <ResolutionBadge tier={version.tier} className="px-2 py-1 text-[11px]" />
         {version.edition && (
           <span className="text-sm italic text-text-muted">{version.edition}</span>
         )}

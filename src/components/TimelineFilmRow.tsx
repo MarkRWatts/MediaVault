@@ -1,6 +1,7 @@
 import Link from "next/link";
 import PosterImage from "@/components/PosterImage";
 import FormatBadge from "@/components/FormatBadge";
+import ResolutionBadge from "@/components/ResolutionBadge";
 import type { TimelineFilm } from "@/lib/queries";
 
 export default function TimelineFilmRow({ film }: { film: TimelineFilm }) {
@@ -30,7 +31,12 @@ export default function TimelineFilmRow({ film }: { film: TimelineFilm }) {
         <div className="flex flex-wrap items-center gap-1.5">
           {film.owned ? (
             film.formats.length > 0 ? (
-              film.formats.map((f) => <FormatBadge key={f} kind={f} />)
+              <>
+                {film.formats.map((f) => (
+                  <FormatBadge key={f} kind={f} />
+                ))}
+                <ResolutionBadge tier={film.bestTier} />
+              </>
             ) : (
               <span className="text-xs text-text-faint">No files</span>
             )

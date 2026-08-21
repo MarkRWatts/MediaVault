@@ -1,6 +1,7 @@
 import Link from "next/link";
 import PosterImage from "@/components/PosterImage";
 import FormatBadge from "@/components/FormatBadge";
+import ResolutionBadge from "@/components/ResolutionBadge";
 import type { CollectionMemberView } from "@/lib/queries";
 
 export default function CollectionStrip({
@@ -48,7 +49,11 @@ export default function CollectionStrip({
               <span className="line-clamp-2 text-xs leading-snug text-text">{m.title}</span>
               <div className="flex items-center justify-between">
                 <span className="font-mono text-[10px] text-text-faint">{m.year ?? "—"}</span>
-                {!m.owned && <FormatBadge kind="MISSING" />}
+                {m.owned ? (
+                  m.bestTier.rank !== 9 && <ResolutionBadge tier={m.bestTier} />
+                ) : (
+                  <FormatBadge kind="MISSING" />
+                )}
               </div>
             </div>
           );

@@ -27,6 +27,7 @@ export default async function ReportPage() {
   const tiles: { label: string; value: number; tone?: "accent" | "missing" }[] = [
     { label: "Films owned", value: totals.filmsOwned },
     { label: "Discs", value: totals.discs },
+    { label: "4K", value: totals.uhdFilmCount },
     { label: "Blu-ray", value: totals.blurayCount },
     { label: "DVD", value: totals.dvdCount },
     { label: "Collections complete", value: totals.collectionsComplete },
@@ -137,7 +138,11 @@ export default async function ReportPage() {
                 />
                 <div className="flex min-w-0 flex-col gap-1">
                   <span className="truncate text-xs text-text">{f.title}</span>
-                  <FormatBadge kind="DVD" />
+                  <div className="flex flex-wrap gap-1">
+                    {f.formats.map((fmt) => (
+                      <FormatBadge key={fmt} kind={fmt} />
+                    ))}
+                  </div>
                 </div>
               </Link>
             ))}

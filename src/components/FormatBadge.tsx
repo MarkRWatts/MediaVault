@@ -3,6 +3,7 @@ import { formatLabel, type Format } from "@/lib/constants";
 export type BadgeKind = Format | "MISSING";
 
 const STYLES: Record<BadgeKind, string> = {
+  UHD: "text-accent-bright bg-accent-dim border-accent-border",
   BLURAY: "text-blu bg-blu-bg border-blu-border",
   DVD: "text-dvd bg-dvd-bg border-dvd-border",
   HD: "text-blu bg-blu-bg border-blu-border",

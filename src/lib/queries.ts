@@ -4,7 +4,7 @@
 // here, Dates are ISO strings, so nothing needs re-shaping downstream.
 
 import { prisma } from "@/lib/db";
-import type { Format } from "@/lib/constants";
+import { resolutionTier, type Format, type ResolutionTier } from "@/lib/constants";
 
 // ---------------------------------------------------------------------------
 // Formatting helpers
@@ -37,6 +37,21 @@ export function resolutionLabel(width: number | null, height: number | null): st
   return `${width}×${height}`;
 }
 
+// Best (lowest-rank) resolution tier across a film's versions — used for the
+// single "best you own it in" ResolutionBadge on cards/rows where showing
+// every version's tier would be clutter.
+function bestResolutionTier(
+  versions: { width: number | null; height: number | null }[],
+): ResolutionTier {
+  return versions.reduce<ResolutionTier>(
+    (best, v) => {
+      const t = resolutionTier(v.width, v.height);
+      return t.rank < best.rank ? t : best;
+    },
+    { label: "?", rank: 9 },
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Library ("/")
 // ---------------------------------------------------------------------------
@@ -51,6 +66,7 @@ export interface LibraryFilm {
   createdAt: string;
   formats: Format[];
   discCount: number;
+  bestTier: ResolutionTier;
 }
 
 export interface LibraryData {
@@ -71,7 +87,7 @@ export async function getLibraryFilms(): Promise<LibraryData> {
       posterPath: true,
       collectionId: true,
       createdAt: true,
-      versions: { select: { format: true } },
+      versions: { select: { format: true, width: true, height: true } },
     },
   });
 
@@ -85,6 +101,7 @@ export async function getLibraryFilms(): Promise<LibraryData> {
     createdAt: f.createdAt.toISOString(),
     formats: Array.from(new Set(f.versions.map((v) => v.format as Format))),
     discCount: f.versions.length,
+    bestTier: bestResolutionTier(f.versions),
   }));
 
   return {
@@ -114,6 +131,7 @@ export interface VersionView {
   width: number | null;
   height: number | null;
   resolution: string;
+  tier: ResolutionTier;
   videoCodec: string | null;
   container: string | null;
   sizeLabel: string;
@@ -128,6 +146,7 @@ export interface CollectionMemberView {
   posterPath: string | null;
   owned: boolean;
   releaseDate: string | null;
+  bestTier: ResolutionTier;
 }
 
 export interface FilmDetail {
@@ -152,7 +171,12 @@ export async function getFilmDetail(id: number): Promise<FilmDetail | null> {
     include: {
       versions: { include: { audioTracks: true } },
       collection: {
-        include: { films: { orderBy: { releaseDate: "asc" } } },
+        include: {
+          films: {
+            orderBy: { releaseDate: "asc" },
+            include: { versions: { select: { width: true, height: true } } },
+          },
+        },
       },
     },
   });
@@ -165,6 +189,7 @@ export async function getFilmDetail(id: number): Promise<FilmDetail | null> {
     width: v.width,
     height: v.height,
     resolution: resolutionLabel(v.width, v.height),
+    tier: resolutionTier(v.width, v.height),
     videoCodec: v.videoCodec,
     container: v.container,
     sizeLabel: formatBytes(v.sizeBytes === null ? null : Number(v.sizeBytes)),
@@ -203,6 +228,7 @@ export async function getFilmDetail(id: number): Promise<FilmDetail | null> {
             posterPath: m.posterPath,
             owned: m.owned,
             releaseDate: m.releaseDate ? m.releaseDate.toISOString() : null,
+            bestTier: bestResolutionTier(m.versions),
           })),
         }
       : null,
@@ -253,6 +279,7 @@ export interface TimelineFilm {
   owned: boolean;
   releaseDate: string | null;
   formats: Format[];
+  bestTier: ResolutionTier;
 }
 
 export interface CollectionDetail {
@@ -271,7 +298,7 @@ export async function getCollectionDetail(id: number): Promise<CollectionDetail 
     include: {
       films: {
         orderBy: { releaseDate: "asc" },
-        include: { versions: { select: { format: true } } },
+        include: { versions: { select: { format: true, width: true, height: true } } },
       },
     },
   });
@@ -285,6 +312,7 @@ export async function getCollectionDetail(id: number): Promise<CollectionDetail 
     owned: f.owned,
     releaseDate: f.releaseDate ? f.releaseDate.toISOString() : null,
     formats: Array.from(new Set(f.versions.map((v) => v.format as Format))),
+    bestTier: bestResolutionTier(f.versions),
   }));
 
   return {
@@ -321,6 +349,7 @@ export interface UpgradeCandidate {
   year: number | null;
   posterPath: string | null;
   discCount: number;
+  formats: Format[];
 }
 
 export interface IssueFilm {
@@ -336,6 +365,7 @@ export interface ReportData {
   totals: {
     filmsOwned: number;
     discs: number;
+    uhdFilmCount: number;
     blurayCount: number;
     dvdCount: number;
     collectionsComplete: number;
@@ -365,6 +395,9 @@ export async function getReportData(): Promise<ReportData> {
   const discs = ownedFilms.flatMap((f) => f.versions);
   const blurayCount = discs.filter((v) => v.format === "BLURAY").length;
   const dvdCount = discs.filter((v) => v.format === "DVD").length;
+  const uhdFilmCount = ownedFilms.filter((f) =>
+    f.versions.some((v) => v.format === "UHD"),
+  ).length;
 
   const collectionsComplete = collections.filter(
     (c) => c.films.length > 0 && c.films.every((f) => f.owned),
@@ -392,13 +425,18 @@ export async function getReportData(): Promise<ReportData> {
   }
 
   const upgradeCandidates: UpgradeCandidate[] = ownedFilms
-    .filter((f) => f.versions.length > 0 && f.versions.every((v) => v.format === "DVD"))
+    .filter(
+      (f) =>
+        f.versions.length > 0 &&
+        f.versions.every((v) => v.format === "DVD" || v.format === "SD"),
+    )
     .map((f) => ({
       id: f.id,
       title: f.title,
       year: f.year,
       posterPath: f.posterPath,
       discCount: f.versions.length,
+      formats: Array.from(new Set(f.versions.map((v) => v.format as Format))),
     }));
 
   const issues: IssueFilm[] = ownedFilms
@@ -422,6 +460,7 @@ export async function getReportData(): Promise<ReportData> {
     totals: {
       filmsOwned: ownedFilms.length,
       discs: discs.length,
+      uhdFilmCount,
       blurayCount,
       dvdCount,
       collectionsComplete,

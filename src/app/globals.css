@@ -38,6 +38,17 @@
   --good: #7fbf8f;
   --good-bg: rgba(127, 191, 143, 0.12);
   --good-border: rgba(127, 191, 143, 0.35);
+
+  /* Resolution-tier badge colors (ResolutionBadge) — deliberately distinct
+     hues from the disc-format badges above so the two chip families never
+     get mistaken for each other at a glance. */
+  --res-hd: #9db2c9;
+  --res-hd-bg: rgba(157, 178, 201, 0.12);
+  --res-hd-border: rgba(157, 178, 201, 0.35);
+
+  --res-hd-quiet: #7c8ca0;
+  --res-hd-quiet-bg: rgba(124, 140, 160, 0.08);
+  --res-hd-quiet-border: rgba(124, 140, 160, 0.24);
 }
 
 @theme inline {
@@ -66,6 +77,12 @@
   --color-good: var(--good);
   --color-good-bg: var(--good-bg);
   --color-good-border: var(--good-border);
+  --color-res-hd: var(--res-hd);
+  --color-res-hd-bg: var(--res-hd-bg);
+  --color-res-hd-border: var(--res-hd-border);
+  --color-res-hd-quiet: var(--res-hd-quiet);
+  --color-res-hd-quiet-bg: var(--res-hd-quiet-bg);
+  --color-res-hd-quiet-border: var(--res-hd-quiet-border);
 
   --font-display: var(--font-bebas), "Arial Narrow", sans-serif;
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;

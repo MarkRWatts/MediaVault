@@ -4,11 +4,12 @@ import { useMemo, useState } from "react";
 import FilmCard from "@/components/FilmCard";
 import type { LibraryFilm } from "@/lib/queries";
 
-type FilterKey = "all" | "bluray" | "dvd" | "collection" | "noposter";
+type FilterKey = "all" | "4k" | "bluray" | "dvd" | "collection" | "noposter";
 type SortKey = "title" | "year" | "added";
 
 const FILTERS: { key: FilterKey; label: string }[] = [
   { key: "all", label: "All" },
+  { key: "4k", label: "4K" },
   { key: "bluray", label: "Blu-ray" },
   { key: "dvd", label: "DVD" },
   { key: "collection", label: "In a collection" },
@@ -23,7 +24,9 @@ export default function LibraryBrowser({ films }: { films: LibraryFilm[] }) {
   const filtered = useMemo(() => {
     let list = films;
 
-    if (filter === "bluray") list = list.filter((f) => f.formats.includes("BLURAY"));
+    if (filter === "4k")
+      list = list.filter((f) => f.formats.includes("UHD") || f.bestTier.rank === 0);
+    else if (filter === "bluray") list = list.filter((f) => f.formats.includes("BLURAY"));
     else if (filter === "dvd") list = list.filter((f) => f.formats.includes("DVD"));
     else if (filter === "collection") list = list.filter((f) => f.collectionId !== null);
     else if (filter === "noposter") list = list.filter((f) => !f.posterPath);

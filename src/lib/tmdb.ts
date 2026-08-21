@@ -193,6 +193,10 @@ async function enrichOneFilm(film: Film, log: string[], collectionCache: Map<num
     matchConfidence: confidence,
   };
 
+  // Filename-derived year wins when present; backfill from TMDB otherwise
+  // (files named without a year would stay year-less forever).
+  if (!film.year && details.release_date) updateData.year = Number(details.release_date.slice(0, 4));
+
   if (!film.imdbId && details.imdb_id) updateData.imdbId = details.imdb_id;
 
   // Another row may already hold this tmdbId: either a missing-film
