@@ -1,0 +1,108 @@
+// filmDB data model — see ../PLAN.md for background.
+//
+// SQLite (no native enums), so category fields are strings constrained by the
+// constants in src/lib/constants.ts:
+//   Version.format:        BLURAY | DVD | HD | SD | UNKNOWN
+//   Film.matchConfidence:  EXACT | SEARCH | LOW | UNMATCHED
+//   ScanRun.kind:          SCAN | ENRICH   ScanRun.status: RUNNING | DONE | FAILED
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// A TMDB collection (James Bond, Alien, …). Films order by releaseDate for the
+// timeline view; owned=false member Films are the "missing" entries.
+model Collection {
+  id           Int     @id // TMDB collection id
+  name         String
+  overview     String?
+  posterPath   String?
+  backdropPath String?
+  films        Film[]
+}
+
+// One movie identity. Rows also exist for films we DON'T own (owned=false),
+// created from TMDB collection membership — that's what the missing-films
+// report is built from.
+model Film {
+  id              Int         @id @default(autoincrement())
+  title           String
+  sortTitle       String // normalised for sorting/grouping ("Matrix, The" style not needed — just lowercased, articles stripped)
+  year            Int?
+  imdbId          String?     @unique
+  tmdbId          Int?        @unique
+  overview        String?
+  posterPath      String? // TMDB path; cached locally under /api/poster
+  backdropPath    String?
+  releaseDate     DateTime?
+  runtimeMins     Int?
+  rating          Float? // TMDB vote_average
+  genres          String? // comma-separated
+  owned           Boolean     @default(true)
+  matchConfidence String      @default("UNMATCHED")
+  collectionId    Int?
+  collection      Collection? @relation(fields: [collectionId], references: [id])
+  versions        Version[]
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([collectionId])
+  @@index([sortTitle])
+}
+
+// One file on disk. A film with a DVD rip and a BluRay rip (or theatrical +
+// director's cut) has multiple Versions.
+model Version {
+  id           Int          @id @default(autoincrement())
+  filmId       Int
+  film         Film         @relation(fields: [filmId], references: [id], onDelete: Cascade)
+  filePath     String       @unique // relative to MOVIES_PATH
+  fileName     String
+  edition      String? // "Theatrical Release", "2003 Directors Cut", "Extended Edition"…
+  format       String       @default("UNKNOWN")
+  width        Int?
+  height       Int?
+  videoCodec   String?
+  container    String? // mkv, mp4…
+  sizeBytes    BigInt?
+  durationSecs Float?
+  mtimeMs      Float? // probe cache key: re-probe only if mtime or size changed
+  probedAt     DateTime?
+  audioTracks  AudioTrack[]
+
+  @@index([filmId])
+}
+
+model AudioTrack {
+  id        Int     @id @default(autoincrement())
+  versionId Int
+  version   Version @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  streamIdx Int
+  codec     String?
+  language  String?
+  channels  Int?
+  layout    String? // "5.1", "stereo"…
+  title     String? // "Surround 5.1", "Director's Commentary"…
+
+  @@index([versionId])
+}
+
+// Bookkeeping for scans and enrichment runs; log holds a JSON array of
+// human-readable notes (unparsed files, low-confidence matches, errors).
+model ScanRun {
+  id         Int       @id @default(autoincrement())
+  kind       String // SCAN | ENRICH
+  status     String    @default("RUNNING")
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+  filesSeen  Int       @default(0)
+  progress   Int       @default(0)
+  total      Int       @default(0)
+  message    String?
+  log        String? // JSON array of strings
+}
