@@ -96,6 +96,90 @@ model AudioTrack {
   @@index([versionId])
 }
 
+// --- TV ---
+// Same philosophy as movies: rows exist for content we DON'T own
+// (Episode.owned=false, created from TMDB season manifests) so the report
+// can show missing seasons/episodes per show.
+
+model Show {
+  id              Int          @id @default(autoincrement())
+  title           String
+  sortTitle       String
+  year            Int? // first-air year, filename-derived or TMDB
+  folder          String       @unique // top-level folder under TVSHOWS_PATH
+  tmdbId          Int?         @unique
+  imdbId          String?      @unique
+  overview        String?
+  posterPath      String?
+  backdropPath    String?
+  firstAirDate    DateTime?
+  status          String? // "Ended", "Returning Series", …
+  rating          Float?
+  genres          String?
+  matchConfidence String       @default("UNMATCHED")
+  seasons         ShowSeason[]
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([sortTitle])
+}
+
+model ShowSeason {
+  id           Int       @id @default(autoincrement())
+  showId       Int
+  show         Show      @relation(fields: [showId], references: [id], onDelete: Cascade)
+  seasonNumber Int
+  name         String?
+  overview     String?
+  posterPath   String?
+  airDate      DateTime?
+  episodes     Episode[]
+
+  @@unique([showId, seasonNumber])
+}
+
+model Episode {
+  id            Int           @id @default(autoincrement())
+  seasonId      Int
+  season        ShowSeason    @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  episodeNumber Int
+  name          String?
+  overview      String?
+  stillPath     String?
+  airDate       DateTime?
+  runtimeMins   Int?
+  owned         Boolean       @default(false)
+  files         EpisodeFile[]
+
+  @@unique([seasonId, episodeNumber])
+}
+
+// One file on disk; a multi-episode file (S01E01-E02) links to each Episode
+// it covers via its own row per episode sharing the same filePath — so
+// filePath is NOT unique here, (filePath, episodeId) is.
+model EpisodeFile {
+  id           Int       @id @default(autoincrement())
+  episodeId    Int
+  episode      Episode   @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  filePath     String // relative to TVSHOWS_PATH
+  fileName     String
+  format       String    @default("UNKNOWN")
+  width        Int?
+  height       Int?
+  videoCodec   String?
+  videoRange   String?
+  container    String?
+  sizeBytes    BigInt?
+  durationSecs Float?
+  audioSummary String? // e.g. "DTS-HD MA 5.1 ENG; AC3 2.0 ENG"
+  mtimeMs      Float?
+  probedAt     DateTime?
+  jellyfinId   String?
+
+  @@unique([filePath, episodeId])
+  @@index([episodeId])
+}
+
 // Bookkeeping for scans and enrichment runs; log holds a JSON array of
 // human-readable notes (unparsed files, low-confidence matches, errors).
 model ScanRun {
