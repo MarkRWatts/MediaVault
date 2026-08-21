@@ -46,19 +46,17 @@ function StudioAlbumCard({ album }: { album: ArtistCatalogueAlbum }) {
           : "border-dashed border-border/60 bg-bg-elevated/40"
       }`}
     >
-      <div className="relative">
-        <CoverImage
-          albumId={album.hasCover ? album.id : null}
-          title={album.title}
-          className={album.owned ? "w-full" : "w-full grayscale opacity-45"}
-        />
-        <span className="absolute right-1.5 top-1.5">
-          <Chip tone={album.owned ? "good" : "missing"}>{album.owned ? "Owned" : "Missing"}</Chip>
-        </span>
-      </div>
+      <CoverImage
+        albumId={album.hasCover ? album.id : null}
+        title={album.title}
+        className={album.owned ? "w-full" : "w-full grayscale opacity-45"}
+      />
       <div className="flex flex-col gap-0.5 p-2.5">
         <h3 className="line-clamp-2 text-xs font-semibold leading-snug text-text">{album.title}</h3>
-        <span className="font-mono text-[11px] text-text-faint">{album.year ?? "—"}</span>
+        <span className="flex items-center justify-between gap-2">
+          <span className="font-mono text-[11px] text-text-faint">{album.year ?? "—"}</span>
+          <Chip tone={album.owned ? "good" : "missing"}>{album.owned ? "Owned" : "Missing"}</Chip>
+        </span>
       </div>
     </div>
   );
@@ -80,15 +78,13 @@ function ShelfAlbumCard({ album }: { album: ArtistShelfAlbum }) {
       href={`/music/album/${album.id}`}
       className="hover-lift block overflow-hidden rounded-lg border border-border bg-bg-elevated"
     >
-      <div className="relative">
-        <CoverImage albumId={album.hasCover ? album.id : null} title={album.title} className="w-full" />
-        <span className="absolute right-1.5 top-1.5">
-          <Chip tone="dvd">{KIND_LABELS[album.kind] ?? album.kind}</Chip>
-        </span>
-      </div>
+      <CoverImage albumId={album.hasCover ? album.id : null} title={album.title} className="w-full" />
       <div className="flex flex-col gap-0.5 p-2">
         <h3 className="line-clamp-2 text-xs text-text-muted">{album.title}</h3>
-        <span className="font-mono text-[10px] text-text-faint">{album.year ?? "—"}</span>
+        <span className="flex items-center justify-between gap-2">
+          <span className="font-mono text-[10px] text-text-faint">{album.year ?? "—"}</span>
+          <Chip tone="dvd">{KIND_LABELS[album.kind] ?? album.kind}</Chip>
+        </span>
       </div>
     </Link>
   );
