@@ -96,3 +96,19 @@ a DVD and a BluRay rip of the same film = 1 film, 2 versions).
    reference.
 6. Integrate, migrate, full scan of the real share, verify in browser — main
    session.
+
+## Future: playback (decided 2026-08, not yet built)
+
+- **Music, gapless, in-browser** — planned as a phase after the music
+  section merges. Web Audio API with prefetched decoded buffers and
+  sample-accurate scheduling (true gapless; ALAC is lossless so track
+  boundaries are exact). Safari decodes ALAC natively; other browsers get a
+  server-side ALAC→FLAC/WAV conversion, which is lossless-to-lossless (bit-
+  identical PCM), not a quality-losing transcode.
+- **Video stays external** — deliberately NO in-browser video player. The
+  library is MKV + DTS/DTS-HD MA/AC3; browsers demux none of that container
+  and decode none of those audio codecs, so browser playback would force
+  audio transcoding (rejected: this library never transcodes). Apple TV
+  keeps the Infuse-via-Jellyfin direct-play path. Optional later addition:
+  a raw HTTP range-streaming endpoint plus "Open in IINA/VLC" links for
+  desktop — direct playback without Jellyfin and without transcoding.
