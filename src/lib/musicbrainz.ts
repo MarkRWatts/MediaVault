@@ -228,8 +228,13 @@ async function fetchMissingCoversForArtist(artistId: number, artistName: string,
   // coverSource "manual" is an owner-curated override — never revisited here
   // even if coverPath were somehow null (fetchCover also refuses outright,
   // this just avoids the wasted attempt).
+  // No coverSource filter here: a "manual" cover always has coverPath set, so
+  // coverPath:null already excludes it (and fetchCover refuses manual rows
+  // defensively). An explicit NOT-equals would be a NULL-semantics trap —
+  // SQL `NOT (coverSource = 'manual')` silently drops the NULL rows, which is
+  // every un-fetched album, turning the whole cover pass into a no-op.
   const needCovers = await prisma.album.findMany({
-    where: { artistId, coverPath: null, NOT: { coverSource: "manual" } },
+    where: { artistId, coverPath: null },
   });
   for (const album of needCovers) {
     try {
