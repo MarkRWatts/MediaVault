@@ -1,36 +1,49 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# filmDB
 
-## Getting Started
+A personal index of the DVD/Blu-ray film collection stored on the nas.example.lan
+SMB share (`//nas.example.lan/media` → `Movies`, also served by Jellyfin). It scans
+the share, probes every file with ffprobe for real resolution and soundtracks,
+enriches from TMDB, and presents a poster-forward library with collection
+timelines and a "what's missing" collector's report.
 
-First, run the development server:
+- **Library** — every owned film, searchable/filterable, with DVD/Blu-ray badges.
+- **Film detail** — editions (theatrical vs director's cut), resolutions,
+  soundtracks, file details.
+- **Collections** — James Bond, Alien, etc., in release-order timelines with
+  missing films greyed out.
+- **Report** — missing films per collection, Blu-ray upgrade candidates
+  (DVD-only titles), and files needing metadata attention.
+
+## Stack
+
+Next.js 15 (App Router) · Prisma 7 + SQLite · Tailwind v4 · ffprobe · TMDB API.
+See [PLAN.md](PLAN.md) for design decisions and [DEPLOYMENT.md](DEPLOYMENT.md)
+for Docker/VM deployment (shared-Caddy `edge` network pattern).
+
+## Development
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cp .env.example .env       # add TMDB_API_KEY for metadata/posters
+npm install
+npx prisma migrate dev
+npm run dev                # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+The dev scanner needs the share mounted at `/Volumes/media` and OrbStack/Docker
+running (ffprobe runs via the `mwader/static-ffmpeg` image when no local
+ffprobe exists). Trigger scans from the UI, or:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+curl -X POST localhost:3000/api/scan
+curl -X POST localhost:3000/api/enrich
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Tests
 
-## Learn More
+```bash
+npx vitest run
+```
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+The filename parser is tested against the real quirks of the share's naming
+(missing years, `[imdbid-…]`/`[tmdbid-…]` tags, edition brackets, underscores,
+glued tags, typo'd extensions).

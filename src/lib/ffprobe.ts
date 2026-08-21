@@ -1,0 +1,137 @@
+// Ground-truth media probe: width/height, audio streams, duration, size.
+// Prefers a local `ffprobe` on PATH; falls back to running the static-ffmpeg
+// Docker image against the MOVIES_PATH share (verified command shape in
+// PLAN.md). Uses execFile everywhere to avoid shell quoting bugs.
+
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import path from "node:path";
+
+const execFileAsync = promisify(execFile);
+
+export interface ProbedAudioTrack {
+  streamIdx: number;
+  codec: string | null;
+  language: string | null;
+  channels: number | null;
+  layout: string | null;
+  title: string | null;
+}
+
+export interface ProbeResult {
+  width: number | null;
+  height: number | null;
+  videoCodec: string | null;
+  durationSecs: number | null;
+  sizeBytes: number | null;
+  audioTracks: ProbedAudioTrack[];
+}
+
+const SHOW_ENTRIES =
+  "format=duration,size:stream=index,codec_type,codec_name,width,height,channels,channel_layout:stream_tags=language,title";
+
+const FFPROBE_ARGS = ["-hide_banner", "-loglevel", "error", "-show_entries", SHOW_ENTRIES, "-of", "json"];
+
+// Cache the "do we have a local ffprobe" decision — only detect once per process.
+let hasLocalFfprobePromise: Promise<boolean> | null = null;
+
+function detectLocalFfprobe(): Promise<boolean> {
+  if (!hasLocalFfprobePromise) {
+    hasLocalFfprobePromise = execFileAsync("ffprobe", ["-version"])
+      .then(() => true)
+      .catch(() => false);
+  }
+  return hasLocalFfprobePromise;
+}
+
+interface FfprobeStream {
+  index: number;
+  codec_type: string;
+  codec_name?: string;
+  width?: number;
+  height?: number;
+  channels?: number;
+  channel_layout?: string;
+  tags?: { language?: string; title?: string };
+}
+
+interface FfprobeJson {
+  format?: { duration?: string; size?: string };
+  streams?: FfprobeStream[];
+}
+
+function parseFfprobeJson(stdout: string): ProbeResult {
+  const data: FfprobeJson = JSON.parse(stdout);
+  const streams = data.streams ?? [];
+
+  const videoStream = streams.find((s) => s.codec_type === "video");
+  const audioStreams = streams.filter((s) => s.codec_type === "audio");
+
+  const audioTracks: ProbedAudioTrack[] = audioStreams.map((s) => ({
+    streamIdx: s.index,
+    codec: s.codec_name ?? null,
+    language: s.tags?.language ?? null,
+    channels: s.channels ?? null,
+    layout: s.channel_layout ?? null,
+    title: s.tags?.title ?? null,
+  }));
+
+  const durationSecs = data.format?.duration ? Number(data.format.duration) : null;
+  const sizeBytes = data.format?.size ? Number(data.format.size) : null;
+
+  return {
+    width: videoStream?.width ?? null,
+    height: videoStream?.height ?? null,
+    videoCodec: videoStream?.codec_name ?? null,
+    durationSecs: Number.isFinite(durationSecs) ? durationSecs : null,
+    sizeBytes: Number.isFinite(sizeBytes) ? sizeBytes : null,
+    audioTracks,
+  };
+}
+
+/**
+ * Probe a file given its absolute path on the local filesystem (or, when
+ * falling back to Docker, a path that lives under MOVIES_PATH so it can be
+ * translated to the container's /movies mount).
+ */
+export async function probe(absPath: string): Promise<ProbeResult> {
+  const hasLocal = await detectLocalFfprobe();
+
+  if (hasLocal) {
+    const { stdout } = await execFileAsync("ffprobe", [...FFPROBE_ARGS, absPath], {
+      maxBuffer: 1024 * 1024 * 32,
+    });
+    return parseFfprobeJson(stdout);
+  }
+
+  const dockerImage = process.env.FFPROBE_DOCKER_IMAGE;
+  if (!dockerImage) {
+    throw new Error("ffprobe not found on PATH and FFPROBE_DOCKER_IMAGE is not set");
+  }
+
+  const moviesPath = process.env.MOVIES_PATH;
+  if (!moviesPath) {
+    throw new Error("MOVIES_PATH is not set; cannot translate path for dockerized ffprobe");
+  }
+
+  const relPath = path.relative(moviesPath, absPath);
+  if (relPath.startsWith("..")) {
+    throw new Error(`Path ${absPath} is not under MOVIES_PATH (${moviesPath})`);
+  }
+  const containerPath = `/movies/${relPath.split(path.sep).join("/")}`;
+
+  const dockerArgs = [
+    "run",
+    "--rm",
+    "--entrypoint",
+    "/ffprobe",
+    "-v",
+    `${moviesPath}:/movies:ro`,
+    dockerImage,
+    ...FFPROBE_ARGS,
+    containerPath,
+  ];
+
+  const { stdout } = await execFileAsync("docker", dockerArgs, { maxBuffer: 1024 * 1024 * 32 });
+  return parseFfprobeJson(stdout);
+}

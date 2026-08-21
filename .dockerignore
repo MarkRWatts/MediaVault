@@ -1,0 +1,9 @@
+node_modules
+.next
+.git
+data
+.env
+.env.local
+.env.*.local
+src/generated
+*.md

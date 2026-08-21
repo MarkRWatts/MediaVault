@@ -1,0 +1,22 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      # SQLite database and poster cache live in the named volume.
+      DATABASE_URL: file:/app/data/filmdb.db
+      POSTER_CACHE_DIR: /app/data/posters
+      # Root of the movie share (bind-mounted read-only from the host).
+      MOVIES_PATH: /movies
+      # TMDB API key (optional, free) — enables posters, metadata, and
+      # collection/missing-film detection. Leave blank to scan-only.
+      TMDB_API_KEY: ${TMDB_API_KEY:-}
+    volumes:
+      # SQLite database and cached posters.
+      - data:/app/data
+      # Movie share (SMB mount on the host). On the Mac: /Volumes/media/Movies.
+      # On the VM: the mount point of //nas.example.lan/media/Movies.
+      - ${MOVIES_HOST_PATH:-/Volumes/media/Movies}:/movies:ro
+
+volumes:
+  data:
