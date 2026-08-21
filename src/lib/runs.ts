@@ -7,7 +7,7 @@ import type { ScanRun } from "@/generated/prisma/client";
 
 const STALE_RUN_MS = 30 * 60 * 1000; // 30 minutes
 
-export type RunKind = "SCAN" | "ENRICH" | "JELLYFIN";
+export type RunKind = "SCAN" | "ENRICH" | "JELLYFIN" | "ENRICH_MUSIC";
 
 /**
  * Guard + register a new run of `kind`. If a RUNNING run of the same kind

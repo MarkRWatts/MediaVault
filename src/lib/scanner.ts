@@ -1,6 +1,8 @@
-// Walks MOVIES_PATH, parses filenames, probes files with ffprobe, and upserts
-// Film/Version/AudioTrack rows. See PLAN.md "Scanner" and the Film/Version
-// identity rules in the schema doc comment.
+// Walks MOVIES_PATH (and, optionally, TVSHOWS_PATH / MUSIC_PATH), parses
+// filenames, probes files with ffprobe, and upserts Film/Version/AudioTrack,
+// Show/ShowSeason/Episode/EpisodeFile, and Artist/Album/Track rows in a
+// single SCAN run. See PLAN.md "Scanner" / SPEC-MUSIC.md "Scanner" and the
+// identity rules in the schema doc comments.
 
 import { promises as fs, type Dirent } from "node:fs";
 import path from "node:path";
@@ -8,7 +10,8 @@ import { prisma } from "@/lib/db";
 import { probe, type ProbedAudioTrack } from "@/lib/ffprobe";
 import { parseFileName, filmKey, normalizeTitle, sortTitle, VIDEO_EXTENSIONS, type ParsedFile } from "@/lib/parse";
 import { parseEpisodePath, type ParsedEpisodeFile } from "@/lib/parse-tv";
-import { classifyFormat } from "@/lib/constants";
+import { parseTrackPath, type ParsedTrack } from "@/lib/parse-music";
+import { classifyFormat, isLosslessCodec, MUSIC_EXTENSIONS } from "@/lib/constants";
 import { audioBadge } from "@/lib/audio";
 import { guardAndCreateRun, updateProgress, finishRun, failRun } from "@/lib/runs";
 
@@ -343,6 +346,183 @@ async function processEpisodeFile(
   }
 }
 
+// --- Music ---
+
+interface MusicCandidateFile {
+  parsed: ParsedTrack;
+  absPath: string;
+  size: number;
+  mtimeMs: number;
+}
+
+// Compilations is the one iTunes pseudo-artist folder that gets indexed as a
+// various=true Artist (skip MusicBrainz artist matching, see musicbrainz.ts).
+const COMPILATIONS_FOLDER = "Compilations";
+
+function isLocalizedFolder(name: string): boolean {
+  return name.endsWith(".localized");
+}
+
+/**
+ * Walk MUSIC_PATH's fixed Artist/Album/file layout and return every audio
+ * file's path relative to `root`. Unlike the generic movie/TV `walk()`, this
+ * is a dedicated two-level walk (not a recursive MAX_DEPTH descent) because
+ * the iTunes layout is exactly Artist/Album/file — deeper nesting isn't part
+ * of the spec. Skips `*.localized` folders (e.g. "Automatically Add to
+ * Music.localized") and dot-files (".DS_Store", "._*" AppleDouble) at every
+ * level, same as the movie/TV walkers.
+ */
+async function walkMusic(root: string): Promise<string[]> {
+  const out: string[] = [];
+  let artistEntries: Dirent[];
+  try {
+    artistEntries = await fs.readdir(root, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+
+  for (const artistEntry of artistEntries) {
+    if (!artistEntry.isDirectory()) continue;
+    if (artistEntry.name.startsWith(".")) continue;
+    if (isLocalizedFolder(artistEntry.name)) continue;
+
+    const artistAbs = path.join(root, artistEntry.name);
+    let albumEntries: Dirent[];
+    try {
+      albumEntries = await fs.readdir(artistAbs, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const albumEntry of albumEntries) {
+      if (!albumEntry.isDirectory()) continue;
+      if (albumEntry.name.startsWith(".")) continue;
+      if (isLocalizedFolder(albumEntry.name)) continue;
+
+      const albumAbs = path.join(artistAbs, albumEntry.name);
+      let fileEntries: Dirent[];
+      try {
+        fileEntries = await fs.readdir(albumAbs, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+
+      for (const fileEntry of fileEntries) {
+        if (!fileEntry.isFile()) continue;
+        if (fileEntry.name.startsWith(".")) continue; // .DS_Store, ._* AppleDouble
+        const ext = path.extname(fileEntry.name).slice(1).toLowerCase();
+        if (!MUSIC_EXTENSIONS.has(ext)) continue;
+        out.push(path.relative(root, path.join(albumAbs, fileEntry.name)));
+      }
+    }
+  }
+
+  return out;
+}
+
+/** Resolve (or create) the Artist identity for a top-level music folder. */
+async function resolveArtist(artistFolder: string, artistName: string, various: boolean): Promise<number> {
+  const artist = await prisma.artist.upsert({
+    where: { folder: artistFolder },
+    create: { folder: artistFolder, name: artistName, sortName: sortTitle(artistName), various },
+    update: { name: artistName, sortName: sortTitle(artistName), various },
+  });
+  return artist.id;
+}
+
+/**
+ * Resolve (or create) an owned Album under an Artist. Only touches identity
+ * fields (title/sortTitle/owned) — mbid/year/kind/coverPath/trackTotal are
+ * MusicBrainz enrichment data (musicbrainz.ts) and are never written here.
+ */
+async function resolveAlbum(artistId: number, albumFolder: string, albumTitle: string): Promise<number> {
+  const album = await prisma.album.upsert({
+    where: { artistId_folder: { artistId, folder: albumFolder } },
+    create: { artistId, folder: albumFolder, title: albumTitle, sortTitle: sortTitle(albumTitle), owned: true },
+    update: { title: albumTitle, sortTitle: sortTitle(albumTitle), owned: true },
+  });
+  return album.id;
+}
+
+/**
+ * Probe (or skip, per the mtime+size cache) one music file and upsert its
+ * Track row. `.m4p` (FairPlay DRM) files are never probed — ffprobe can't
+ * read encrypted audio anyway — and are recorded with codec "drm".
+ */
+async function processTrack(file: MusicCandidateFile, albumId: number, log: string[], force: boolean): Promise<void> {
+  const { parsed, absPath, size, mtimeMs } = file;
+  const existing = await prisma.track.findUnique({ where: { filePath: parsed.relPath } });
+
+  const baseData = {
+    albumId,
+    disc: parsed.disc,
+    trackNumber: parsed.trackNumber,
+    title: parsed.title,
+    fileName: parsed.fileName,
+  };
+
+  if (parsed.codecHint === "drm") {
+    const data = {
+      ...baseData,
+      codec: "drm",
+      lossless: false,
+      sizeBytes: BigInt(Math.round(size)),
+      mtimeMs,
+      probedAt: new Date(),
+    };
+    await prisma.track.upsert({
+      where: { filePath: parsed.relPath },
+      create: { ...data, filePath: parsed.relPath },
+      update: data,
+    });
+    return;
+  }
+
+  const needProbe =
+    force || !existing || existing.sizeBytes === null || Number(existing.sizeBytes) !== size || existing.mtimeMs !== mtimeMs;
+
+  if (!needProbe) {
+    await prisma.track.update({ where: { filePath: parsed.relPath }, data: baseData });
+    return;
+  }
+
+  try {
+    // First audio stream only — .m4a files also carry an mjpeg cover-art
+    // stream, which ffprobe reports as a second (video-typed) stream; the
+    // audioTracks filter already excludes it.
+    const result = await probe(absPath);
+    const audio = result.audioTracks[0];
+    const codec = audio?.codec ?? "unknown";
+    const sizeBytes = BigInt(Math.round(result.sizeBytes ?? size));
+
+    const data = {
+      ...baseData,
+      codec,
+      lossless: isLosslessCodec(codec),
+      sampleRate: audio?.sampleRate ?? null,
+      bitDepth: audio?.bitDepth ?? null,
+      durationSecs: result.durationSecs,
+      sizeBytes,
+      mtimeMs,
+      probedAt: new Date(),
+    };
+
+    await prisma.track.upsert({
+      where: { filePath: parsed.relPath },
+      create: { ...data, filePath: parsed.relPath },
+      update: data,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log.push(`Probe failed for "${parsed.relPath}": ${message}`);
+    await prisma.track.upsert({
+      where: { filePath: parsed.relPath },
+      create: { ...baseData, filePath: parsed.relPath },
+      update: baseData,
+    });
+  }
+}
+
 async function doScan(runId: number, force: boolean): Promise<void> {
   const log: string[] = [];
   const moviesPath = process.env.MOVIES_PATH;
@@ -394,14 +574,42 @@ async function doScan(runId: number, force: boolean): Promise<void> {
     tvCandidates.push({ parsed, absPath, size: stat.size, mtimeMs: stat.mtimeMs });
   }
 
+  // Music discovery happens up front too, same graceful-absence pattern as
+  // TVSHOWS_PATH: MUSIC_PATH is optional, and when unset the music phase is
+  // skipped entirely (nothing is touched, nothing is deleted).
+  const musicPath = process.env.MUSIC_PATH;
+  const musicRelPaths: string[] = musicPath ? await walkMusic(musicPath) : [];
+  if (!musicPath) log.push("MUSIC_PATH not set — skipping music scan");
+
+  const musicCandidates: MusicCandidateFile[] = [];
+  let musicUnparsed = 0;
+  for (const relPath of musicRelPaths) {
+    const absPath = path.join(musicPath!, relPath);
+    let stat;
+    try {
+      stat = await fs.stat(absPath);
+    } catch (err) {
+      log.push(`Could not stat "${relPath}": ${err instanceof Error ? err.message : String(err)}`);
+      continue;
+    }
+    const parsed = parseTrackPath(relPath);
+    if (!parsed) {
+      musicUnparsed++;
+      log.push(`Could not parse track info from "${relPath}"`);
+      continue;
+    }
+    musicCandidates.push({ parsed, absPath, size: stat.size, mtimeMs: stat.mtimeMs });
+  }
+
   const movieTotal = candidates.length;
   const tvTotal = tvCandidates.length;
-  const total = movieTotal + tvTotal;
+  const musicTotal = musicCandidates.length;
+  const total = movieTotal + tvTotal + musicTotal;
   await updateProgress(runId, {
     total,
     filesSeen: 0,
     progress: 0,
-    message: `Found ${movieTotal} movie file(s), ${tvTotal} TV episode file(s)${tvUnparsed ? ` (${tvUnparsed} unparsed)` : ""}`,
+    message: `Found ${movieTotal} movie file(s), ${tvTotal} TV episode file(s), ${musicTotal} music file(s)${tvUnparsed ? ` (${tvUnparsed} TV unparsed)` : ""}${musicUnparsed ? ` (${musicUnparsed} music unparsed)` : ""}`,
   });
 
   let overallCompleted = 0;
@@ -547,7 +755,84 @@ async function doScan(runId: number, force: boolean): Promise<void> {
     }
   }
 
-  await finishRun(runId, log, `Scanned ${movieTotal} movie file(s), ${tvTotal} TV episode file(s)`);
+  // ---- Music ----
+
+  if (musicPath) {
+    // Resolve Artist/Album identities up front, serially (like
+    // resolveShow/resolveSeason above) — avoids upsert races on the same
+    // Artist/Album row during the concurrent probe phase below.
+    const artistIdByFolder = new Map<string, number>();
+    const albumIdByKey = new Map<string, number>();
+
+    for (const c of musicCandidates) {
+      const { parsed } = c;
+      let artistId = artistIdByFolder.get(parsed.artistFolder);
+      if (artistId === undefined) {
+        const various = parsed.artistFolder === COMPILATIONS_FOLDER;
+        artistId = await resolveArtist(parsed.artistFolder, parsed.artistName, various);
+        artistIdByFolder.set(parsed.artistFolder, artistId);
+      }
+      const albumKey = `${artistId}:${parsed.albumFolder}`;
+      let albumId = albumIdByKey.get(albumKey);
+      if (albumId === undefined) {
+        albumId = await resolveAlbum(artistId, parsed.albumFolder, parsed.albumTitle);
+        albumIdByKey.set(albumKey, albumId);
+      }
+    }
+
+    // Probe + upsert tracks, bounded concurrency (SMB share).
+    await mapPool(musicCandidates, PROBE_CONCURRENCY, async (file) => {
+      const albumKey = `${artistIdByFolder.get(file.parsed.artistFolder)}:${file.parsed.albumFolder}`;
+      const albumId = albumIdByKey.get(albumKey)!;
+      await processTrack(file, albumId, log, force);
+      await reportProgress(`Probed ${overallCompleted}/${total}: ${file.parsed.fileName}`);
+    });
+
+    // Delete Track rows for music files no longer on disk.
+    const seenMusicPaths = new Set(musicCandidates.map((c) => c.parsed.relPath));
+    const allTracks = await prisma.track.findMany({ select: { id: true, filePath: true } });
+    const staleTrackIds = allTracks.filter((t) => !seenMusicPaths.has(t.filePath)).map((t) => t.id);
+    if (staleTrackIds.length > 0) {
+      await prisma.track.deleteMany({ where: { id: { in: staleTrackIds } } });
+      log.push(`Removed ${staleTrackIds.length} track(s) for music files no longer on disk`);
+    }
+
+    // Owned albums left with zero tracks: if MusicBrainz-matched and still a
+    // studio album, revert to a "missing" back-catalogue placeholder
+    // (owned=false, folder cleared — same shape as the placeholders
+    // musicbrainz.ts creates for albums we never owned); otherwise there's no
+    // back-catalogue reason to keep the row, so delete it outright.
+    const emptyOwnedAlbums = await prisma.album.findMany({
+      where: { owned: true, tracks: { none: {} } },
+      select: { id: true, title: true, mbid: true, kind: true },
+    });
+    for (const a of emptyOwnedAlbums) {
+      if (a.mbid && a.kind === "STUDIO") {
+        await prisma.album.update({ where: { id: a.id }, data: { owned: false, folder: null } });
+        log.push(`"${a.title}" has no tracks left — reverted to missing (studio album, MusicBrainz-matched)`);
+      } else {
+        await prisma.album.delete({ where: { id: a.id } });
+        log.push(`Deleted "${a.title}" — no tracks left`);
+      }
+    }
+
+    // Artists left with zero albums at all (every album either deleted above
+    // or, if never owned, never existed for this artist in the first place).
+    const emptyArtists = await prisma.artist.findMany({
+      where: { albums: { none: {} } },
+      select: { id: true, name: true },
+    });
+    for (const ar of emptyArtists) {
+      await prisma.artist.delete({ where: { id: ar.id } });
+      log.push(`Deleted artist "${ar.name}" — no albums left`);
+    }
+  }
+
+  await finishRun(
+    runId,
+    log,
+    `Scanned ${movieTotal} movie file(s), ${tvTotal} TV episode file(s), ${musicTotal} music file(s)`,
+  );
 
   // Lazy import to avoid a module-load cycle (jellyfin.ts doesn't import
   // scanner.ts, but keeping the coupling one-directional and load-time-free

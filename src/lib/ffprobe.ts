@@ -1,7 +1,8 @@
 // Ground-truth media probe: width/height, audio streams, duration, size.
 // Prefers a local `ffprobe` on PATH; falls back to running the static-ffmpeg
-// Docker image against the MOVIES_PATH share (verified command shape in
-// PLAN.md). Uses execFile everywhere to avoid shell quoting bugs.
+// Docker image against whichever media share (MOVIES_PATH/TVSHOWS_PATH/
+// MUSIC_PATH) contains the file (verified command shape in PLAN.md). Uses
+// execFile everywhere to avoid shell quoting bugs.
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -17,6 +18,9 @@ export interface ProbedAudioTrack {
   channels: number | null;
   layout: string | null;
   title: string | null;
+  /** Music-scanner fields — unused by the movie/TV probe callers. */
+  sampleRate: number | null;
+  bitDepth: number | null;
 }
 
 export interface ProbeResult {
@@ -38,8 +42,13 @@ export interface ProbeResult {
 // requested by name or ffprobe omits them; verified against a real file on
 // the share (Die Hard (1988), which has one DTS-HD MA and one plain DTS
 // track — see src/lib/ffprobe.ts history / PLAN.md).
+// sample_rate/bits_per_raw_sample are needed for the music scanner (audio
+// stream quality: 44100/16 vs 96000/24 etc). Requested for every stream, but
+// only the first audio stream's values are used — album art (mjpeg) streams
+// on .m4a files can carry their own bits_per_raw_sample (e.g. "8" for the
+// cover image), which is ignored by only reading audioTracks[0].
 const SHOW_ENTRIES =
-  "format=duration,size:stream=index,codec_type,codec_name,profile,width,height,channels,channel_layout,color_transfer,side_data_list:stream_tags=language,title";
+  "format=duration,size:stream=index,codec_type,codec_name,profile,width,height,channels,channel_layout,color_transfer,side_data_list,sample_rate,bits_per_raw_sample:stream_tags=language,title";
 
 const FFPROBE_ARGS = ["-hide_banner", "-loglevel", "error", "-show_entries", SHOW_ENTRIES, "-of", "json"];
 
@@ -70,6 +79,8 @@ interface FfprobeStream {
   channel_layout?: string;
   color_transfer?: string;
   side_data_list?: FfprobeSideData[];
+  sample_rate?: string;
+  bits_per_raw_sample?: string;
   tags?: { language?: string; title?: string };
 }
 
@@ -101,6 +112,8 @@ function parseFfprobeJson(stdout: string): ProbeResult {
     channels: s.channels ?? null,
     layout: s.channel_layout ?? null,
     title: s.tags?.title ?? null,
+    sampleRate: s.sample_rate ? Number(s.sample_rate) : null,
+    bitDepth: s.bits_per_raw_sample ? Number(s.bits_per_raw_sample) : null,
   }));
 
   const durationSecs = data.format?.duration ? Number(data.format.duration) : null;
@@ -120,8 +133,8 @@ function parseFfprobeJson(stdout: string): ProbeResult {
 
 /**
  * Probe a file given its absolute path on the local filesystem (or, when
- * falling back to Docker, a path under one of the media roots — MOVIES_PATH
- * or TVSHOWS_PATH — so it can be translated to a container mount).
+ * falling back to Docker, a path under one of the media roots — MOVIES_PATH,
+ * TVSHOWS_PATH, or MUSIC_PATH — so it can be translated to a container mount).
  */
 export async function probe(absPath: string): Promise<ProbeResult> {
   const hasLocal = await detectLocalFfprobe();
@@ -139,9 +152,13 @@ export async function probe(absPath: string): Promise<ProbeResult> {
   }
 
   // Translate the path against whichever media root contains it.
-  const roots = [process.env.MOVIES_PATH, process.env.TVSHOWS_PATH].filter((r): r is string => !!r);
+  const roots = [process.env.MOVIES_PATH, process.env.TVSHOWS_PATH, process.env.MUSIC_PATH].filter(
+    (r): r is string => !!r,
+  );
   if (roots.length === 0) {
-    throw new Error("No media root (MOVIES_PATH/TVSHOWS_PATH) set; cannot translate path for dockerized ffprobe");
+    throw new Error(
+      "No media root (MOVIES_PATH/TVSHOWS_PATH/MUSIC_PATH) set; cannot translate path for dockerized ffprobe",
+    );
   }
   let mountRoot: string | null = null;
   let relPath = "";

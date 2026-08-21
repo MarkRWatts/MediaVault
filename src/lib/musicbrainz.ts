@@ -1,0 +1,411 @@
+// MusicBrainz enrichment: match Artist rows to MB artists, pull the studio
+// back-catalogue via release-group search, backfill owned Album metadata,
+// and create owned=false placeholders for studio albums we don't own yet.
+// Mirrors src/lib/tmdb.ts's shape (pickHit-style matching, EXACT/SEARCH/LOW
+// confidence, placeholder reclaim, never-merge-except-exact, ScanRun
+// progress/log) — see the file-end report for where this deliberately
+// diverges and why.
+//
+// Unlike TMDB, MusicBrainz needs no API key — it's free/open, gated only by
+// a 1 req/s global rate limit and a required User-Agent header.
+
+import { prisma } from "@/lib/db";
+import { normalizeTitle, sortTitle } from "@/lib/parse";
+import type { Artist } from "@/generated/prisma/client";
+import type { AlbumKind } from "@/lib/constants";
+import { guardAndCreateRun, updateProgress, finishRun, failRun } from "@/lib/runs";
+import { fetchCover } from "@/lib/cover-art";
+
+const MB_BASE = "https://musicbrainz.org/ws/2";
+const USER_AGENT = "filmDB/1.3 (https://github.com/MarkRWatts/filmDB)";
+// MusicBrainz's API ToS caps unauthenticated clients at 1 request/second,
+// enforced globally (not per-endpoint) — every ws/2 call funnels through
+// mbFetch, which gates on a shared "earliest next call" clock rather than a
+// flat post-call sleep (tmdb.ts's approach): TMDB has no stated hard cap, but
+// MusicBrainz does, so a fixed-interval scheduler is the safer choice here.
+const MIN_INTERVAL_MS = 1000;
+const RG_PAGE_LIMIT = 100;
+const PROGRESS_UPDATE_EVERY = 3;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+let lastCallAt = 0;
+async function throttle(): Promise<void> {
+  const wait = lastCallAt + MIN_INTERVAL_MS - Date.now();
+  if (wait > 0) await sleep(wait);
+  lastCallAt = Date.now();
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function mbFetch(pathname: string, params: Record<string, string>): Promise<any> {
+  await throttle();
+  const url = new URL(`${MB_BASE}${pathname}`);
+  url.searchParams.set("fmt", "json");
+  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+
+  const res = await fetch(url.toString(), { headers: { "User-Agent": USER_AGENT } });
+  if (!res.ok) throw new Error(`MusicBrainz ${pathname} -> HTTP ${res.status}`);
+  return res.json();
+}
+
+// --- Pure helpers (exported for musicbrainz.test.ts — no network) ---
+
+/** Lucene-escape a value that will be interpolated inside a "..." phrase. */
+export function escapeLucene(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+/**
+ * iTunes sanitises characters that aren't legal in file/folder names — "/"
+ * and ":" become "_" and ";" respectively. There's no reliable way to tell
+ * that apart from genuine underscores/semicolons in an artist's real name,
+ * so we try the folder name as-is first, then a reversed-sanitisation
+ * fallback. Classical multi-credit folders (several soloists joined by
+ * "_"/";" that were never a single "/"-joined name to begin with) may match
+ * neither — that's an accepted gap (see SPEC-MUSIC.md Facts).
+ */
+export function artistNameVariants(folderDerivedName: string): string[] {
+  const variants = [folderDerivedName];
+  const reversed = folderDerivedName.replace(/_/g, "/").replace(/;/g, ":");
+  if (reversed !== folderDerivedName) variants.push(reversed);
+  return variants;
+}
+
+function normalizeArtistName(name: string): string {
+  return normalizeTitle(name);
+}
+
+// Strip bracket/paren "tag" suffixes (edition/live/remaster annotations)
+// before the generic normalizeTitle pass, which already folds "_" and "/"
+// to the same space character — so folder-sanitised titles like
+// "The Singles 86_98" and MusicBrainz's "The Singles 86/98" normalize
+// identically for free.
+const TAG_RE = /[[(][^\])]*[\])]/g;
+
+export function normalizeAlbumTitle(title: string): string {
+  return normalizeTitle(title.replace(TAG_RE, " "));
+}
+
+/**
+ * Classify a release-group's kind from its primary/secondary types, per
+ * SPEC-MUSIC.md's Enrichment section. The release-group search query already
+ * filters to primarytype:(album OR ep), so "single" should never reach here;
+ * the OTHER fallback covers it defensively regardless (Album rows are never
+ * created for kind !== STUDIO, so a stray single can't leak into the DB).
+ */
+export function classifyAlbumKind(
+  primaryType: string | null | undefined,
+  secondaryTypes: string[] | null | undefined,
+): AlbumKind {
+  const secondary = (secondaryTypes ?? []).map((s) => s.toLowerCase());
+  const primary = (primaryType ?? "").toLowerCase();
+
+  if (secondary.includes("compilation")) return "COMPILATION";
+  if (secondary.includes("live")) return "LIVE";
+  if (secondary.includes("remix")) return "REMIX";
+  if (secondary.includes("soundtrack")) return "SOUNDTRACK";
+  if (primary === "ep") return "EP";
+  if (primary === "album") return "STUDIO";
+  return "OTHER";
+}
+
+export interface ParsedReleaseDate {
+  year: number | null;
+  releaseDate: Date | null;
+}
+
+/** Parse MusicBrainz's "first-release-date", which may be "YYYY", "YYYY-MM", or "YYYY-MM-DD". */
+export function parseReleaseDate(dateStr: string | null | undefined): ParsedReleaseDate {
+  if (!dateStr) return { year: null, releaseDate: null };
+  const m = /^(\d{4})(?:-(\d{2}))?(?:-(\d{2}))?$/.exec(dateStr);
+  if (!m) return { year: null, releaseDate: null };
+  const year = Number(m[1]);
+  const month = m[2] ? Number(m[2]) - 1 : 0;
+  const day = m[3] ? Number(m[3]) : 1;
+  return { year, releaseDate: new Date(Date.UTC(year, month, day)) };
+}
+
+// --- Artist matching ---
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function searchArtist(name: string): Promise<any[]> {
+  const data = await mbFetch("/artist", { query: `artist:"${escapeLucene(name)}"` });
+  return (data.artists ?? []).slice(0, 10);
+}
+
+interface ArtistMatch {
+  mbid: string;
+  name: string;
+  disambiguation: string | null;
+  confidence: "EXACT" | "SEARCH" | "LOW";
+}
+
+/**
+ * Mimics pickHit() in tmdb.ts: prefer an exact normalized-name match among
+ * the top results; otherwise fall back to MusicBrainz's own top-scored hit
+ * when it's confident enough. Tried against the folder name as-is first,
+ * then (if nothing usable) the reversed-sanitisation variant — an exact
+ * match on the fallback variant is still SEARCH-grade (we had to guess at
+ * the real name), a fuzzy match on it is LOW.
+ */
+async function matchArtist(folderDerivedName: string): Promise<ArtistMatch | null> {
+  const variants = artistNameVariants(folderDerivedName);
+  const want = normalizeArtistName(folderDerivedName);
+
+  for (let i = 0; i < variants.length; i++) {
+    const isPrimary = i === 0;
+    const results = await searchArtist(variants[i]);
+    if (!results.length) continue;
+
+    const exact = results.find((r) => normalizeArtistName(r.name ?? "") === want);
+    if (exact) {
+      return {
+        mbid: exact.id,
+        name: exact.name,
+        disambiguation: exact.disambiguation || null,
+        confidence: isPrimary ? "EXACT" : "SEARCH",
+      };
+    }
+
+    const top = results[0];
+    const score = Number(top.score ?? 0);
+    if (score >= 90) {
+      return {
+        mbid: top.id,
+        name: top.name,
+        disambiguation: top.disambiguation || null,
+        confidence: isPrimary ? "SEARCH" : "LOW",
+      };
+    }
+  }
+  return null;
+}
+
+// --- Release-group listing ---
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function searchReleaseGroups(artistMbid: string): Promise<any[]> {
+  // status:official + primarytype:(album OR ep) via the *search* endpoint —
+  // browse would include bootlegs. Never matches primarytype:single, so no
+  // Album row is ever created for a single release.
+  const query = `arid:${artistMbid} AND status:official AND (primarytype:album OR primarytype:ep)`;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const results: any[] = [];
+  let offset = 0;
+  for (;;) {
+    const data = await mbFetch("/release-group", { query, limit: String(RG_PAGE_LIMIT), offset: String(offset) });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const batch: any[] = data["release-groups"] ?? [];
+    results.push(...batch);
+    offset += batch.length;
+    const total: number = data.count ?? batch.length;
+    if (batch.length === 0 || offset >= total) break;
+  }
+  return results;
+}
+
+// --- Cover art pass (shared by matched and various=true artists) ---
+
+async function fetchMissingCoversForArtist(artistId: number, artistName: string, log: string[]): Promise<void> {
+  const needCovers = await prisma.album.findMany({ where: { artistId, coverPath: null } });
+  for (const album of needCovers) {
+    try {
+      const coverPath = await fetchCover({ id: album.id, mbid: album.mbid, title: album.title, artistName });
+      if (coverPath) {
+        await prisma.album.update({ where: { id: album.id }, data: { coverPath } });
+      }
+    } catch (err) {
+      // Cover art is best-effort — a failure here must never abort enrichment.
+      const message = err instanceof Error ? err.message : String(err);
+      log.push(`Cover art fetch failed for "${album.title}" (${artistName}): ${message}`);
+    }
+  }
+}
+
+// --- Album reconciliation ---
+
+async function reconcileArtistAlbums(artistId: number, artistName: string, artistMbid: string, log: string[]): Promise<void> {
+  const releaseGroups = await searchReleaseGroups(artistMbid);
+  const ownedAlbums = await prisma.album.findMany({ where: { artistId, owned: true } });
+
+  const claimedRgIds = new Set<string>();
+  const claimedOwnedIds = new Set<number>();
+
+  // Pass 1: attach mbid/year/releaseDate/kind to owned albums, matched either
+  // by an mbid already recorded from a prior run (idempotent) or by
+  // normalized title (extends normalizeTitle-style matching, see
+  // normalizeAlbumTitle above).
+  for (const rg of releaseGroups) {
+    const kind = classifyAlbumKind(rg["primary-type"], rg["secondary-types"]);
+    const { year, releaseDate } = parseReleaseDate(rg["first-release-date"]);
+    const wantTitle = normalizeAlbumTitle(rg.title ?? "");
+
+    let owned = ownedAlbums.find((a) => a.mbid === rg.id);
+    if (!owned) {
+      owned = ownedAlbums.find(
+        (a) => !claimedOwnedIds.has(a.id) && !a.mbid && normalizeAlbumTitle(a.title) === wantTitle,
+      );
+    }
+    if (!owned) continue;
+
+    claimedRgIds.add(rg.id);
+    claimedOwnedIds.add(owned.id);
+
+    if (!owned.mbid) {
+      // Another row may already hold this release-group id: a missing-album
+      // placeholder from a prior run (reclaim it — the album on disk takes
+      // its place) or a genuine second owned album (never merge on a title
+      // match alone — flag it and leave both untouched, mirroring tmdb.ts's
+      // caution around search-based collisions).
+      const holder = await prisma.album.findUnique({ where: { mbid: rg.id } });
+      if (holder && holder.id !== owned.id) {
+        if (!holder.owned) {
+          await prisma.album.delete({ where: { id: holder.id } });
+          log.push(`Reclaimed missing-album placeholder "${holder.title}" for "${artistName}" — "${owned.title}" is on disk`);
+        } else {
+          log.push(
+            `Match conflict: "${owned.title}" and "${holder.title}" (${artistName}) both normalize to MusicBrainz release-group ${rg.id} — left unmatched for review`,
+          );
+          continue;
+        }
+      }
+    }
+
+    await prisma.album.update({ where: { id: owned.id }, data: { mbid: rg.id, year, releaseDate, kind } });
+  }
+
+  // Pass 2: create owned=false placeholders for STUDIO groups we don't own.
+  for (const rg of releaseGroups) {
+    if (claimedRgIds.has(rg.id)) continue;
+    const kind = classifyAlbumKind(rg["primary-type"], rg["secondary-types"]);
+    if (kind !== "STUDIO") continue;
+
+    const { year, releaseDate } = parseReleaseDate(rg["first-release-date"]);
+    const existing = await prisma.album.findUnique({ where: { mbid: rg.id } });
+    if (existing) {
+      if (existing.owned) continue; // reconciled in pass 1 by another path — leave alone
+      await prisma.album.update({
+        where: { id: existing.id },
+        data: { title: rg.title, sortTitle: sortTitle(rg.title), year, releaseDate, kind: "STUDIO" },
+      });
+    } else {
+      await prisma.album.create({
+        data: {
+          artistId,
+          title: rg.title,
+          sortTitle: sortTitle(rg.title),
+          year,
+          releaseDate,
+          mbid: rg.id,
+          kind: "STUDIO",
+          owned: false,
+          folder: null,
+        },
+      });
+      log.push(`Added missing studio album "${rg.title}"${year ? ` (${year})` : ""} for "${artistName}"`);
+    }
+  }
+
+  // Pass 3: delete owned=false placeholders whose release group vanished
+  // from this run's STUDIO listing (deleted upstream, or reclassified away
+  // from album/ep/studio).
+  const seenStudioMbids = new Set(
+    releaseGroups
+      .filter((rg) => classifyAlbumKind(rg["primary-type"], rg["secondary-types"]) === "STUDIO")
+      .map((rg) => rg.id as string),
+  );
+  const stalePlaceholders = await prisma.album.findMany({ where: { artistId, owned: false, mbid: { not: null } } });
+  for (const stale of stalePlaceholders) {
+    if (stale.mbid && !seenStudioMbids.has(stale.mbid)) {
+      await prisma.album.delete({ where: { id: stale.id } });
+      log.push(`Removed vanished back-catalogue placeholder "${stale.title}" for "${artistName}"`);
+    }
+  }
+
+  await fetchMissingCoversForArtist(artistId, artistName, log);
+}
+
+// --- Per-artist driver ---
+
+async function enrichOneArtist(artist: Artist, log: string[]): Promise<void> {
+  let mbid = artist.mbid;
+
+  if (!mbid || artist.matchConfidence === "UNMATCHED" || artist.matchConfidence === "LOW") {
+    const match = await matchArtist(artist.name);
+    if (match) {
+      const holder = await prisma.artist.findUnique({ where: { mbid: match.mbid } });
+      if (holder && holder.id !== artist.id) {
+        log.push(
+          `Match conflict: "${artist.name}" matched MusicBrainz artist "${match.name}" (mb:${match.mbid}), already claimed by "${holder.name}" — left unmatched for review`,
+        );
+      } else {
+        await prisma.artist.update({
+          where: { id: artist.id },
+          data: { mbid: match.mbid, disambiguation: match.disambiguation, matchConfidence: match.confidence },
+        });
+        mbid = match.mbid;
+        if (match.confidence === "LOW") {
+          log.push(`Low-confidence match: "${artist.name}" -> "${match.name}" (mb:${match.mbid})`);
+        }
+      }
+    } else if (!mbid) {
+      log.push(`No MusicBrainz match for artist "${artist.name}"`);
+    }
+  }
+
+  if (!mbid) return; // stays UNMATCHED — nothing to reconcile against
+
+  await reconcileArtistAlbums(artist.id, artist.name, mbid, log);
+}
+
+async function doMusicEnrich(runId: number): Promise<void> {
+  const log: string[] = [];
+
+  const artists = await prisma.artist.findMany({ orderBy: { id: "asc" } });
+  const total = artists.length;
+  await updateProgress(runId, { total, filesSeen: 0, progress: 0, message: `Enriching ${total} artist(s)` });
+
+  let completed = 0;
+  for (const artist of artists) {
+    try {
+      if (artist.various) {
+        // Compilations pseudo-artist: skip MB artist matching and the
+        // back-catalogue listing entirely (see SPEC-MUSIC.md Facts), but
+        // still fetch covers for its owned albums so the artist grid tile
+        // isn't blank.
+        await fetchMissingCoversForArtist(artist.id, artist.name, log);
+      } else {
+        await enrichOneArtist(artist, log);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log.push(`Failed to enrich "${artist.name}": ${message}`);
+    }
+    completed++;
+    if (completed % PROGRESS_UPDATE_EVERY === 0 || completed === total) {
+      await updateProgress(runId, { progress: completed, filesSeen: completed, message: `Enriched ${completed}/${total}: ${artist.name}` });
+    }
+  }
+
+  await finishRun(runId, log, `Enriched ${total} artist(s)`);
+}
+
+/**
+ * Kick off MusicBrainz enrichment. Resolves quickly once the run is
+ * registered (or an existing run is found) — the actual work continues in
+ * the background and is not awaited here. No API key is required (unlike
+ * TMDB) since MusicBrainz's search API is open, gated only by rate limit.
+ */
+export async function runMusicEnrich(): Promise<{ runId: number; started: boolean }> {
+  const { run, started } = await guardAndCreateRun("ENRICH_MUSIC");
+  if (!started) return { runId: run.id, started: false };
+
+  doMusicEnrich(run.id).catch(async (err) => {
+    console.error("[musicbrainz] enrich failed:", err);
+    await failRun(run.id, err).catch((e) => console.error("[musicbrainz] failed to record failure:", e));
+  });
+
+  return { runId: run.id, started: true };
+}
