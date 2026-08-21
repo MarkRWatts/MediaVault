@@ -8,6 +8,7 @@ import CoverImage from "@/components/CoverImage";
 import AudioCodecBadge from "@/components/AudioCodecBadge";
 import { getAlbumDetail } from "@/lib/queries-music";
 import type { AlbumTrackView } from "@/lib/queries-music";
+import { qualityLabel } from "@/lib/audio-quality";
 
 const KIND_LABELS: Record<string, string> = {
   STUDIO: "Studio",
@@ -28,25 +29,38 @@ function formatDuration(secs: number | null): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-// The album's "summary" codec badge shown next to the title — whichever
-// codec the most tracks share. Per-track badges only render below when a
-// track's codec differs from this one (e.g. one bonus MP3 in an otherwise
-// ALAC album), so the common case stays quiet.
-function dominantCodec(tracks: AlbumTrackView[]): string | null {
-  const counts = new Map<string, number>();
-  for (const t of tracks) {
-    if (!t.codec) continue;
-    counts.set(t.codec, (counts.get(t.codec) ?? 0) + 1);
+// Most common non-null value in a list — used for both the dominant codec
+// and the dominant quality string below. Ties keep whichever value was
+// encountered first.
+function modal<T>(values: (T | null)[]): T | null {
+  const counts = new Map<T, number>();
+  for (const v of values) {
+    if (v === null) continue;
+    counts.set(v, (counts.get(v) ?? 0) + 1);
   }
-  let best: string | null = null;
+  let best: T | null = null;
   let bestCount = 0;
-  for (const [codec, count] of counts) {
+  for (const [value, count] of counts) {
     if (count > bestCount) {
-      best = codec;
+      best = value;
       bestCount = count;
     }
   }
   return best;
+}
+
+// The album's "summary" badge shown next to the title — whichever codec and
+// quality string the most tracks share (independently modal, so a
+// single-codec album with one outlier bitrate still gets a clean pair).
+// Per-track badges only render below when a track's codec OR quality
+// differs from this dominant pair (e.g. one bonus MP3 in an otherwise ALAC
+// album, or one lower-bitrate rip), so the common case stays quiet.
+function dominantCodec(tracks: AlbumTrackView[]): string | null {
+  return modal(tracks.map((t) => t.codec));
+}
+
+function dominantQuality(tracks: AlbumTrackView[]): string | null {
+  return modal(tracks.map((t) => qualityLabel(t)));
 }
 
 export default async function AlbumPage({
@@ -63,6 +77,7 @@ export default async function AlbumPage({
 
   const allTracks = album.discs.flatMap((d) => d.tracks);
   const codec = dominantCodec(allTracks);
+  const quality = dominantQuality(allTracks);
   const multiDisc = album.discs.length > 1;
 
   return (
@@ -97,7 +112,7 @@ export default async function AlbumPage({
             <span className="rounded border border-dvd-border bg-dvd-bg px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-widest leading-none text-dvd">
               {KIND_LABELS[album.kind] ?? album.kind}
             </span>
-            <AudioCodecBadge codec={codec} />
+            <AudioCodecBadge codec={codec} quality={quality} />
           </div>
         </div>
       </div>
@@ -114,18 +129,22 @@ export default async function AlbumPage({
                 </h2>
               )}
               <ul className="flex flex-col divide-y divide-border rounded-lg border border-border bg-bg-elevated">
-                {disc.tracks.map((t) => (
-                  <li key={t.id} className="flex items-center gap-3 px-3 py-2">
-                    <span className="w-6 shrink-0 text-right font-mono text-xs text-text-faint">
-                      {t.trackNumber != null ? t.trackNumber.toString().padStart(2, "0") : "—"}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate text-sm text-text">{t.title}</span>
-                    {t.codec !== codec && <AudioCodecBadge codec={t.codec} />}
-                    <span className="shrink-0 font-mono text-xs text-text-faint">
-                      {formatDuration(t.durationSecs)}
-                    </span>
-                  </li>
-                ))}
+                {disc.tracks.map((t) => {
+                  const trackQuality = qualityLabel(t);
+                  const differsFromDominant = t.codec !== codec || trackQuality !== quality;
+                  return (
+                    <li key={t.id} className="flex items-center gap-3 px-3 py-2">
+                      <span className="w-6 shrink-0 text-right font-mono text-xs text-text-faint">
+                        {t.trackNumber != null ? t.trackNumber.toString().padStart(2, "0") : "—"}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-sm text-text">{t.title}</span>
+                      {differsFromDominant && <AudioCodecBadge codec={t.codec} quality={trackQuality} />}
+                      <span className="shrink-0 font-mono text-xs text-text-faint">
+                        {formatDuration(t.durationSecs)}
+                      </span>
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           ))

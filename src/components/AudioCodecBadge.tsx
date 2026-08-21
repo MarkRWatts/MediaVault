@@ -4,6 +4,11 @@
 // (.m4p — cannot play outside iTunes/Apple Music, never probed) borrows the
 // missing tokens so it reads as a real gap rather than just "another codec".
 // Anything unrecognised falls back to the neutral dvd tokens.
+//
+// Optional `quality` renders as a second font-mono segment inside the same
+// chip, separated by a middle dot (e.g. "ALAC · 16/44.1", "MP3 · ~320k") —
+// see qualityLabel in @/lib/audio-quality for how that string is derived.
+// Omitted entirely when quality is null/undefined (DRM, or not computable).
 
 const LABELS: Record<string, string> = {
   alac: "ALAC",
@@ -25,9 +30,11 @@ function styleFor(codec: string): string {
 
 export default function AudioCodecBadge({
   codec,
+  quality,
   className = "",
 }: {
   codec: string | null | undefined;
+  quality?: string | null;
   className?: string;
 }) {
   const key = (codec ?? "").toLowerCase();
@@ -35,9 +42,17 @@ export default function AudioCodecBadge({
 
   return (
     <span
-      className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-widest leading-none ${styleFor(key)} ${className}`}
+      className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-widest leading-none ${styleFor(key)} ${className}`}
     >
-      {label}
+      <span>{label}</span>
+      {quality != null && (
+        <>
+          <span aria-hidden="true" className="opacity-60">
+            ·
+          </span>
+          <span className="font-mono normal-case tracking-normal">{quality}</span>
+        </>
+      )}
     </span>
   );
 }

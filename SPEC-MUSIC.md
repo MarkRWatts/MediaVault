@@ -223,6 +223,17 @@ Report threshold: an artist appears in `missingByArtist` only when
 - Square covers: new `CoverImage` (aspect-square) modelled on `PosterImage`
   incl. the no-art title-card fallback. All pages `force-dynamic` like others.
 
+## Quality badges (Worker F, follow-up)
+
+Surface audio quality beside the codec chips. `AudioCodecBadge` gains an
+optional quality string rendered as a second mono segment in the same chip:
+lossless → `16/44.1` style (bitDepth/sampleRate÷1000, drop trailing zeros,
+omit when either is null); lossy → `~320k` (average kbps from
+sizeBytes*8/durationSecs/1000, rounded to nearest 16; omit when not
+computable); DRM → no quality segment. `getAlbumDetail` tracks gain
+sampleRate/bitDepth/sizeBytes; album dominant badge shows the modal quality
+string. Artist-page owned album tiles: no change (keep them quiet).
+
 ## Env & deploy (Worker E)
 
 `MUSIC_PATH` optional everywhere, mirroring `TVSHOWS_PATH` exactly:

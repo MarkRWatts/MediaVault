@@ -190,6 +190,9 @@ export interface AlbumTrackView {
   codec: string | null;
   lossless: boolean;
   durationSecs: number | null;
+  sampleRate: number | null;
+  bitDepth: number | null;
+  sizeBytes: number | null; // BigInt from the DB, serialized to number for the UI layer
 }
 
 export interface AlbumDiscView {
@@ -228,6 +231,11 @@ export async function getAlbumDetail(id: number): Promise<AlbumDetail | null> {
       codec: t.codec,
       lossless: t.lossless,
       durationSecs: t.durationSecs,
+      sampleRate: t.sampleRate,
+      bitDepth: t.bitDepth,
+      // Client Component is plain data: BigInt sizeBytes is converted to a
+      // number here, same convention as queries.ts (movie file sizes).
+      sizeBytes: t.sizeBytes === null ? null : Number(t.sizeBytes),
     };
     const arr = byDisc.get(t.disc);
     if (arr) arr.push(track);
