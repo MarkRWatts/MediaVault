@@ -313,6 +313,20 @@ async function reconcileArtistAlbums(artistId: number, artistName: string, artis
     await prisma.album.update({ where: { id: owned.id }, data: { mbid: rg.id, year, releaseDate, kind } });
   }
 
+  // Owned albums that matched no release group at all keep the scanner's
+  // default kind STUDIO, which pollutes the studio timeline (real case: Kebu's
+  // "Live Online" and "Live in Oslo - DVD" are absent from MusicBrainz and
+  // showed as undated studio albums). A "live" in the title is a strong
+  // enough signal to reclassify just those leftovers; everything else stays
+  // STUDIO, and a later successful match overwrites the heuristic anyway.
+  for (const a of ownedAlbums) {
+    if (claimedOwnedIds.has(a.id) || a.mbid || a.kind !== "STUDIO") continue;
+    if (/\blive\b/i.test(a.title)) {
+      await prisma.album.update({ where: { id: a.id }, data: { kind: "LIVE" } });
+      log.push(`Reclassified unmatched "${a.title}" (${artistName}) as LIVE by title heuristic`);
+    }
+  }
+
   // studioTotal is recorded regardless of whether gap tracking qualifies below
   // — it's what lets the UI show an honest "1/282 owned" instead of "1/1".
   const studioReleaseGroups = releaseGroups.filter(
