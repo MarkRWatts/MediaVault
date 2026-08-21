@@ -211,6 +211,7 @@ model Artist {
   disambiguation  String?
   various         Boolean  @default(false) // Compilations pseudo-artist
   matchConfidence String   @default("UNMATCHED") // EXACT | SEARCH | LOW | UNMATCHED
+  studioTotal     Int? // count of official STUDIO release groups MusicBrainz lists, recorded even when gap tracking is off and no placeholders are created
   albums          Album[]
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt

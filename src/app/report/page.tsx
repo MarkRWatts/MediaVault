@@ -72,10 +72,11 @@ export default async function ReportPage({
   // (comma-separable). Sections default collapsed otherwise.
   const open = new Set((params.open ?? "").split(",").filter(Boolean));
 
-  // missingByArtist only lists artists past the report threshold (see
-  // constants.ts MUSIC_REPORT_MIN_OWNED/MUSIC_REPORT_MIN_PCT) — the section
-  // count reflects what's actually listed, not the global albumsMissing
-  // total (which also counts sub-threshold gaps like a 2-of-43 catalogue).
+  // missingByArtist only lists artists past the gap-tracking threshold (see
+  // constants.ts MUSIC_GAP_MIN_OWNED/MUSIC_GAP_MIN_PCT — enforced at
+  // placeholder-creation time in musicbrainz.ts, this is just a
+  // belt-and-braces re-check) — the section count reflects what's actually
+  // listed, not the global albumsMissing total.
   const missingBackCatalogueCount = music.missingByArtist.reduce((sum, g) => sum + g.albums.length, 0);
 
   const tiles: { label: string; value: number | string; tone?: "accent" | "missing" }[] = [

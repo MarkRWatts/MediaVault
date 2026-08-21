@@ -140,7 +140,7 @@ export default async function ArtistPage({
   const detail = await getArtistDetail(artistId);
   if (!detail) notFound();
 
-  const { artist, studio, shelf, stats } = detail;
+  const { artist, studio, shelf, stats, gapTrackingOff } = detail;
   const missing = stats.total - stats.owned;
 
   return (
@@ -188,6 +188,12 @@ export default async function ArtistPage({
                 style={{ width: `${stats.pct}%` }}
               />
             </div>
+            {gapTrackingOff && (
+              <p className="text-xs text-text-faint">
+                MusicBrainz lists {stats.total} studio albums for this artist — gap tracking starts once at
+                least 2 (and 20%) are owned.
+              </p>
+            )}
           </div>
         )}
       </div>

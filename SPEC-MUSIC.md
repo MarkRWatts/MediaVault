@@ -182,6 +182,10 @@ export async function getArtistDetail(id: number): Promise<null | {
             hasCover: boolean; trackCount: number; trackTotal: number | null }[]; // release order
   shelf: typeof studio & { kind: string }[]; // owned non-studio, by year
   stats: { owned: number; total: number; pct: number; yearMin: number | null; yearMax: number | null };
+  gapTrackingOff: boolean; // true when MusicBrainz's studio catalogue is known
+    // (Artist.studioTotal) but bigger than the studio rows actually present —
+    // gap tracking never qualified, so `stats.total` is honest but the grid
+    // has no missing-album placeholders to show for it
 }>;
 export async function getAlbumDetail(id: number): Promise<null | { /* album + artist +
   tracks grouped by disc, each { trackNumber, title, codec, lossless, durationSecs } */ }>;
@@ -192,11 +196,24 @@ export async function getMusicReportData(): Promise<{
 }>;
 ```
 
-Report threshold: an artist appears in `missingByArtist` only when
-`ownedStudio >= 2 && ownedStudio / totalStudio >= 0.2` (constants
-`MUSIC_REPORT_MIN_OWNED`, `MUSIC_REPORT_MIN_PCT` in constants.ts) — keeps
-2-of-43 completist catalogues (Zappa) from drowning the report. The artist
-*page* always shows the full catalogue regardless.
+Gap-tracking threshold: owned=false missing-album placeholders are only
+*created* for an artist — by `reconcileArtistAlbums` in musicbrainz.ts, during
+enrichment — once `ownedStudioCount >= 2 && ownedStudioCount / studioTotal >=
+0.2` (constants `MUSIC_GAP_MIN_OWNED`, `MUSIC_GAP_MIN_PCT` in constants.ts).
+`studioTotal` (the count of official STUDIO release groups MusicBrainz lists)
+is recorded on the Artist row either way. This is enforced at creation time,
+not just at report time: an artist that doesn't qualify gets no placeholder
+rows at all (any existing ones are deleted on the next enrichment run), which
+is what keeps a single owned Barenboim disc from spawning 281 missing-album
+rows and the cover pass from then fetching art for every one of them —
+2-of-43 completist catalogues (Zappa) are kept out the same way. The artist
+*page* always shows the full studio catalogue it has rows for; when gap
+tracking hasn't qualified, `getArtistDetail`'s `stats.total` still reports
+the true MusicBrainz count via `studioTotal` (`gapTrackingOff: true`) even
+though the grid itself only has the owned albums to show. `getMusicReportData`
+keeps its own copy of the same threshold check as belt-and-braces — with
+creation gated, `missingByArtist` is empty for a sub-threshold artist by
+construction (no owned=false rows exist to list).
 
 ## UI (Worker D)
 

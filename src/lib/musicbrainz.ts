@@ -13,6 +13,7 @@ import { prisma } from "@/lib/db";
 import { normalizeTitle, sortTitle } from "@/lib/parse";
 import type { Artist } from "@/generated/prisma/client";
 import type { AlbumKind } from "@/lib/constants";
+import { MUSIC_GAP_MIN_OWNED, MUSIC_GAP_MIN_PCT } from "@/lib/constants";
 import { guardAndCreateRun, updateProgress, finishRun, failRun } from "@/lib/runs";
 import { fetchCover } from "@/lib/cover-art";
 
@@ -310,6 +311,38 @@ async function reconcileArtistAlbums(artistId: number, artistName: string, artis
     }
 
     await prisma.album.update({ where: { id: owned.id }, data: { mbid: rg.id, year, releaseDate, kind } });
+  }
+
+  // studioTotal is recorded regardless of whether gap tracking qualifies below
+  // — it's what lets the UI show an honest "1/282 owned" instead of "1/1".
+  const studioReleaseGroups = releaseGroups.filter(
+    (rg) => classifyAlbumKind(rg["primary-type"], rg["secondary-types"]) === "STUDIO",
+  );
+  const studioTotal = studioReleaseGroups.length;
+  await prisma.artist.update({ where: { id: artistId }, data: { studioTotal } });
+
+  // Gap-tracking gate (see SPEC-MUSIC.md / constants.ts MUSIC_GAP_MIN_OWNED,
+  // MUSIC_GAP_MIN_PCT): only create/maintain owned=false placeholders once we
+  // own enough of the artist to be worth completing. Without this, a single
+  // owned disc by a prolific or classical artist (Barenboim: 1 of 282 studio
+  // release groups) spawns hundreds of missing-album placeholders and the
+  // cover pass then fetches art for every one of them.
+  const ownedStudioCount = await prisma.album.count({ where: { artistId, owned: true, kind: "STUDIO" } });
+  const qualifies =
+    studioTotal > 0 && ownedStudioCount >= MUSIC_GAP_MIN_OWNED && ownedStudioCount / studioTotal >= MUSIC_GAP_MIN_PCT;
+
+  if (!qualifies) {
+    // Not (yet) worth tracking the gap: no placeholders are created, and any
+    // placeholders created by a prior run (before this gate existed, or from
+    // when the artist briefly qualified) are cleaned up. Owned-album
+    // backfill above and owned-album cover fetch below still happen.
+    const removed = await prisma.album.deleteMany({ where: { artistId, owned: false } });
+    if (removed.count > 0) {
+      log.push(`Removed ${removed.count} back-catalogue placeholder(s) for "${artistName}" — gap tracking off`);
+    }
+    log.push(`Gap tracking off for "${artistName}": owns ${ownedStudioCount} of ${studioTotal} studio albums`);
+    await fetchMissingCoversForArtist(artistId, artistName, log);
+    return;
   }
 
   // Pass 2: create owned=false placeholders for STUDIO groups we don't own.

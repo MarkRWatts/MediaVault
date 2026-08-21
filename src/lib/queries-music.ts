@@ -4,7 +4,7 @@
 // code is written against these exact exported types.
 
 import { prisma } from "@/lib/db";
-import { MUSIC_REPORT_MIN_OWNED, MUSIC_REPORT_MIN_PCT } from "@/lib/constants";
+import { MUSIC_GAP_MIN_OWNED, MUSIC_GAP_MIN_PCT } from "@/lib/constants";
 
 // ---------------------------------------------------------------------------
 // Shared sort helpers
@@ -73,6 +73,7 @@ export async function getMusicIndex(): Promise<MusicIndexData> {
         name: true,
         sortName: true,
         various: true,
+        studioTotal: true,
         albums: { select: { id: true, kind: true, owned: true, year: true, coverPath: true, updatedAt: true } },
       },
     }),
@@ -88,12 +89,16 @@ export async function getMusicIndex(): Promise<MusicIndexData> {
       const studioAlbums = a.albums.filter((al) => al.kind === "STUDIO");
       const coverAlbumId = pickCoverAlbumId(a.albums);
       const coverAlbum = coverAlbumId == null ? null : a.albums.find((al) => al.id === coverAlbumId);
+      // See getArtistDetail's totalStudio comment: studioTotal is the
+      // MusicBrainz-known count even when gap tracking never created
+      // placeholders for it, so a Barenboim-style artist shows "1/282" here
+      // rather than "1/1".
       return {
         id: a.id,
         name: a.name,
         various: a.various,
         ownedStudio: studioAlbums.filter((al) => al.owned).length,
-        totalStudio: studioAlbums.length,
+        totalStudio: Math.max(a.studioTotal ?? 0, studioAlbums.length),
         coverAlbumId,
         coverVersion: coverAlbum ? coverAlbum.updatedAt.getTime() : null,
       };
@@ -135,6 +140,13 @@ export interface ArtistDetail {
   studio: ArtistCatalogueAlbum[]; // full back-catalogue, release (year) order, nulls last
   shelf: ArtistShelfAlbum[]; // owned non-studio albums, by year
   stats: { owned: number; total: number; pct: number; yearMin: number | null; yearMax: number | null };
+  /** True when MusicBrainz's known studio catalogue (Artist.studioTotal) is
+   *  larger than the studio Album rows actually present — i.e. gap tracking
+   *  never kicked in (see constants.ts MUSIC_GAP_MIN_OWNED/MUSIC_GAP_MIN_PCT
+   *  and musicbrainz.ts's reconcileArtistAlbums), so `total` above reflects
+   *  the honest MusicBrainz count even though no missing-album placeholders
+   *  exist to fill the grid. */
+  gapTrackingOff: boolean;
 }
 
 export async function getArtistDetail(id: number): Promise<ArtistDetail | null> {
@@ -168,7 +180,11 @@ export async function getArtistDetail(id: number): Promise<ArtistDetail | null> 
     .sort(byYearAsc);
 
   const ownedStudio = studio.filter((a) => a.owned).length;
-  const totalStudio = studio.length;
+  // studioTotal is the MusicBrainz-known count, recorded even when gap
+  // tracking never created placeholders for it — fall back to the rows
+  // actually present (pre-enrichment, or an artist with no MB match at all)
+  // and never let a stale/short studioTotal under-report what's on disk.
+  const totalStudio = Math.max(artist.studioTotal ?? 0, studio.length);
   const studioYears = studio.map((a) => a.year).filter((y): y is number => y !== null);
 
   return {
@@ -187,6 +203,7 @@ export async function getArtistDetail(id: number): Promise<ArtistDetail | null> 
       yearMin: studioYears.length > 0 ? Math.min(...studioYears) : null,
       yearMax: studioYears.length > 0 ? Math.max(...studioYears) : null,
     },
+    gapTrackingOff: totalStudio > studio.length,
   };
 }
 
@@ -322,10 +339,14 @@ export async function getMusicReportData(): Promise<MusicReportData> {
     prisma.track.count({ where: { lossless: true } }),
   ]);
 
-  // Report threshold (SPEC-MUSIC.md "Queries"): an artist only appears once
-  // we own enough of its studio catalogue to be worth completing — keeps
-  // 2-of-43 completist catalogues (Zappa) out of the report. The artist page
-  // itself (getArtistDetail) always shows the full catalogue regardless.
+  // Report threshold (SPEC-MUSIC.md "Queries"): missing-album placeholders
+  // are only created for an artist once we own enough of its studio
+  // catalogue to be worth completing (see constants.ts MUSIC_GAP_MIN_OWNED /
+  // MUSIC_GAP_MIN_PCT, enforced at placeholder-creation time in
+  // musicbrainz.ts's reconcileArtistAlbums) — a sub-threshold artist simply
+  // has no owned=false rows, so missingAlbums.length === 0 already excludes
+  // it below. This check is kept as belt-and-braces in case stale rows ever
+  // exist (e.g. between an enrichment run and the threshold changing).
   const missingByArtist: MissingArtistGroup[] = artists
     .filter((a) => !a.various)
     .slice()
@@ -336,8 +357,8 @@ export async function getMusicReportData(): Promise<MusicReportData> {
       const totalStudio = studioAlbums.length;
       const qualifies =
         totalStudio > 0 &&
-        ownedStudio >= MUSIC_REPORT_MIN_OWNED &&
-        ownedStudio / totalStudio >= MUSIC_REPORT_MIN_PCT;
+        ownedStudio >= MUSIC_GAP_MIN_OWNED &&
+        ownedStudio / totalStudio >= MUSIC_GAP_MIN_PCT;
       if (!qualifies) return null;
 
       const missingAlbums = studioAlbums.filter((al) => !al.owned);

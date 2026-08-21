@@ -77,8 +77,10 @@ export function isLosslessCodec(codec?: string | null): boolean {
   return LOSSLESS_CODECS.has(codec.toLowerCase());
 }
 
-// Report threshold (see SPEC-MUSIC.md): an artist only appears in the
-// missing-back-catalogue report once we own enough of it to be worth
-// completing — keeps 2-of-43 completist catalogues (Zappa) out of the report.
-export const MUSIC_REPORT_MIN_OWNED = 2;
-export const MUSIC_REPORT_MIN_PCT = 0.2;
+// Gap-tracking threshold (see SPEC-MUSIC.md): missing-album placeholders are
+// only created (and the artist only appears in the missing-back-catalogue
+// report) once we own enough of the artist to be worth completing — keeps a
+// single owned Barenboim disc from spawning 281 missing-album placeholders,
+// and keeps 2-of-43 completist catalogues (Zappa) out of the report.
+export const MUSIC_GAP_MIN_OWNED = 2;
+export const MUSIC_GAP_MIN_PCT = 0.2;
