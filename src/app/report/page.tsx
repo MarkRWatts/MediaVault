@@ -21,6 +21,38 @@ function SectionEmpty({ children }: { children: React.ReactNode }) {
   return <p className="py-8 text-center text-sm text-text-faint">{children}</p>;
 }
 
+// Native <details> keeps the page server-rendered with zero client JS; the
+// long lists default to collapsed so the totals strip stays in view.
+function CollapsibleSection({
+  title,
+  subtitle,
+  count,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  count: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <details className="group">
+      <summary className="flex cursor-pointer select-none list-none items-baseline gap-3 [&::-webkit-details-marker]:hidden">
+        <svg
+          viewBox="0 0 12 12"
+          aria-hidden
+          className="h-3 w-3 shrink-0 self-center fill-text-faint transition-transform group-open:rotate-90"
+        >
+          <path d="M4 2l5 4-5 4z" />
+        </svg>
+        <h2 className="font-display text-xl tracking-wide group-hover:text-accent">{title}</h2>
+        <span className="font-mono text-xs text-text-faint">{count}</span>
+      </summary>
+      {subtitle && <p className="mt-1 pl-6 text-xs text-text-faint">{subtitle}</p>}
+      <div className="pt-4">{children}</div>
+    </details>
+  );
+}
+
 export default async function ReportPage() {
   const [{ totals, missingByCollection, upgradeCandidates, issues }, tv] = await Promise.all([
     getReportData(),
@@ -74,8 +106,10 @@ export default async function ReportPage() {
         </div>
       </div>
 
-      <section className="flex flex-col gap-4">
-        <h2 className="font-display text-xl tracking-wide">Missing from collections</h2>
+      <CollapsibleSection
+        title="Missing from collections"
+        count={`${totals.missingCount} film${totals.missingCount === 1 ? "" : "s"} across ${missingByCollection.length} collection${missingByCollection.length === 1 ? "" : "s"}`}
+      >
         {missingByCollection.length === 0 ? (
           <SectionEmpty>Every known collection is fully catalogued.</SectionEmpty>
         ) : (
@@ -117,13 +151,13 @@ export default async function ReportPage() {
             ))}
           </div>
         )}
-      </section>
+      </CollapsibleSection>
 
-      <section className="flex flex-col gap-4">
-        <h2 className="font-display text-xl tracking-wide">Blu-ray upgrade candidates</h2>
-        <p className="-mt-2 text-xs text-text-faint">
-          Owned only on DVD — no Blu-ray version on disk.
-        </p>
+      <CollapsibleSection
+        title="Blu-ray upgrade candidates"
+        subtitle="Owned only on DVD — no Blu-ray version on disk."
+        count={`${upgradeCandidates.length} film${upgradeCandidates.length === 1 ? "" : "s"}`}
+      >
         {upgradeCandidates.length === 0 ? (
           <SectionEmpty>No DVD-only films — the library is fully upgraded.</SectionEmpty>
         ) : (
@@ -153,14 +187,13 @@ export default async function ReportPage() {
             ))}
           </div>
         )}
-      </section>
+      </CollapsibleSection>
 
-      <section className="flex flex-col gap-4 pb-16">
-        <h2 className="font-display text-xl tracking-wide">Library issues</h2>
-        <p className="-mt-2 text-xs text-text-faint">
-          Films that could use another look — a low-confidence or missing metadata
-          match, an unrecognised disc format, or no release year.
-        </p>
+      <CollapsibleSection
+        title="Library issues"
+        subtitle="Films that could use another look — a low-confidence or missing metadata match, an unrecognised disc format, or no release year."
+        count={`${issues.length} film${issues.length === 1 ? "" : "s"}`}
+      >
         {issues.length === 0 ? (
           <SectionEmpty>No outstanding issues.</SectionEmpty>
         ) : (
@@ -190,10 +223,12 @@ export default async function ReportPage() {
             ))}
           </ul>
         )}
-      </section>
+      </CollapsibleSection>
 
-      <section className="flex flex-col gap-4 pb-16">
-        <h2 className="font-display text-xl tracking-wide">Missing from shows</h2>
+      <CollapsibleSection
+        title="Missing from shows"
+        count={`${tv.episodesTotal - tv.episodesOwned} episode${tv.episodesTotal - tv.episodesOwned === 1 ? "" : "s"} across ${tv.missingByShow.length} show${tv.missingByShow.length === 1 ? "" : "s"}`}
+      >
         {tv.missingByShow.length === 0 ? (
           <SectionEmpty>Every known show is fully catalogued.</SectionEmpty>
         ) : (
@@ -226,7 +261,8 @@ export default async function ReportPage() {
             ))}
           </div>
         )}
-      </section>
+      </CollapsibleSection>
+      <div className="pb-10" />
     </div>
   );
 }
