@@ -1,53 +1,96 @@
 # filmDB
 
-A personal index of the DVD/Blu-ray film collection stored on the nas.example.lan
-SMB share (`//nas.example.lan/media` → `Movies`, also served by Jellyfin). It scans
-the share, probes every file with ffprobe for real resolution and soundtracks,
-enriches from TMDB, and presents a poster-forward library with collection
-timelines and a "what's missing" collector's report.
+A personal index of a DVD/Blu-ray film and TV collection stored on a NAS SMB
+share (also served by Jellyfin). It scans the share, probes every file with
+ffprobe for real resolution and soundtracks, enriches from TMDB, and presents
+a poster-forward library with collection timelines, season-by-season show
+pages, and a "what's missing" collector's report.
 
-- **Library** — every owned film, searchable/filterable, with DVD/Blu-ray badges.
+- **Library** — every owned film, searchable/filterable, with format
+  (4K/Blu-ray/DVD) and resolution badges.
 - **Film detail** — editions (theatrical vs director's cut), resolutions,
-  soundtracks, file details.
-- **Collections** — James Bond, Alien, etc., in release-order timelines with
-  missing films greyed out.
-- **Report** — missing films per collection, Blu-ray upgrade candidates
-  (DVD-only titles), and files needing metadata attention.
+  soundtracks (Dolby/DTS profile badges, HDR labels), file details, and
+  per-version "Play in Jellyfin" links.
+- **Shows** — TV series with per-season episode lists, missing episodes
+  greyed out, and per-episode play links. Episode numbering follows disc
+  order (TMDB DVD episode groups), because this is a disc library.
+- **Collections** — film series (James Bond, Alien, …) in release-order
+  timelines with missing films greyed out.
+- **Report** — missing films per collection, missing seasons/episodes per
+  show, Blu-ray upgrade candidates, and files needing metadata attention.
 
 ## Stack
 
-Next.js 15 (App Router) · Prisma 7 + SQLite · Tailwind v4 · ffprobe · TMDB API.
-See [PLAN.md](PLAN.md) for design decisions and [DEPLOYMENT.md](DEPLOYMENT.md)
-for Docker/VM deployment (shared-Caddy `edge` network pattern).
+Next.js 15 (App Router) · Prisma 7 + SQLite · Tailwind v4 · ffprobe · TMDB
+API · Jellyfin API. See [PLAN.md](PLAN.md) for design decisions and
+[DEPLOYMENT.md](DEPLOYMENT.md) for Docker/VM deployment (shared-Caddy `edge`
+network pattern).
+
+## Configuration
+
+Everything external is an environment variable — no hostnames or paths are
+hardcoded. Local dev reads `.env` (template: [.env.example](.env.example));
+the Docker deployment reads `.env.docker` on the server (template:
+[.env.docker.example](.env.docker.example)).
+
+### Media paths
+
+| Variable | Meaning |
+| --- | --- |
+| `MOVIES_PATH` | Folder of movie files the scanner walks (e.g. `/Volumes/media/Movies` locally, `/media-share/Movies` in the container). |
+| `TVSHOWS_PATH` | Folder of TV shows (`Show (Year)/Season NN/Show SxxEyy.ext`). Optional — unset skips all TV features. |
+| `POSTER_CACHE_DIR` | Where downloaded TMDB artwork is cached. |
+| `DATABASE_URL` | SQLite location, e.g. `file:./data/filmdb.db`. |
+| `FFPROBE_DOCKER_IMAGE` | Dev-only fallback: run ffprobe via `docker run` when it isn't on PATH (the deploy image installs ffmpeg). |
+
+### SMB share (Docker deployment only)
+
+The production compose mounts the NAS share as a CIFS named volume — the
+Docker daemon performs the mount, so no host mount or sudo is needed. Use a
+dedicated read-only SMB account.
+
+| Variable | Meaning |
+| --- | --- |
+| `MOVIES_SMB_HOST` | NAS hostname or IP. |
+| `MOVIES_SMB_SHARE` | Share name holding the Movies / TV Shows folders. |
+| `MOVIES_SMB_USERNAME` / `MOVIES_SMB_PASSWORD` | Read-only SMB credentials. |
+| `MOVIES_HOST_PATH` | Local-dev bind source; on the server, an empty placeholder dir. |
+
+### TMDB
+
+| Variable | Meaning |
+| --- | --- |
+| `TMDB_API_KEY` | Free key or v4 read token from themoviedb.org → Settings → API. Optional — without it the app is scan-only (no posters, metadata, collections, or missing-content detection). |
+
+### Jellyfin (optional)
+
+| Variable | Meaning |
+| --- | --- |
+| `JELLYFIN_URL` | Jellyfin base URL, e.g. `http://<nas>:8096`. |
+| `JELLYFIN_API_KEY` | Token from Dashboard → API Keys. Unset disables the integration gracefully. |
+| `JELLYFIN_MOVIES_PREFIX` | Path prefix Jellyfin's movie items carry before the relative file path (default `/media/Movies/`). |
+| `JELLYFIN_TV_PREFIX` | Same for TV episodes (default `/media/TV Shows/`). |
+
+A sync job matches Jellyfin items to files by path (Unicode-normalized, so
+macOS-scanned NFD paths match Linux NFC ones), runs automatically after every
+scan, and powers the per-version/per-episode "Play in Jellyfin" links.
 
 ## Development
 
 ```bash
-cp .env.example .env       # add TMDB_API_KEY for metadata/posters
+cp .env.example .env       # fill in paths + keys
 npm install
 npx prisma migrate dev
 npm run dev                # http://localhost:3000
 ```
 
-The dev scanner needs the share mounted at `/Volumes/media` and OrbStack/Docker
-running (ffprobe runs via the `mwader/static-ffmpeg` image when no local
-ffprobe exists). Trigger scans from the UI, or:
+Trigger scans from the UI, or:
 
 ```bash
-curl -X POST localhost:3000/api/scan
+curl -X POST localhost:3000/api/scan        # add ?force=1 to re-probe everything
 curl -X POST localhost:3000/api/enrich
+curl -X POST localhost:3000/api/jellyfin-sync
 ```
-
-## Jellyfin integration
-
-Optional: set `JELLYFIN_URL` and `JELLYFIN_API_KEY` (a Dashboard → API Keys
-token) to enable "Play in Jellyfin" links on film detail pages. A sync job
-matches Jellyfin library items to `Version` rows by file path (normalizing
-Unicode so macOS-scanned NFD paths match Jellyfin's NFC ones), runs
-automatically after every scan, and can be triggered manually via
-`curl -X POST localhost:3000/api/jellyfin-sync`. `JELLYFIN_MOVIES_PREFIX`
-(default `/media/Movies/`) controls how the item path is made relative to
-`MOVIES_PATH` before matching.
 
 ## Tests
 
@@ -55,6 +98,7 @@ automatically after every scan, and can be triggered manually via
 npx vitest run
 ```
 
-The filename parser is tested against the real quirks of the share's naming
-(missing years, `[imdbid-…]`/`[tmdbid-…]` tags, edition brackets, underscores,
-glued tags, typo'd extensions).
+The filename parsers are tested against the real quirks of a lived-in library:
+missing years, `[imdbid-…]`/`[tmdbid-…]` tags, edition brackets, underscores,
+glued tags, typo'd extensions, unpadded season folders, flat show layouts, and
+multi-episode files.

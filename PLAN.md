@@ -1,7 +1,7 @@
 # filmDB — Plan
 
 A good-looking web app + lightweight database indexing the DVD/BluRay rips in
-`//nas.example.lan/media/Movies` (mounted at `/Volumes/media/Movies` on the Mac;
+a NAS SMB share (mounted at `/Volumes/media/Movies` on the Mac;
 the deploy VM mounts the same SMB share and the container sees it read-only at
 `/movies` via `MOVIES_PATH`).
 
