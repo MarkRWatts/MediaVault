@@ -16,6 +16,24 @@ services:
       edge:
         aliases:
           - filmdb
+    # The VM has no host-level SMB mount (deploy has no sudo, by design).
+    # Instead the Docker daemon itself mounts the nas.example.lan share as a CIFS
+    # named volume — a read-only, purpose-made SMB account, credentials in
+    # .env.docker. The base compose's /movies bind still applies but points at
+    # an empty placeholder dir on the VM (MOVIES_HOST_PATH in .env.docker);
+    # MOVIES_PATH is overridden to look inside this volume instead.
+    environment:
+      MOVIES_PATH: /media-share/Movies
+    volumes:
+      - movies:/media-share:ro
+
+volumes:
+  movies:
+    driver: local
+    driver_opts:
+      type: cifs
+      device: //${MOVIES_SMB_HOST:?set MOVIES_SMB_HOST in .env.docker}/${MOVIES_SMB_SHARE:-media}
+      o: "addr=${MOVIES_SMB_HOST},username=${MOVIES_SMB_USERNAME:?set MOVIES_SMB_USERNAME},password=${MOVIES_SMB_PASSWORD:?set MOVIES_SMB_PASSWORD},ro,vers=3.1.1,iocharset=utf8"
 
 networks:
   edge:
