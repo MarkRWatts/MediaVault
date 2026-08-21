@@ -87,7 +87,7 @@ async function triggerLibraryRefresh(log: string[]): Promise<void> {
 /** Strip everything through the configured movies prefix, leaving the path
  * relative to MOVIES_PATH the same way Version.filePath is stored. */
 function relativizePath(jellyfinPath: string): string | null {
-  const prefix = process.env.JELLYFIN_MOVIES_PREFIX ?? DEFAULT_MOVIES_PREFIX;
+  const prefix = process.env.JELLYFIN_MOVIES_PREFIX || DEFAULT_MOVIES_PREFIX;
   const idx = jellyfinPath.indexOf(prefix);
   if (idx === -1) return null;
   return jellyfinPath.slice(idx + prefix.length);

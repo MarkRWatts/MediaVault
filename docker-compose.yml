@@ -15,7 +15,7 @@ services:
       # a post-scan library sync. Leave blank to disable.
       JELLYFIN_URL: ${JELLYFIN_URL:-}
       JELLYFIN_API_KEY: ${JELLYFIN_API_KEY:-}
-      JELLYFIN_MOVIES_PREFIX: ${JELLYFIN_MOVIES_PREFIX:-}
+      JELLYFIN_MOVIES_PREFIX: ${JELLYFIN_MOVIES_PREFIX:-/media/Movies/}
     volumes:
       # SQLite database and cached posters.
       - data:/app/data
