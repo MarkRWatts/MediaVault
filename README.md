@@ -17,8 +17,11 @@ pages, and a "what's missing" collector's report.
   greyed out, and per-episode play links. Episode numbering follows disc
   order (TMDB DVD episode groups), because this is a disc library.
 - **Music** — artists with studio back-catalogues from MusicBrainz, owned vs
-  missing albums shown by colour, with lossless/codec badges and per-album
-  track details.
+  missing albums shown by colour, lossless/codec + quality badges
+  (`ALAC · 16/44.1`), cover art extracted from the files' own embedded
+  artwork, and **gapless in-browser album playback** — lossless end-to-end
+  (ALAC is served as FLAC, sample-accurate Web Audio track joins, no
+  transcoding of lossy files).
 - **Collections** — film series (James Bond, Alien, …) in release-order
   timelines with missing films greyed out.
 - **Report** — missing films per collection, missing seasons/episodes per
@@ -37,6 +40,14 @@ pages, and a "what's missing" collector's report.
 | Show detail | Report |
 | --- | --- |
 | ![Season-by-season episode lists](docs/screenshots/show-detail.png) | ![Collector's report with collapsible sections](docs/screenshots/report.png) |
+
+| Music library | Artist back catalogue |
+| --- | --- |
+| ![Artist grid with embedded cover art and owned/total counts](docs/screenshots/music-library.png) | ![Decade-grouped studio albums, owned vs missing](docs/screenshots/music-artist.png) |
+
+<p align="center">
+  <img src="docs/screenshots/music-album.png" alt="Album detail with per-disc track list, quality badges, and the gapless player" width="900" />
+</p>
 
 <p align="center">
   <img src="docs/screenshots/report-expanded.png" alt="Missing-from-collections section expanded, showing gap posters per collection" width="900" />
