@@ -1,4 +1,6 @@
-# filmDB
+<p align="center">
+  <img src="docs/logo.png" alt="filmDB" width="320" />
+</p>
 
 A personal index of a DVD/Blu-ray film and TV collection stored on a NAS SMB
 share (also served by Jellyfin). It scans the share, probes every file with
