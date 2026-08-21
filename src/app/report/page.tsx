@@ -321,6 +321,7 @@ export default async function ReportPage({
                     >
                       <CoverImage
                         albumId={al.hasCover ? al.id : null}
+                        version={al.coverVersion}
                         title={al.title}
                         sizes="40px"
                         className="w-10 shrink-0 rounded grayscale opacity-60"

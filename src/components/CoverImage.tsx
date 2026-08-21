@@ -13,12 +13,17 @@ import Image from "next/image";
 
 export default function CoverImage({
   albumId,
+  version,
   title,
   sizes,
   priority = false,
   className = "",
 }: {
   albumId: number | null;
+  /** Cover cache-buster (queries' coverVersion). A cover's bytes can change
+   *  under the same /api/cover/<id> URL, and next/image caches derivatives
+   *  per URL — versioning the URL is what actually invalidates them. */
+  version?: number | null;
   title: string;
   sizes?: string;
   priority?: boolean;
@@ -37,7 +42,7 @@ export default function CoverImage({
         </div>
       ) : (
         <Image
-          src={`/api/cover/${albumId}`}
+          src={`/api/cover/${albumId}${version != null ? `?v=${version}` : ""}`}
           alt={`${title} cover art`}
           fill
           sizes={sizes ?? "(min-width: 1280px) 160px, (min-width: 640px) 20vw, 40vw"}

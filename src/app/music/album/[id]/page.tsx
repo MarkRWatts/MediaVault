@@ -92,6 +92,7 @@ export default async function AlbumPage({
       <div className="flex flex-col gap-4 sm:flex-row">
         <CoverImage
           albumId={album.hasCover ? album.id : null}
+          version={album.coverVersion}
           title={album.title}
           priority
           sizes="(min-width: 640px) 256px, 60vw"

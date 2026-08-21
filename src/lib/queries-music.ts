@@ -53,6 +53,11 @@ export interface MusicIndexArtist {
   ownedStudio: number;
   totalStudio: number;
   coverAlbumId: number | null;
+  /** Cache-buster for the cover URL (album updatedAt epoch ms) — a cover's
+   *  bytes can change under the same /api/cover/<id> URL, and next/image
+   *  keeps per-width/per-format derivatives keyed by URL, so the URL must
+   *  change when the cover does. Null when coverAlbumId is null. */
+  coverVersion: number | null;
 }
 
 export interface MusicIndexData {
@@ -68,7 +73,7 @@ export async function getMusicIndex(): Promise<MusicIndexData> {
         name: true,
         sortName: true,
         various: true,
-        albums: { select: { id: true, kind: true, owned: true, year: true, coverPath: true } },
+        albums: { select: { id: true, kind: true, owned: true, year: true, coverPath: true, updatedAt: true } },
       },
     }),
     prisma.album.count({ where: { owned: true } }),
@@ -81,13 +86,16 @@ export async function getMusicIndex(): Promise<MusicIndexData> {
     .sort(byArtistOrder)
     .map((a) => {
       const studioAlbums = a.albums.filter((al) => al.kind === "STUDIO");
+      const coverAlbumId = pickCoverAlbumId(a.albums);
+      const coverAlbum = coverAlbumId == null ? null : a.albums.find((al) => al.id === coverAlbumId);
       return {
         id: a.id,
         name: a.name,
         various: a.various,
         ownedStudio: studioAlbums.filter((al) => al.owned).length,
         totalStudio: studioAlbums.length,
-        coverAlbumId: pickCoverAlbumId(a.albums),
+        coverAlbumId,
+        coverVersion: coverAlbum ? coverAlbum.updatedAt.getTime() : null,
       };
     });
 
@@ -112,6 +120,8 @@ export interface ArtistCatalogueAlbum {
   year: number | null;
   owned: boolean;
   hasCover: boolean;
+  /** See MusicIndexArtist.coverVersion. Null when hasCover is false. */
+  coverVersion: number | null;
   trackCount: number;
   trackTotal: number | null;
 }
@@ -142,6 +152,7 @@ export async function getArtistDetail(id: number): Promise<ArtistDetail | null> 
     year: a.year,
     owned: a.owned,
     hasCover: a.coverPath != null,
+    coverVersion: a.coverPath != null ? a.updatedAt.getTime() : null,
     trackCount: a._count.tracks,
     trackTotal: a.trackTotal,
   });
@@ -207,6 +218,8 @@ export interface AlbumDetail {
   kind: string;
   owned: boolean;
   hasCover: boolean;
+  /** See MusicIndexArtist.coverVersion. Null when hasCover is false. */
+  coverVersion: number | null;
   trackTotal: number | null;
   artist: { id: number; name: string; various: boolean };
   discs: AlbumDiscView[]; // ordered by disc number, tracks by trackNumber (nulls last)
@@ -261,6 +274,7 @@ export async function getAlbumDetail(id: number): Promise<AlbumDetail | null> {
     kind: album.kind,
     owned: album.owned,
     hasCover: album.coverPath != null,
+    coverVersion: album.coverPath != null ? album.updatedAt.getTime() : null,
     trackTotal: album.trackTotal,
     artist: album.artist,
     discs,
@@ -276,6 +290,8 @@ export interface MissingAlbumView {
   title: string;
   year: number | null;
   hasCover: boolean;
+  /** See MusicIndexArtist.coverVersion. Null when hasCover is false. */
+  coverVersion: number | null;
 }
 
 export interface MissingArtistGroup {
@@ -297,7 +313,7 @@ export async function getMusicReportData(): Promise<MusicReportData> {
         name: true,
         sortName: true,
         various: true,
-        albums: { select: { id: true, title: true, year: true, kind: true, owned: true, coverPath: true } },
+        albums: { select: { id: true, title: true, year: true, kind: true, owned: true, coverPath: true, updatedAt: true } },
       },
     }),
     prisma.album.count({ where: { owned: true } }),
@@ -333,7 +349,13 @@ export async function getMusicReportData(): Promise<MusicReportData> {
         albums: missingAlbums
           .slice()
           .sort(byYearAsc)
-          .map((al) => ({ id: al.id, title: al.title, year: al.year, hasCover: al.coverPath != null })),
+          .map((al) => ({
+            id: al.id,
+            title: al.title,
+            year: al.year,
+            hasCover: al.coverPath != null,
+            coverVersion: al.coverPath != null ? al.updatedAt.getTime() : null,
+          })),
       };
     })
     .filter((g): g is MissingArtistGroup => g !== null);

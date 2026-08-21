@@ -73,6 +73,7 @@ export default async function MusicPage() {
               >
                 <CoverImage
                   albumId={a.coverAlbumId}
+                  version={a.coverVersion}
                   title={a.name}
                   className="w-full border-b border-border"
                 />
