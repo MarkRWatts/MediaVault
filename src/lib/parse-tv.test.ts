@@ -15,8 +15,8 @@ describe("parseEpisodePath", () => {
     });
   });
 
-  it("unpadded season folder", () => {
-    const p = parseEpisodePath("Rome (2005)/Season 1/Rome S01E03.mkv");
+  it("unpadded season folder with underscored filename (real Rome naming)", () => {
+    const p = parseEpisodePath("Rome (2005)/Season 1/Rome_S01E03 (2005).mkv");
     expect(p).toMatchObject({ showTitle: "Rome", showYear: 2005, season: 1, episodes: [3] });
   });
 

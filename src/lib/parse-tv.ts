@@ -42,7 +42,9 @@ export function parseEpisodePath(relPath: string): ParsedEpisodeFile | null {
   const showFolder = parts[0];
   const fileName = parts[parts.length - 1];
 
-  const code = fileName.match(EPISODE_RE);
+  // Underscores stand in for spaces in this corpus (Rome_S01E01 (2005).mkv)
+  // and defeat \b in the episode regex — normalize before matching.
+  const code = fileName.replace(/_/g, " ").match(EPISODE_RE);
   if (!code) return null;
 
   let season = Number(code[1]);

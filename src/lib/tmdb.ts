@@ -5,7 +5,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { prisma } from "@/lib/db";
 import { normalizeTitle, sortTitle } from "@/lib/parse";
-import type { Film } from "@/generated/prisma/client";
+import type { Film, Show } from "@/generated/prisma/client";
 import { guardAndCreateRun, updateProgress, finishRun, failRun } from "@/lib/runs";
 
 const TMDB_BASE = "https://api.themoviedb.org/3";
@@ -40,7 +40,7 @@ async function tmdbFetch(pathname: string, params: Record<string, string> = {}):
   return res.json();
 }
 
-async function cachePoster(tmdbPath: string | null | undefined, size: "w342" | "w780"): Promise<void> {
+async function cachePoster(tmdbPath: string | null | undefined, size: "w300" | "w342" | "w780"): Promise<void> {
   if (!tmdbPath) return;
   const rel = tmdbPath.replace(/^\//, "");
   const dest = path.join(POSTER_CACHE_DIR, size, rel);
@@ -250,6 +250,219 @@ async function enrichOneFilm(film: Film, log: string[], collectionCache: Map<num
   await cachePoster(details.backdrop_path, "w780");
 }
 
+// --- TV ---
+
+// Same exact-normalised-title-with-year-tolerance preference as pickHit()
+// above, adapted to /search/tv's field names (name / first_air_date).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function pickTvHit(results: any[] | undefined, title: string, year: number | null): any {
+  if (!results?.length) return undefined;
+  const want = normalizeTitle(title);
+  const yearOk = (r: { first_air_date?: string }) =>
+    !year || !r.first_air_date || Math.abs(Number(r.first_air_date.slice(0, 4)) - year) <= 1;
+  return results.slice(0, 5).find((r) => normalizeTitle(r.name ?? "") === want && yearOk(r)) ?? results[0];
+}
+
+/**
+ * Upsert one season's ShowSeason row plus every Episode in its TMDB manifest
+ * (name/overview/stillPath/airDate/runtimeMins). `owned` is NEVER touched
+ * here — absent episodes are created with owned=false, and existing rows
+ * (owned=true from the scanner, or owned=false from a prior enrich) keep
+ * whatever the scanner last set. episode_number is the identity throughout;
+ * nothing here reorders by air date (DVD-order rips like Firefly depend on
+ * that).
+ */
+// This library is disc rips, so when TMDB carries a DVD episode group
+// (type 3) for a show, THAT ordering is our episode numbering — e.g. Firefly,
+// where TMDB's default season is air order ("The Train Job" first) but the
+// discs (and these files) put "Serenity" at E01. Verified live: the group's
+// per-entry `order` is the disc position.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function fetchDvdEpisodeOrder(tmdbId: number, showTitle: string, log: string[]): Promise<Map<number, any[]> | null> {
+  try {
+    const groups = await tmdbFetch(`/tv/${tmdbId}/episode_groups`);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const dvd = (groups.results as any[] | undefined)?.find((g) => g.type === 3);
+    if (!dvd) return null;
+    const detail = await tmdbFetch(`/tv/episode_group/${dvd.id}`);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const manifest = new Map<number, any[]>();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const entry of ((detail.groups as any[]) ?? [])) {
+      // Only literal "Season N" entries count — DVD groups also carry
+      // "Specials"/bonus-disc entries (Firefly has 9 making-of docs) that
+      // must never be mistaken for a season.
+      const m = /^season\s*(\d+)$/i.exec((entry.name ?? "").trim());
+      if (!m) continue;
+      const seasonNumber = Number(m[1]);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const eps = [...(((entry.episodes as any[]) ?? []))].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+      if (eps.length) manifest.set(seasonNumber, eps);
+    }
+    if (manifest.size === 0) return null;
+    log.push(`Using DVD episode order for "${showTitle}" (TMDB group "${dvd.name}")`);
+    return manifest;
+  } catch {
+    return null; // best-effort — default (air) order applies
+  }
+}
+
+async function enrichSeason(
+  showId: number,
+  tmdbId: number,
+  seasonNumber: number,
+  log: string[],
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  overrideEpisodes?: any[],
+): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const season: any = await tmdbFetch(`/tv/${tmdbId}/season/${seasonNumber}`);
+
+  const showSeason = await prisma.showSeason.upsert({
+    where: { showId_seasonNumber: { showId, seasonNumber } },
+    create: {
+      showId,
+      seasonNumber,
+      name: season.name ?? null,
+      overview: season.overview ?? null,
+      posterPath: season.poster_path ?? null,
+      airDate: season.air_date ? new Date(season.air_date) : null,
+    },
+    update: {
+      name: season.name ?? null,
+      overview: season.overview ?? null,
+      posterPath: season.poster_path ?? null,
+      airDate: season.air_date ? new Date(season.air_date) : null,
+    },
+  });
+  await cachePoster(season.poster_path, "w342");
+
+  // In DVD-order mode the group's disc position IS the episode number; the
+  // default path trusts TMDB's own episode_number.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const episodeList: any[] = overrideEpisodes ?? ((season.episodes as any[]) ?? []);
+  for (let i = 0; i < episodeList.length; i++) {
+    const ep = episodeList[i];
+    const episodeNumber = overrideEpisodes ? i + 1 : ep.episode_number;
+    if (episodeNumber == null) continue;
+
+    await prisma.episode.upsert({
+      where: { seasonId_episodeNumber: { seasonId: showSeason.id, episodeNumber } },
+      create: {
+        seasonId: showSeason.id,
+        episodeNumber,
+        name: ep.name ?? null,
+        overview: ep.overview ?? null,
+        stillPath: ep.still_path ?? null,
+        airDate: ep.air_date ? new Date(ep.air_date) : null,
+        runtimeMins: ep.runtime ?? null,
+        // owned defaults false — flipped to true only by the scanner.
+      },
+      update: {
+        name: ep.name ?? null,
+        overview: ep.overview ?? null,
+        stillPath: ep.still_path ?? null,
+        airDate: ep.air_date ? new Date(ep.air_date) : null,
+        runtimeMins: ep.runtime ?? null,
+        // owned intentionally omitted — never touched by enrichment.
+      },
+    });
+    await cachePoster(ep.still_path, "w300");
+  }
+
+  if (!overrideEpisodes && !season.episodes) {
+    log.push(`Season ${seasonNumber} manifest for tmdb:${tmdbId} had no episode list`);
+  }
+}
+
+async function enrichOneShow(show: Show, log: string[]): Promise<void> {
+  let tmdbId: number | null = null;
+  let confidence: "SEARCH" | "LOW" = "SEARCH";
+
+  const yearParams: Record<string, string> = show.year ? { first_air_date_year: String(show.year) } : {};
+  let hit = pickTvHit((await tmdbFetch("/search/tv", { query: show.title, ...yearParams })).results, show.title, show.year);
+  if (hit) {
+    confidence = "SEARCH";
+  } else if (show.year) {
+    hit = pickTvHit((await tmdbFetch("/search/tv", { query: show.title })).results, show.title, show.year);
+    if (hit) confidence = "LOW";
+  }
+  if (!hit && normalizeTitle(show.title) !== show.title.toLowerCase()) {
+    // Accented/punctuated titles can miss — retry with the stripped form.
+    hit = pickTvHit(
+      (await tmdbFetch("/search/tv", { query: normalizeTitle(show.title), ...yearParams })).results,
+      show.title,
+      show.year,
+    );
+    if (hit) confidence = "LOW";
+  }
+  if (hit) tmdbId = hit.id;
+
+  if (tmdbId == null) {
+    log.push(`No TMDB match for "${show.title}"${show.year ? ` (${show.year})` : ""}`);
+    return;
+  }
+
+  const details = await tmdbFetch(`/tv/${tmdbId}`, { append_to_response: "external_ids" });
+
+  if (confidence === "LOW") {
+    log.push(`Low-confidence match: "${show.title}"${show.year ? ` (${show.year})` : ""} -> "${details.name}" (tmdb:${tmdbId})`);
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const updateData: Record<string, any> = {
+    tmdbId,
+    overview: details.overview ?? null,
+    posterPath: details.poster_path ?? null,
+    backdropPath: details.backdrop_path ?? null,
+    firstAirDate: details.first_air_date ? new Date(details.first_air_date) : null,
+    status: details.status ?? null,
+    rating: details.vote_average ?? null,
+    genres: details.genres?.length ? details.genres.map((g: { name: string }) => g.name).join(", ") : null,
+    matchConfidence: confidence,
+  };
+
+  // Filename-derived year wins when present; backfill from TMDB otherwise.
+  if (!show.year && details.first_air_date) updateData.year = Number(details.first_air_date.slice(0, 4));
+  if (details.external_ids?.imdb_id) updateData.imdbId = details.external_ids.imdb_id;
+
+  // Another Show row may already hold this tmdbId — a search-based match
+  // colliding with an existing show is far more likely a WRONG match than a
+  // true duplicate (no TV equivalent of the movie-collection reclaim case,
+  // since Shows aren't created as TMDB-manifest placeholders) — never merge
+  // destructively on it, mirroring enrichOneFilm's caution for movies.
+  const holder = await prisma.show.findUnique({ where: { tmdbId } });
+  if (holder && holder.id !== show.id) {
+    log.push(
+      `Match conflict: search matched "${show.title}"${show.year ? ` (${show.year})` : ""} to "${holder.title}" (tmdb:${tmdbId}), which is already in the library — left unmatched for review`,
+    );
+    return;
+  }
+
+  try {
+    await prisma.show.update({ where: { id: show.id }, data: updateData });
+  } catch {
+    // Most likely a unique constraint clash on imdbId backfill — retry without it.
+    delete updateData.imdbId;
+    await prisma.show.update({ where: { id: show.id }, data: updateData });
+  }
+
+  await cachePoster(details.poster_path, "w342");
+  await cachePoster(details.backdrop_path, "w780");
+
+  const dvdOrder = await fetchDvdEpisodeOrder(tmdbId, show.title, log);
+
+  const numberOfSeasons: number = details.number_of_seasons ?? 0;
+  for (let seasonNumber = 1; seasonNumber <= numberOfSeasons; seasonNumber++) {
+    try {
+      await enrichSeason(show.id, tmdbId, seasonNumber, log, dvdOrder?.get(seasonNumber));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log.push(`Failed to fetch season ${seasonNumber} for "${show.title}": ${message}`);
+    }
+  }
+}
+
 async function doEnrich(runId: number): Promise<void> {
   const log: string[] = [];
 
@@ -258,8 +471,18 @@ async function doEnrich(runId: number): Promise<void> {
     orderBy: [{ owned: "desc" }, { id: "asc" }],
   });
 
-  const total = films.length;
-  await updateProgress(runId, { total, filesSeen: 0, progress: 0, message: `Enriching ${total} films` });
+  const shows = await prisma.show.findMany({
+    where: { matchConfidence: { in: ["UNMATCHED", "LOW"] } },
+    orderBy: [{ id: "asc" }],
+  });
+
+  const total = films.length + shows.length;
+  await updateProgress(runId, {
+    total,
+    filesSeen: 0,
+    progress: 0,
+    message: `Enriching ${films.length} film(s), ${shows.length} show(s)`,
+  });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const collectionCache = new Map<number, any>();
@@ -282,7 +505,24 @@ async function doEnrich(runId: number): Promise<void> {
     }
   }
 
-  await finishRun(runId, log, `Enriched ${total} films`);
+  for (const show of shows) {
+    try {
+      await enrichOneShow(show, log);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log.push(`Failed to enrich "${show.title}": ${message}`);
+    }
+    completed++;
+    if (completed % PROGRESS_UPDATE_EVERY === 0 || completed === total) {
+      await updateProgress(runId, {
+        progress: completed,
+        filesSeen: completed,
+        message: `Enriched ${completed}/${total}: ${show.title}`,
+      });
+    }
+  }
+
+  await finishRun(runId, log, `Enriched ${films.length} film(s), ${shows.length} show(s)`);
 }
 
 /**

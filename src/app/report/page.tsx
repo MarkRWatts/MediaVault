@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 import Link from "next/link";
 import PosterImage from "@/components/PosterImage";
 import FormatBadge from "@/components/FormatBadge";
-import { getReportData } from "@/lib/queries";
+import { getReportData, getTvReportData } from "@/lib/queries";
 import type { IssueFilm } from "@/lib/queries";
 
 function issueTags(f: IssueFilm): string[] {
@@ -22,9 +22,12 @@ function SectionEmpty({ children }: { children: React.ReactNode }) {
 }
 
 export default async function ReportPage() {
-  const { totals, missingByCollection, upgradeCandidates, issues } = await getReportData();
+  const [{ totals, missingByCollection, upgradeCandidates, issues }, tv] = await Promise.all([
+    getReportData(),
+    getTvReportData(),
+  ]);
 
-  const tiles: { label: string; value: number; tone?: "accent" | "missing" }[] = [
+  const tiles: { label: string; value: number | string; tone?: "accent" | "missing" }[] = [
     { label: "Films owned", value: totals.filmsOwned },
     { label: "Discs", value: totals.discs },
     { label: "4K", value: totals.uhdFilmCount },
@@ -33,6 +36,8 @@ export default async function ReportPage() {
     { label: "Collections complete", value: totals.collectionsComplete },
     { label: "Collections incomplete", value: totals.collectionsIncomplete, tone: "accent" },
     { label: "Missing films", value: totals.missingCount, tone: "missing" },
+    { label: "Shows", value: `${tv.showsComplete}/${tv.showsTotal}` },
+    { label: "Episodes", value: `${tv.episodesOwned}/${tv.episodesTotal}` },
   ];
 
   return (
@@ -54,7 +59,7 @@ export default async function ReportPage() {
                 className={`font-display text-3xl leading-none ${
                   t.tone === "accent"
                     ? "text-accent"
-                    : t.tone === "missing" && t.value > 0
+                    : t.tone === "missing" && typeof t.value === "number" && t.value > 0
                       ? "text-missing"
                       : "text-text"
                 }`}
@@ -184,6 +189,42 @@ export default async function ReportPage() {
               </li>
             ))}
           </ul>
+        )}
+      </section>
+
+      <section className="flex flex-col gap-4 pb-16">
+        <h2 className="font-display text-xl tracking-wide">Missing from shows</h2>
+        {tv.missingByShow.length === 0 ? (
+          <SectionEmpty>Every known show is fully catalogued.</SectionEmpty>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {tv.missingByShow.map((group) => (
+              <div
+                key={group.showId}
+                className="flex flex-col gap-2 rounded-lg border border-border bg-bg-elevated p-3.5"
+              >
+                <Link
+                  href={`/shows/${group.showId}`}
+                  className="flex items-center gap-3 text-sm font-semibold text-text hover:text-accent"
+                >
+                  <PosterImage
+                    posterPath={group.posterPath}
+                    title={group.showTitle}
+                    sizes="32px"
+                    className="aspect-2/3 w-8 shrink-0 rounded"
+                  />
+                  <span className="min-w-0 truncate">{group.showTitle}</span>
+                </Link>
+                <ul className="flex flex-col gap-1 pl-11">
+                  {group.lines.map((line) => (
+                    <li key={line.key} className="font-mono text-xs text-text-muted">
+                      {line.text}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
         )}
       </section>
     </div>

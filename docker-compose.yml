@@ -8,6 +8,11 @@ services:
       POSTER_CACHE_DIR: /app/data/posters
       # Root of the movie share (bind-mounted read-only from the host).
       MOVIES_PATH: /movies
+      # Root of the TV share. No bind mount in this base compose file (that's
+      # the prod overlay's job, via the same /media-share volume as movies) —
+      # plain passthrough, empty by default, which skips the TV scan/enrich/
+      # Jellyfin-TV-match phases entirely.
+      TVSHOWS_PATH: ${TVSHOWS_PATH:-}
       # TMDB API key (optional, free) — enables posters, metadata, and
       # collection/missing-film detection. Leave blank to scan-only.
       TMDB_API_KEY: ${TMDB_API_KEY:-}
@@ -16,6 +21,7 @@ services:
       JELLYFIN_URL: ${JELLYFIN_URL:-}
       JELLYFIN_API_KEY: ${JELLYFIN_API_KEY:-}
       JELLYFIN_MOVIES_PREFIX: ${JELLYFIN_MOVIES_PREFIX:-/media/Movies/}
+      JELLYFIN_TV_PREFIX: ${JELLYFIN_TV_PREFIX:-/media/TV Shows/}
     volumes:
       # SQLite database and cached posters.
       - data:/app/data

@@ -333,6 +333,174 @@ export async function getCollectionDetail(id: number): Promise<CollectionDetail 
 }
 
 // ---------------------------------------------------------------------------
+// TV — Shows ("/shows", "/shows/[id]")
+// ---------------------------------------------------------------------------
+
+export interface ShowSummary {
+  id: number;
+  title: string;
+  sortTitle: string;
+  year: number | null;
+  posterPath: string | null;
+  ownedEpisodeCount: number;
+  totalEpisodeCount: number;
+  complete: boolean;
+}
+
+export async function getShows(): Promise<ShowSummary[]> {
+  const shows = await prisma.show.findMany({
+    orderBy: { sortTitle: "asc" },
+    include: {
+      seasons: {
+        select: { episodes: { select: { owned: true } } },
+      },
+    },
+  });
+
+  return shows.map((s) => {
+    const episodes = s.seasons.flatMap((se) => se.episodes);
+    const ownedEpisodeCount = episodes.filter((e) => e.owned).length;
+    const totalEpisodeCount = episodes.length;
+    return {
+      id: s.id,
+      title: s.title,
+      sortTitle: s.sortTitle,
+      year: s.year,
+      posterPath: s.posterPath,
+      ownedEpisodeCount,
+      totalEpisodeCount,
+      complete: totalEpisodeCount > 0 && ownedEpisodeCount === totalEpisodeCount,
+    };
+  });
+}
+
+export interface EpisodeFileView {
+  id: number;
+  format: Format;
+  width: number | null;
+  height: number | null;
+  resolution: string;
+  tier: ResolutionTier;
+  videoRange: string | null;
+  audioSummary: string | null;
+  sizeLabel: string;
+  jellyfinId: string | null;
+}
+
+export interface EpisodeView {
+  id: number;
+  episodeNumber: number;
+  name: string | null;
+  overview: string | null;
+  stillPath: string | null;
+  airDate: string | null;
+  owned: boolean;
+  files: EpisodeFileView[];
+}
+
+export interface SeasonView {
+  id: number;
+  seasonNumber: number;
+  name: string | null;
+  posterPath: string | null;
+  airYear: number | null;
+  ownedCount: number;
+  totalCount: number;
+  episodes: EpisodeView[];
+}
+
+export interface ShowDetail {
+  id: number;
+  title: string;
+  year: number | null;
+  posterPath: string | null;
+  backdropPath: string | null;
+  overview: string | null;
+  status: string | null;
+  rating: number | null;
+  genres: string[];
+  matchConfidence: string;
+  ownedEpisodeCount: number;
+  totalEpisodeCount: number;
+  seasons: SeasonView[];
+}
+
+export async function getShowDetail(id: number): Promise<ShowDetail | null> {
+  const show = await prisma.show.findUnique({
+    where: { id },
+    include: {
+      seasons: {
+        orderBy: { seasonNumber: "asc" },
+        include: {
+          // Episodes are always ordered by episodeNumber — some shows (e.g.
+          // DVD-order releases like Firefly) have air dates that don't match
+          // production/disc order, so airDate must never be used here.
+          episodes: {
+            orderBy: { episodeNumber: "asc" },
+            include: { files: true },
+          },
+        },
+      },
+    },
+  });
+  if (!show) return null;
+
+  const seasons: SeasonView[] = show.seasons.map((se) => {
+    const episodes: EpisodeView[] = se.episodes.map((e) => ({
+      id: e.id,
+      episodeNumber: e.episodeNumber,
+      name: e.name,
+      overview: e.overview,
+      stillPath: e.stillPath,
+      airDate: e.airDate ? e.airDate.toISOString() : null,
+      owned: e.owned,
+      files: e.files.map((f) => ({
+        id: f.id,
+        format: f.format as Format,
+        width: f.width,
+        height: f.height,
+        resolution: resolutionLabel(f.width, f.height),
+        tier: resolutionTier(f.width, f.height),
+        videoRange: f.videoRange,
+        audioSummary: f.audioSummary,
+        sizeLabel: formatBytes(f.sizeBytes === null ? null : Number(f.sizeBytes)),
+        jellyfinId: f.jellyfinId,
+      })),
+    }));
+    const ownedCount = episodes.filter((e) => e.owned).length;
+    return {
+      id: se.id,
+      seasonNumber: se.seasonNumber,
+      name: se.name,
+      posterPath: se.posterPath,
+      airYear: se.airDate ? se.airDate.getFullYear() : null,
+      ownedCount,
+      totalCount: episodes.length,
+      episodes,
+    };
+  });
+
+  const ownedEpisodeCount = seasons.reduce((sum, s) => sum + s.ownedCount, 0);
+  const totalEpisodeCount = seasons.reduce((sum, s) => sum + s.totalCount, 0);
+
+  return {
+    id: show.id,
+    title: show.title,
+    year: show.year,
+    posterPath: show.posterPath,
+    backdropPath: show.backdropPath,
+    overview: show.overview,
+    status: show.status,
+    rating: show.rating,
+    genres: show.genres ? show.genres.split(",").map((g) => g.trim()).filter(Boolean) : [],
+    matchConfidence: show.matchConfidence,
+    ownedEpisodeCount,
+    totalEpisodeCount,
+    seasons,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Report ("/report")
 // ---------------------------------------------------------------------------
 
@@ -476,5 +644,132 @@ export async function getReportData(): Promise<ReportData> {
     missingByCollection: Array.from(missingByCollectionMap.values()),
     upgradeCandidates,
     issues,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// TV report data ("/report" — TV section)
+// ---------------------------------------------------------------------------
+
+export interface ShowGapLine {
+  key: string;
+  text: string;
+}
+
+export interface ShowGapGroup {
+  showId: number;
+  showTitle: string;
+  posterPath: string | null;
+  lines: ShowGapLine[];
+}
+
+export interface TvReportData {
+  showsTotal: number;
+  showsComplete: number;
+  episodesOwned: number;
+  episodesTotal: number;
+  missingByShow: ShowGapGroup[];
+}
+
+function padEpisodeNumber(n: number): string {
+  return n.toString().padStart(2, "0");
+}
+
+// Collapse a set of missing episode numbers within one season into short
+// range labels: [1,2,3,7] -> "E01-E03, E07".
+function episodeRangeLabel(numbers: number[]): string {
+  const sorted = [...numbers].sort((a, b) => a - b);
+  const parts: string[] = [];
+  let start = sorted[0];
+  let prev = sorted[0];
+  for (let i = 1; i < sorted.length; i++) {
+    const n = sorted[i];
+    if (n === prev + 1) {
+      prev = n;
+      continue;
+    }
+    parts.push(
+      start === prev
+        ? `E${padEpisodeNumber(start)}`
+        : `E${padEpisodeNumber(start)}-E${padEpisodeNumber(prev)}`,
+    );
+    start = n;
+    prev = n;
+  }
+  parts.push(
+    start === prev
+      ? `E${padEpisodeNumber(start)}`
+      : `E${padEpisodeNumber(start)}-E${padEpisodeNumber(prev)}`,
+  );
+  return parts.join(", ");
+}
+
+export async function getTvReportData(): Promise<TvReportData> {
+  const shows = await prisma.show.findMany({
+    orderBy: { sortTitle: "asc" },
+    include: {
+      seasons: {
+        orderBy: { seasonNumber: "asc" },
+        include: {
+          episodes: {
+            orderBy: { episodeNumber: "asc" },
+            select: { episodeNumber: true, owned: true },
+          },
+        },
+      },
+    },
+  });
+
+  let episodesOwned = 0;
+  let episodesTotal = 0;
+  let showsComplete = 0;
+  const missingByShow: ShowGapGroup[] = [];
+
+  for (const show of shows) {
+    const lines: ShowGapLine[] = [];
+    let ownedForShow = 0;
+    let totalForShow = 0;
+
+    for (const season of show.seasons) {
+      const total = season.episodes.length;
+      const owned = season.episodes.filter((e) => e.owned).length;
+      ownedForShow += owned;
+      totalForShow += total;
+
+      if (total > 0 && owned === 0) {
+        // Whole season missing — one summary line, not one per episode.
+        lines.push({
+          key: `s${season.seasonNumber}`,
+          text: `Season ${season.seasonNumber} — ${total} episode${total === 1 ? "" : "s"}`,
+        });
+      } else if (owned < total) {
+        const missingNums = season.episodes.filter((e) => !e.owned).map((e) => e.episodeNumber);
+        lines.push({
+          key: `s${season.seasonNumber}`,
+          text: `S${padEpisodeNumber(season.seasonNumber)}: ${episodeRangeLabel(missingNums)} missing`,
+        });
+      }
+    }
+
+    episodesOwned += ownedForShow;
+    episodesTotal += totalForShow;
+    if (totalForShow > 0 && ownedForShow === totalForShow) showsComplete++;
+
+    if (lines.length > 0) {
+      missingByShow.push({
+        showId: show.id,
+        showTitle: show.title,
+        posterPath: show.posterPath,
+        lines,
+      });
+    }
+  }
+
+  return {
+    showsTotal: shows.length,
+    showsComplete,
+    episodesOwned,
+    episodesTotal,
+    missingByShow,
   };
 }

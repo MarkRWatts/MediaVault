@@ -12,6 +12,7 @@ import { prisma } from "@/lib/db";
 import { guardAndCreateRun, updateProgress, finishRun, failRun } from "@/lib/runs";
 
 const DEFAULT_MOVIES_PREFIX = "/media/Movies/";
+const DEFAULT_TV_PREFIX = "/media/TV Shows/";
 const PROGRESS_UPDATE_EVERY = 25;
 
 interface MediaFolder {
@@ -71,6 +72,26 @@ async function getAllMovieItems(parentId: string): Promise<JellyfinItem[]> {
   return data.Items ?? [];
 }
 
+/** Returns null (rather than throwing) when no "tvshows" library exists —
+ * TV matching is best-effort and shouldn't fail the whole sync when a
+ * server has no TV library configured. */
+async function getTvLibraryId(): Promise<string | null> {
+  const data = await jellyfinFetch("/Library/MediaFolders");
+  const folders: MediaFolder[] = data.Items ?? [];
+  const tv = folders.find((f) => f.CollectionType === "tvshows");
+  return tv ? tv.Id : null;
+}
+
+async function getAllEpisodeItems(parentId: string): Promise<JellyfinItem[]> {
+  const data = await jellyfinFetch("/Items", {
+    ParentId: parentId,
+    IncludeItemTypes: "Episode",
+    Recursive: "true",
+    Fields: "Path",
+  });
+  return data.Items ?? [];
+}
+
 /** Fire the library refresh and return immediately — we don't wait for the
  * (potentially slow) scan to finish; the item list fetched right after may
  * be very slightly stale, which is an acceptable tradeoff here. */
@@ -93,6 +114,16 @@ function relativizePath(jellyfinPath: string): string | null {
   return jellyfinPath.slice(idx + prefix.length);
 }
 
+/** Same idea as relativizePath, for the TV share (JELLYFIN_TV_PREFIX, falling
+ * back to DEFAULT_TV_PREFIX — an empty-string env var also falls back, via
+ * `||`, same as the movies prefix). */
+function relativizeTvPath(jellyfinPath: string): string | null {
+  const prefix = process.env.JELLYFIN_TV_PREFIX || DEFAULT_TV_PREFIX;
+  const idx = jellyfinPath.indexOf(prefix);
+  if (idx === -1) return null;
+  return jellyfinPath.slice(idx + prefix.length);
+}
+
 async function doJellyfinSync(runId: number): Promise<void> {
   const log: string[] = [];
 
@@ -101,8 +132,28 @@ async function doJellyfinSync(runId: number): Promise<void> {
   const parentId = await getMoviesLibraryId();
   const items = await getAllMovieItems(parentId);
 
-  const total = items.length;
-  await updateProgress(runId, { total, filesSeen: 0, progress: 0, message: `Matching ${total} Jellyfin items` });
+  // TV matching is best-effort — a server with no "tvshows" library (or one
+  // that errors) shouldn't fail the whole sync; movies still get matched.
+  let tvItems: JellyfinItem[] = [];
+  try {
+    const tvParentId = await getTvLibraryId();
+    if (tvParentId) {
+      tvItems = await getAllEpisodeItems(tvParentId);
+    } else {
+      log.push('No Jellyfin library with CollectionType "tvshows" found — skipping TV match');
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log.push(`Failed to fetch Jellyfin TV items: ${message}`);
+  }
+
+  const total = items.length + tvItems.length;
+  await updateProgress(runId, {
+    total,
+    filesSeen: 0,
+    progress: 0,
+    message: `Matching ${items.length} movie item(s), ${tvItems.length} TV item(s)`,
+  });
 
   const versions = await prisma.version.findMany({ select: { id: true, filePath: true, jellyfinId: true } });
   const versionByNormPath = new Map(versions.map((v) => [v.filePath.normalize("NFC"), v]));
@@ -155,7 +206,79 @@ async function doJellyfinSync(runId: number): Promise<void> {
     log.push(`Unmatched in Jellyfin (${unmatchedInJellyfin.length}): ${unmatchedInJellyfin.join(", ")}`);
   }
 
-  await finishRun(runId, log, `Matched ${matched}/${versions.length}`);
+  // ---- TV ----
+  // EpisodeFile.filePath is NOT unique (a multi-episode range file shares
+  // one filePath across several rows) — group by normalized path and keep
+  // every row sharing a filePath in sync with the same jellyfinId.
+  const episodeFiles = await prisma.episodeFile.findMany({ select: { id: true, filePath: true, jellyfinId: true } });
+  const episodeFilesByNormPath = new Map<string, typeof episodeFiles>();
+  for (const ef of episodeFiles) {
+    const norm = ef.filePath.normalize("NFC");
+    const arr = episodeFilesByNormPath.get(norm);
+    if (arr) arr.push(ef);
+    else episodeFilesByNormPath.set(norm, [ef]);
+  }
+
+  let tvMatched = 0;
+  const matchedTvNormPaths = new Set<string>();
+  const unmatchedInJellyfinTv: string[] = [];
+
+  for (const item of tvItems) {
+    completed++;
+    if (item.Path) {
+      const relPath = relativizeTvPath(item.Path);
+      const normPath = relPath?.normalize("NFC");
+      const rows = normPath ? episodeFilesByNormPath.get(normPath) : undefined;
+      if (rows && rows.length > 0) {
+        for (const row of rows) {
+          if (row.jellyfinId !== item.Id) {
+            await prisma.episodeFile.update({ where: { id: row.id }, data: { jellyfinId: item.Id } });
+          }
+        }
+        matchedTvNormPaths.add(normPath!);
+        tvMatched++;
+      } else {
+        unmatchedInJellyfinTv.push(item.Name ?? item.Path);
+      }
+    } else {
+      unmatchedInJellyfinTv.push(item.Name ?? `(item ${item.Id})`);
+    }
+
+    if (completed % PROGRESS_UPDATE_EVERY === 0 || completed === total) {
+      await updateProgress(runId, {
+        progress: completed,
+        filesSeen: completed,
+        message: `Matched ${matched + tvMatched}/${completed}`,
+      });
+    }
+  }
+
+  // Any filePath we didn't match this run: unmatched-in-filmDB, and clear a
+  // stale jellyfinId on every row sharing it.
+  const unmatchedInFilmDbTv: string[] = [];
+  for (const [normPath, rows] of episodeFilesByNormPath) {
+    if (matchedTvNormPaths.has(normPath)) continue;
+    unmatchedInFilmDbTv.push(rows[0].filePath);
+    for (const row of rows) {
+      if (row.jellyfinId !== null) {
+        await prisma.episodeFile.update({ where: { id: row.id }, data: { jellyfinId: null } });
+      }
+    }
+  }
+
+  log.push(`Matched ${tvMatched} of ${episodeFilesByNormPath.size} filmDB TV file(s) to Jellyfin items`);
+  if (unmatchedInFilmDbTv.length > 0) {
+    log.push(`Unmatched TV in filmDB (${unmatchedInFilmDbTv.length}): ${unmatchedInFilmDbTv.join(", ")}`);
+  }
+  if (unmatchedInJellyfinTv.length > 0) {
+    log.push(`Unmatched TV in Jellyfin (${unmatchedInJellyfinTv.length}): ${unmatchedInJellyfinTv.join(", ")}`);
+  }
+
+  await finishRun(
+    runId,
+    log,
+    `Matched ${matched}/${versions.length} movie version(s), ${tvMatched}/${episodeFilesByNormPath.size} TV file(s)`,
+  );
 }
 
 /**

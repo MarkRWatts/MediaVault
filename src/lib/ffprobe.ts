@@ -120,8 +120,8 @@ function parseFfprobeJson(stdout: string): ProbeResult {
 
 /**
  * Probe a file given its absolute path on the local filesystem (or, when
- * falling back to Docker, a path that lives under MOVIES_PATH so it can be
- * translated to the container's /movies mount).
+ * falling back to Docker, a path under one of the media roots — MOVIES_PATH
+ * or TVSHOWS_PATH — so it can be translated to a container mount).
  */
 export async function probe(absPath: string): Promise<ProbeResult> {
   const hasLocal = await detectLocalFfprobe();
@@ -138,16 +138,25 @@ export async function probe(absPath: string): Promise<ProbeResult> {
     throw new Error("ffprobe not found on PATH and FFPROBE_DOCKER_IMAGE is not set");
   }
 
-  const moviesPath = process.env.MOVIES_PATH;
-  if (!moviesPath) {
-    throw new Error("MOVIES_PATH is not set; cannot translate path for dockerized ffprobe");
+  // Translate the path against whichever media root contains it.
+  const roots = [process.env.MOVIES_PATH, process.env.TVSHOWS_PATH].filter((r): r is string => !!r);
+  if (roots.length === 0) {
+    throw new Error("No media root (MOVIES_PATH/TVSHOWS_PATH) set; cannot translate path for dockerized ffprobe");
   }
-
-  const relPath = path.relative(moviesPath, absPath);
-  if (relPath.startsWith("..")) {
-    throw new Error(`Path ${absPath} is not under MOVIES_PATH (${moviesPath})`);
+  let mountRoot: string | null = null;
+  let relPath = "";
+  for (const root of roots) {
+    const rel = path.relative(root, absPath);
+    if (!rel.startsWith("..") && !path.isAbsolute(rel)) {
+      mountRoot = root;
+      relPath = rel;
+      break;
+    }
   }
-  const containerPath = `/movies/${relPath.split(path.sep).join("/")}`;
+  if (!mountRoot) {
+    throw new Error(`Path ${absPath} is not under any media root (${roots.join(", ")})`);
+  }
+  const containerPath = `/probe-root/${relPath.split(path.sep).join("/")}`;
 
   const dockerArgs = [
     "run",
@@ -155,7 +164,7 @@ export async function probe(absPath: string): Promise<ProbeResult> {
     "--entrypoint",
     "/ffprobe",
     "-v",
-    `${moviesPath}:/movies:ro`,
+    `${mountRoot}:/probe-root:ro`,
     dockerImage,
     ...FFPROBE_ARGS,
     containerPath,
