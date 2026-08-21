@@ -5,8 +5,10 @@ export const dynamic = "force-dynamic";
 import Link from "next/link";
 import PosterImage from "@/components/PosterImage";
 import FormatBadge from "@/components/FormatBadge";
+import CoverImage from "@/components/CoverImage";
 import { getReportData, getTvReportData } from "@/lib/queries";
 import type { IssueFilm } from "@/lib/queries";
+import { getMusicReportData } from "@/lib/queries-music";
 
 function issueTags(f: IssueFilm): string[] {
   const tags: string[] = [];
@@ -60,14 +62,21 @@ export default async function ReportPage({
 }: {
   searchParams: Promise<{ open?: string }>;
 }) {
-  const [{ totals, missingByCollection, upgradeCandidates, issues }, tv, params] = await Promise.all([
+  const [{ totals, missingByCollection, upgradeCandidates, issues }, tv, music, params] = await Promise.all([
     getReportData(),
     getTvReportData(),
+    getMusicReportData(),
     searchParams,
   ]);
-  // Deep-linkable expansion: /report?open=collections|upgrades|issues|shows
+  // Deep-linkable expansion: /report?open=collections|upgrades|issues|shows|music
   // (comma-separable). Sections default collapsed otherwise.
   const open = new Set((params.open ?? "").split(",").filter(Boolean));
+
+  // missingByArtist only lists artists past the report threshold (see
+  // constants.ts MUSIC_REPORT_MIN_OWNED/MUSIC_REPORT_MIN_PCT) — the section
+  // count reflects what's actually listed, not the global albumsMissing
+  // total (which also counts sub-threshold gaps like a 2-of-43 catalogue).
+  const missingBackCatalogueCount = music.missingByArtist.reduce((sum, g) => sum + g.albums.length, 0);
 
   const tiles: { label: string; value: number | string; tone?: "accent" | "missing" }[] = [
     { label: "Films owned", value: totals.filmsOwned },
@@ -80,6 +89,12 @@ export default async function ReportPage({
     { label: "Missing films", value: totals.missingCount, tone: "missing" },
     { label: "Shows", value: `${tv.showsComplete}/${tv.showsTotal}` },
     { label: "Episodes", value: `${tv.episodesOwned}/${tv.episodesTotal}` },
+    { label: "Artists", value: music.totals.artists },
+    {
+      label: "Albums",
+      value: `${music.totals.albumsOwned}/${music.totals.albumsOwned + music.totals.albumsMissing}`,
+    },
+    { label: "Lossless", value: `${music.totals.losslessPct}%` },
   ];
 
   return (
@@ -202,7 +217,7 @@ export default async function ReportPage({
       </CollapsibleSection>
 
       <CollapsibleSection
-        title="Library issues"
+        title="Movie issues"
         defaultOpen={open.has("issues")}
         subtitle="Films that could use another look — a low-confidence or missing metadata match, an unrecognised disc format, or no release year."
         count={`${issues.length} film${issues.length === 1 ? "" : "s"}`}
@@ -271,6 +286,54 @@ export default async function ReportPage({
                     </li>
                   ))}
                 </ul>
+              </div>
+            ))}
+          </div>
+        )}
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        title="Missing from back catalogues"
+        defaultOpen={open.has("music")}
+        subtitle="Studio albums an artist has enough of on disk to be worth completing — see the artist page for the full catalogue regardless of this threshold."
+        count={`${missingBackCatalogueCount} album${missingBackCatalogueCount === 1 ? "" : "s"} across ${music.missingByArtist.length} artist${music.missingByArtist.length === 1 ? "" : "s"}`}
+      >
+        {music.missingByArtist.length === 0 ? (
+          <SectionEmpty>Every qualifying artist&rsquo;s studio catalogue is fully owned.</SectionEmpty>
+        ) : (
+          <div className="flex flex-col gap-6">
+            {music.missingByArtist.map((group) => (
+              <div key={group.artistId} className="flex flex-col gap-2.5">
+                <Link
+                  href={`/music/artist/${group.artistId}`}
+                  className="w-fit text-sm font-semibold text-text hover:text-accent"
+                >
+                  {group.artistName}
+                  <span className="ml-2 font-mono text-xs font-normal text-text-faint">
+                    {group.albums.length} missing
+                  </span>
+                </Link>
+                <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
+                  {group.albums.map((al) => (
+                    <div
+                      key={al.id}
+                      className="flex items-center gap-2.5 rounded-lg border border-border/60 bg-bg-elevated/50 p-2"
+                    >
+                      <CoverImage
+                        albumId={al.hasCover ? al.id : null}
+                        title={al.title}
+                        sizes="40px"
+                        className="w-10 shrink-0 rounded grayscale opacity-60"
+                      />
+                      <div className="flex min-w-0 flex-col">
+                        <span className="truncate text-xs text-text-muted">{al.title}</span>
+                        <span className="font-mono text-[10px] text-text-faint">
+                          {al.year ?? "—"}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             ))}
           </div>

@@ -11,7 +11,7 @@ export default async function LibraryPage() {
   return (
     <div className="flex flex-1 flex-col">
       <div className="border-b border-border px-4 pt-6 sm:px-6">
-        <h1 className="font-display text-3xl tracking-wide">Library</h1>
+        <h1 className="font-display text-3xl tracking-wide">Movies</h1>
         {filmCount > 0 && (
           <p className="mt-1 pb-6 font-mono text-xs text-text-faint">
             {filmCount} film{filmCount === 1 ? "" : "s"} · {discCount} disc

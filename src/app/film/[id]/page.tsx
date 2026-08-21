@@ -44,7 +44,7 @@ export default async function FilmPage({
             href="/"
             className="w-fit text-xs font-medium text-text-muted hover:text-text"
           >
-            ← Library
+            ← Movies
           </Link>
 
           <div className="flex flex-col gap-6 pb-2 pt-4 sm:flex-row sm:pt-10">
