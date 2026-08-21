@@ -108,7 +108,7 @@ function PlainAlbumCard({ album }: { album: ArtistCatalogueAlbum }) {
 }
 
 function decadeLabel(year: number | null): string {
-  if (year == null) return "Unknown";
+  if (year == null) return "UNDATED"; // pre-styled caps: the label span no longer uppercases (see below)
   return `${Math.floor(year / 10) * 10}s`;
 }
 
@@ -223,7 +223,8 @@ export default async function ArtistPage({
               groupByDecade(studio).map((group) => (
                 <div key={group.label} className="flex flex-col gap-3">
                   <div className="flex items-center gap-3">
-                    <span className="shrink-0 font-mono text-xs uppercase tracking-widest text-text-faint">
+                    {/* No `uppercase` here — it would render "1990s" as "1990S". */}
+                    <span className="shrink-0 font-mono text-xs tracking-widest text-text-faint">
                       {group.label}
                     </span>
                     <div className="h-px flex-1 bg-border" />
