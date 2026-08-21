@@ -31,16 +31,28 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ albumId: s
   }
 
   let buf: Buffer;
+  let stat: { mtimeMs: number; size: number };
   try {
-    buf = await fs.readFile(dest);
+    [buf, stat] = await Promise.all([fs.readFile(dest), fs.stat(dest)]);
   } catch {
     return NextResponse.json({ error: "not found" }, { status: 404 });
+  }
+
+  // Unlike /api/poster, a cover's bytes CAN change under the same URL (a
+  // re-enrichment swaps the cached file in place — e.g. embedded art
+  // replacing an online fetch), so `immutable` here left browsers showing
+  // stale art for up to a year. Serve with an mtime+size ETag and always
+  // revalidate: LAN 304s are cheap, cover swaps show up on the next load.
+  const etag = `"${stat.size.toString(16)}-${Math.trunc(stat.mtimeMs).toString(16)}"`;
+  if (_req.headers.get("if-none-match") === etag) {
+    return new NextResponse(null, { status: 304, headers: { ETag: etag } });
   }
 
   return new NextResponse(new Uint8Array(buf), {
     headers: {
       "Content-Type": "image/jpeg",
-      "Cache-Control": "public, max-age=31536000, immutable",
+      "Cache-Control": "public, max-age=0, must-revalidate",
+      ETag: etag,
     },
   });
 }
