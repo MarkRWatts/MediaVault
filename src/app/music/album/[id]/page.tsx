@@ -6,6 +6,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import CoverImage from "@/components/CoverImage";
 import AudioCodecBadge from "@/components/AudioCodecBadge";
+import AlbumPlayer from "@/components/AlbumPlayer";
 import { getAlbumDetail } from "@/lib/queries-music";
 import type { AlbumTrackView } from "@/lib/queries-music";
 import { qualityLabel } from "@/lib/audio-quality";
@@ -80,6 +81,24 @@ export default async function AlbumPage({
   const quality = dominantQuality(allTracks);
   const multiDisc = album.discs.length > 1;
 
+  // Already in disc-then-trackNumber order (getAlbumDetail's sort), flattened
+  // with each track's disc number attached and DRM (.m4p — FairPlay,
+  // unplayable in-browser) filtered out.
+  const playableTracks = album.discs.flatMap((d) =>
+    d.tracks
+      .filter((t) => t.codec !== "drm")
+      .map((t) => ({
+        id: t.id,
+        title: t.title,
+        codec: t.codec,
+        durationSecs: t.durationSecs,
+        disc: d.disc,
+        trackNumber: t.trackNumber,
+      })),
+  );
+  const canPlay = album.owned && playableTracks.length > 0;
+  const drmOnly = album.owned && allTracks.length > 0 && playableTracks.length === 0;
+
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-8 px-4 py-6 sm:px-6">
       <Link
@@ -117,6 +136,13 @@ export default async function AlbumPage({
           </div>
         </div>
       </div>
+
+      {canPlay && (
+        <AlbumPlayer albumTitle={album.title} artistName={album.artist.name} tracks={playableTracks} />
+      )}
+      {drmOnly && (
+        <p className="text-xs text-text-faint">Playback unavailable — FairPlay-protected files.</p>
+      )}
 
       <div className="flex flex-col gap-6">
         {album.discs.length === 0 ? (
