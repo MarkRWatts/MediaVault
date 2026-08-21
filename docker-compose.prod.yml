@@ -17,7 +17,7 @@ services:
         aliases:
           - filmdb
     # The VM has no host-level SMB mount (deploy has no sudo, by design).
-    # Instead the Docker daemon itself mounts the nas.example.lan share as a CIFS
+    # Instead the Docker daemon itself mounts the NAS share as a CIFS
     # named volume — a read-only, purpose-made SMB account, credentials in
     # .env.docker. The base compose's /movies bind still applies but points at
     # an empty placeholder dir on the VM (MOVIES_HOST_PATH in .env.docker);

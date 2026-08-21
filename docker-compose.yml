@@ -26,7 +26,7 @@ services:
       # SQLite database and cached posters.
       - data:/app/data
       # Movie share (SMB mount on the host). On the Mac: /Volumes/media/Movies.
-      # On the VM: the mount point of //nas.example.lan/media/Movies.
+      # On the VM: an empty placeholder dir (the CIFS volume supplies the media).
       - ${MOVIES_HOST_PATH:-/Volumes/media/Movies}:/movies:ro
 
 volumes:
