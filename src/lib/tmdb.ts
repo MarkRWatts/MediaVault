@@ -4,7 +4,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { prisma } from "@/lib/db";
-import { sortTitle } from "@/lib/parse";
+import { normalizeTitle, sortTitle } from "@/lib/parse";
 import type { Film } from "@/generated/prisma/client";
 import { guardAndCreateRun, updateProgress, finishRun, failRun } from "@/lib/runs";
 
@@ -139,20 +139,32 @@ async function enrichOneFilm(film: Film, log: string[], collectionCache: Map<num
   }
 
   if (tmdbId == null) {
+    // Among the top hits, prefer an exact normalised-title match near the
+    // right year — TMDB's ranking alone can put e.g. "…Part 1" above a
+    // "…Part 2" query, and trusting results[0] blindly corrupts identities.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pickHit = (results: any[] | undefined): any => {
+      if (!results?.length) return undefined;
+      const want = normalizeTitle(film.title);
+      const yearOk = (r: { release_date?: string }) =>
+        !film.year || !r.release_date || Math.abs(Number(r.release_date.slice(0, 4)) - film.year) <= 1;
+      return results.slice(0, 5).find((r) => normalizeTitle(r.title ?? "") === want && yearOk(r)) ?? results[0];
+    };
+
     const yearParams: Record<string, string> = film.year ? { year: String(film.year) } : {};
-    const searched = await tmdbFetch("/search/movie", { query: film.title, ...yearParams });
-    let hit = searched.results?.[0];
+    let hit = pickHit((await tmdbFetch("/search/movie", { query: film.title, ...yearParams })).results);
     if (hit) {
-      tmdbId = hit.id;
       confidence = "SEARCH";
     } else if (film.year) {
-      const retried = await tmdbFetch("/search/movie", { query: film.title });
-      hit = retried.results?.[0];
-      if (hit) {
-        tmdbId = hit.id;
-        confidence = "LOW";
-      }
+      hit = pickHit((await tmdbFetch("/search/movie", { query: film.title })).results);
+      if (hit) confidence = "LOW";
     }
+    if (!hit && normalizeTitle(film.title) !== film.title.toLowerCase()) {
+      // Accented/punctuated titles can miss — retry with the stripped form.
+      hit = pickHit((await tmdbFetch("/search/movie", { query: normalizeTitle(film.title), ...yearParams })).results);
+      if (hit) confidence = "LOW";
+    }
+    if (hit) tmdbId = hit.id;
   } else if (confidence !== "EXACT") {
     confidence = "EXACT";
   }
@@ -183,17 +195,51 @@ async function enrichOneFilm(film: Film, log: string[], collectionCache: Map<num
 
   if (!film.imdbId && details.imdb_id) updateData.imdbId = details.imdb_id;
 
-  if (details.belongs_to_collection) {
-    await ensureCollection(details.belongs_to_collection, collectionCache, log);
-    updateData.collectionId = details.belongs_to_collection.id;
+  // Another row may already hold this tmdbId: either a missing-film
+  // placeholder created from collection membership (absorb it — the film on
+  // disk takes its place), or a genuine duplicate owned film (merge into it).
+  const holder = await prisma.film.findUnique({
+    where: { tmdbId },
+    include: { versions: { select: { id: true } } },
+  });
+  if (holder && holder.id !== film.id) {
+    if (!holder.owned && holder.versions.length === 0) {
+      await prisma.film.delete({ where: { id: holder.id } });
+      log.push(`Reclaimed missing-film placeholder "${holder.title}" — "${film.title}" is on disk`);
+    } else if (confidence === "EXACT") {
+      // Two owned rows for one movie, proven by id — safe to merge.
+      await prisma.version.updateMany({ where: { filmId: film.id }, data: { filmId: holder.id } });
+      await prisma.film.delete({ where: { id: film.id } });
+      await prisma.film.update({ where: { id: holder.id }, data: { owned: true } });
+      log.push(`Merged duplicate "${film.title}" into "${holder.title}" (tmdb:${tmdbId})`);
+      return;
+    } else {
+      // A search-based match colliding with an owned film is far more likely
+      // a WRONG match than a true duplicate — never merge on it.
+      log.push(
+        `Match conflict: search matched "${film.title}"${film.year ? ` (${film.year})` : ""} to "${holder.title}" (tmdb:${tmdbId}), which is already in the library — left unmatched for review`
+      );
+      return;
+    }
   }
 
+  // The film must own its tmdbId BEFORE collection parts are processed —
+  // otherwise ensureCollection creates a missing-film placeholder for this
+  // very film and the update below trips the tmdbId unique constraint.
   try {
     await prisma.film.update({ where: { id: film.id }, data: updateData });
   } catch {
     // Most likely a unique constraint clash on imdbId backfill — retry without it.
     delete updateData.imdbId;
     await prisma.film.update({ where: { id: film.id }, data: updateData });
+  }
+
+  if (details.belongs_to_collection) {
+    await ensureCollection(details.belongs_to_collection, collectionCache, log);
+    await prisma.film.update({
+      where: { id: film.id },
+      data: { collectionId: details.belongs_to_collection.id },
+    });
   }
 
   await cachePoster(details.poster_path, "w342");
