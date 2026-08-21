@@ -19,6 +19,20 @@ pages, and a "what's missing" collector's report.
 - **Report** — missing films per collection, missing seasons/episodes per
   show, Blu-ray upgrade candidates, and files needing metadata attention.
 
+## Screenshots
+
+| Library | Film detail |
+| --- | --- |
+| ![Library grid](docs/screenshots/library.png) | ![Film detail with versions and soundtracks](docs/screenshots/film-detail.png) |
+
+| Collections | Collection timeline |
+| --- | --- |
+| ![Collections grid](docs/screenshots/collections.png) | ![Release-order timeline with missing films greyed](docs/screenshots/collection-timeline.png) |
+
+| Show detail | Report |
+| --- | --- |
+| ![Season-by-season episode lists](docs/screenshots/show-detail.png) | ![Collector's report with collapsible sections](docs/screenshots/report.png) |
+
 ## Stack
 
 Next.js 15 (App Router) · Prisma 7 + SQLite · Tailwind v4 · ffprobe · TMDB
