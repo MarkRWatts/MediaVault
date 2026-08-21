@@ -16,6 +16,9 @@ pages, and a "what's missing" collector's report.
 - **Shows** — TV series with per-season episode lists, missing episodes
   greyed out, and per-episode play links. Episode numbering follows disc
   order (TMDB DVD episode groups), because this is a disc library.
+- **Music** — artists with studio back-catalogues from MusicBrainz, owned vs
+  missing albums shown by colour, with lossless/codec badges and per-album
+  track details.
 - **Collections** — film series (James Bond, Alien, …) in release-order
   timelines with missing films greyed out.
 - **Report** — missing films per collection, missing seasons/episodes per
@@ -59,6 +62,7 @@ the Docker deployment reads `.env.docker` on the server (template:
 | --- | --- |
 | `MOVIES_PATH` | Folder of movie files the scanner walks (e.g. `/Volumes/media/Movies` locally, `/media-share/Movies` in the container). |
 | `TVSHOWS_PATH` | Folder of TV shows (`Show (Year)/Season NN/Show SxxEyy.ext`). Optional — unset skips all TV features. |
+| `MUSIC_PATH` | Folder of a music library in iTunes layout (`Artist/Album/NN Track.m4a`). Optional — unset skips all music features. |
 | `POSTER_CACHE_DIR` | Where downloaded TMDB artwork is cached. |
 | `DATABASE_URL` | SQLite location, e.g. `file:./data/filmdb.db`. |
 | `FFPROBE_DOCKER_IMAGE` | Dev-only fallback: run ffprobe via `docker run` when it isn't on PATH (the deploy image installs ffmpeg). |

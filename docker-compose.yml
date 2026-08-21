@@ -13,6 +13,11 @@ services:
       # plain passthrough, empty by default, which skips the TV scan/enrich/
       # Jellyfin-TV-match phases entirely.
       TVSHOWS_PATH: ${TVSHOWS_PATH:-}
+      # Root of the Music share. No bind mount in this base compose file (that's
+      # the prod overlay's job, via the same /media-share volume as movies) —
+      # plain passthrough, empty by default, which skips the music scan/enrich
+      # phases entirely.
+      MUSIC_PATH: ${MUSIC_PATH:-}
       # TMDB API key (optional, free) — enables posters, metadata, and
       # collection/missing-film detection. Leave blank to scan-only.
       TMDB_API_KEY: ${TMDB_API_KEY:-}

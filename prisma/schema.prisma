@@ -5,7 +5,9 @@
 //   Version.format:        BLURAY | DVD | HD | SD | UNKNOWN
 //   Version.videoRange:    SDR | HDR10 | HLG | DOLBY_VISION
 //   Film.matchConfidence:  EXACT | SEARCH | LOW | UNMATCHED
-//   ScanRun.kind:          SCAN | ENRICH | JELLYFIN   ScanRun.status: RUNNING | DONE | FAILED
+//   Album.kind:            STUDIO | COMPILATION | EP | LIVE | SINGLE | REMIX | SOUNDTRACK | OTHER
+//   Track.codec:           alac | aac | mp3 | flac | drm | unknown
+//   ScanRun.kind:          SCAN | ENRICH | JELLYFIN | ENRICH_MUSIC   ScanRun.status: RUNNING | DONE | FAILED
 
 generator client {
   provider = "prisma-client"
@@ -184,7 +186,7 @@ model EpisodeFile {
 // human-readable notes (unparsed files, low-confidence matches, errors).
 model ScanRun {
   id         Int       @id @default(autoincrement())
-  kind       String // SCAN | ENRICH
+  kind       String // SCAN | ENRICH | JELLYFIN | ENRICH_MUSIC
   status     String    @default("RUNNING")
   startedAt  DateTime  @default(now())
   finishedAt DateTime?
@@ -193,4 +195,67 @@ model ScanRun {
   total      Int       @default(0)
   message    String?
   log        String? // JSON array of strings
+}
+
+// --- Music ---
+// Same philosophy as movies/TV: Album rows exist for back-catalogue entries
+// we DON'T own (owned=false), created from MusicBrainz release-group listings.
+
+model Artist {
+  id              Int      @id @default(autoincrement())
+  name            String
+  sortName        String
+  folder          String   @unique // top-level folder under MUSIC_PATH
+  mbid            String?  @unique // MusicBrainz artist id
+  disambiguation  String?
+  various         Boolean  @default(false) // Compilations pseudo-artist
+  matchConfidence String   @default("UNMATCHED") // EXACT | SEARCH | LOW | UNMATCHED
+  albums          Album[]
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([sortName])
+}
+
+model Album {
+  id          Int       @id @default(autoincrement())
+  artistId    Int
+  artist      Artist    @relation(fields: [artistId], references: [id], onDelete: Cascade)
+  title       String
+  sortTitle   String
+  year        Int?
+  releaseDate DateTime?
+  mbid        String?   @unique // MusicBrainz release-group id
+  kind        String    @default("STUDIO") // STUDIO | COMPILATION | EP | LIVE | SINGLE | REMIX | SOUNDTRACK | OTHER
+  coverPath   String?   // cached cover art file name under the cover cache dir
+  owned       Boolean   @default(true)
+  folder      String?   // album folder name under the artist folder (null when owned=false)
+  trackTotal  Int?      // canonical track count from MusicBrainz, if known
+  tracks      Track[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([artistId, folder])
+  @@index([artistId])
+}
+
+model Track {
+  id           Int       @id @default(autoincrement())
+  albumId      Int
+  album        Album     @relation(fields: [albumId], references: [id], onDelete: Cascade)
+  disc         Int       @default(1)
+  trackNumber  Int?
+  title        String
+  filePath     String    @unique // relative to MUSIC_PATH
+  fileName     String
+  codec        String?   // alac | aac | mp3 | flac | drm | unknown
+  lossless     Boolean   @default(false)
+  sampleRate   Int?
+  bitDepth     Int?
+  durationSecs Float?
+  sizeBytes    BigInt?
+  mtimeMs      Float?    // probe cache key, same convention as Version
+  probedAt     DateTime?
+
+  @@index([albumId])
 }

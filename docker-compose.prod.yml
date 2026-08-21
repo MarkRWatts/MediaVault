@@ -22,11 +22,12 @@ services:
     # .env.docker. The base compose's /movies bind still applies but points at
     # an empty placeholder dir on the VM (MOVIES_HOST_PATH in .env.docker);
     # MOVIES_PATH is overridden to look inside this volume instead. The same
-    # "media" share also holds the TV Shows folder, so TVSHOWS_PATH is
-    # overridden the same way — no separate volume needed.
+    # "media" share also holds the TV Shows and Music folders, so TVSHOWS_PATH
+    # and MUSIC_PATH are overridden the same way — no separate volume needed.
     environment:
       MOVIES_PATH: /media-share/Movies
       TVSHOWS_PATH: /media-share/TV Shows
+      MUSIC_PATH: /media-share/Music
     volumes:
       - movies:/media-share:ro
 

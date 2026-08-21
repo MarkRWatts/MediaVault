@@ -52,3 +52,33 @@ export function resolutionTier(width?: number | null, height?: number | null): R
   if (height && height >= 470 && height <= 490) return { label: "480p", rank: 5 };
   return { label: "SD", rank: 6 };
 }
+
+// --- Music ---
+
+export const ALBUM_KINDS = [
+  "STUDIO",
+  "COMPILATION",
+  "EP",
+  "LIVE",
+  "SINGLE",
+  "REMIX",
+  "SOUNDTRACK",
+  "OTHER",
+] as const;
+export type AlbumKind = (typeof ALBUM_KINDS)[number];
+
+export const MUSIC_EXTENSIONS = new Set(["m4a", "mp3", "m4p", "flac", "aac"]);
+
+// codec -> lossless. `.m4p` (FairPlay DRM) and anything unrecognised are lossy.
+const LOSSLESS_CODECS = new Set(["alac", "flac"]);
+
+export function isLosslessCodec(codec?: string | null): boolean {
+  if (!codec) return false;
+  return LOSSLESS_CODECS.has(codec.toLowerCase());
+}
+
+// Report threshold (see SPEC-MUSIC.md): an artist only appears in the
+// missing-back-catalogue report once we own enough of it to be worth
+// completing — keeps 2-of-43 completist catalogues (Zappa) out of the report.
+export const MUSIC_REPORT_MIN_OWNED = 2;
+export const MUSIC_REPORT_MIN_PCT = 0.2;
