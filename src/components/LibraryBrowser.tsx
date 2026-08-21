@@ -88,7 +88,7 @@ export default function LibraryBrowser({ films }: { films: LibraryFilm[] }) {
                 type="button"
                 onClick={() => setFilter(f.key)}
                 aria-pressed={filter === f.key}
-                className={`rounded-full border px-3 py-1 text-xs font-medium tracking-wide transition-colors ${
+                className={`inline-flex min-h-10 items-center justify-center rounded-full border px-3 py-1 text-xs font-medium tracking-wide transition-colors sm:min-h-0 ${
                   filter === f.key
                     ? "border-accent-border bg-accent-dim text-accent"
                     : "border-border text-text-muted hover:border-border-strong hover:text-text"

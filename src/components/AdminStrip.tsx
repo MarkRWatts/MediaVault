@@ -134,21 +134,22 @@ export default function AdminStrip() {
     runs.latestEnrich?.status === "FAILED" && runs.latestEnrich.message?.includes("TMDB_API_KEY");
 
   return (
-    <div className="flex items-center gap-3 text-xs">
+    <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1.5 text-xs">
       {tmdbHint && (
         <span className="hidden text-accent/80 sm:inline">
           Add TMDB_API_KEY to enable metadata
         </span>
       )}
 
-      <div className="hidden text-text-faint sm:block" aria-live="polite">
+      <div className="text-text-faint" aria-live="polite">
         {activeRun ? (
           <span className="text-text-muted">
             {KIND_LABEL[activeRun.kind] ?? "Working"}
             {activeRun.total > 0 ? ` ${activeRun.progress}/${activeRun.total}…` : "…"}
           </span>
         ) : mostRecent ? (
-          <span>
+          // Idle status is informational — not worth a header row on phones.
+          <span className="hidden sm:inline">
             {mostRecent.kind === "SCAN" ? "Scan" : "Enrich"}{" "}
             {mostRecent.status === "FAILED" ? (
               <span className="text-missing">failed</span>
@@ -158,7 +159,7 @@ export default function AdminStrip() {
             · {relativeTime(mostRecent.finishedAt ?? mostRecent.startedAt)}
           </span>
         ) : (
-          <span>No scans yet</span>
+          <span className="hidden sm:inline">No scans yet</span>
         )}
       </div>
 
@@ -167,7 +168,7 @@ export default function AdminStrip() {
           type="button"
           onClick={() => trigger("scan")}
           disabled={running || pending !== null}
-          className="rounded-md border border-border px-2.5 py-1 font-medium tracking-wide text-text-muted transition-colors hover:border-border-strong hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+          className="inline-flex min-h-10 items-center justify-center rounded-md border border-border px-2.5 py-1 font-medium tracking-wide text-text-muted transition-colors hover:border-border-strong hover:text-text disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0"
         >
           Rescan library
         </button>
@@ -175,7 +176,7 @@ export default function AdminStrip() {
           type="button"
           onClick={() => trigger("enrich")}
           disabled={running || pending !== null}
-          className="rounded-md border border-border px-2.5 py-1 font-medium tracking-wide text-text-muted transition-colors hover:border-border-strong hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+          className="inline-flex min-h-10 items-center justify-center rounded-md border border-border px-2.5 py-1 font-medium tracking-wide text-text-muted transition-colors hover:border-border-strong hover:text-text disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0"
         >
           Fetch metadata
         </button>
