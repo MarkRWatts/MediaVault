@@ -38,28 +38,26 @@ Future deploys are just `git pull` + rebuild (see [Updating](#updating-the-deplo
 
 ### 2. `.env.docker`
 
-Create `.env.docker` directly on the server (never committed — see `.env.docker.example` if one exists for the variable list):
-
-```bash
-MOVIES_HOST_PATH=/mnt/movies   # or wherever the SMB share is mounted on the VM
-TMDB_API_KEY=...               # optional; leave blank for scan-only mode
-```
+Create `.env.docker` directly on the server (never committed — copy
+`.env.docker.example` for the full variable list): SMB credentials for the
+share, `TMDB_API_KEY`, and the Jellyfin settings.
 
 ### 3. Movie share
 
-Mount the SMB share (`//nas.example.lan/media/Movies`) at the path you set in `MOVIES_HOST_PATH` above. Example for `/mnt/movies`:
+No host mount and **no sudo needed**: `docker-compose.prod.yml` declares the
+share as a CIFS **named volume**, so the Docker daemon itself mounts
+`//$MOVIES_SMB_HOST/$MOVIES_SMB_SHARE` (read-only, credentials from
+`.env.docker` — use a dedicated read-only SMB account) and the container sees
+it at `/media-share`, with `MOVIES_PATH=/media-share/Movies`. The base
+compose's `/movies` bind is satisfied by an empty placeholder dir
+(`MOVIES_HOST_PATH=/home/deploy/filmDB-empty`).
 
-```bash
-sudo mkdir -p /mnt/movies
-sudo mount -t cifs //nas.example.lan/media/Movies /mnt/movies \
-  -o username=<user>,password=<pass>,uid=1000,gid=1000
-```
-
-Add to `/etc/fstab` to mount on boot:
-
-```
-//nas.example.lan/media/Movies /mnt/movies cifs username=<user>,password=<pass>,uid=1000,gid=1000 0 0
-```
+**Networking gotcha (learned the hard way)**: if the VM runs *on* the same
+box that serves the SMB share (TrueNAS), a VM attached via macvtap to the
+same physical NIC as the host's IP **cannot reach the host at all** — mount
+attempts fail with "no route to host". Give the VM a different physical NIC
+than the one carrying the host's IP (verify by MAC, not interface name), or
+use a proper bridge interface.
 
 ### 4. Bring up the stack
 
@@ -156,9 +154,9 @@ A single Caddy instance on the VM fronts **every** app — currently jobAppTrack
 ### VM deployment (in `.env.docker`)
 
 - `DATABASE_URL`: `file:/app/data/filmdb.db` (set in the base `docker-compose.yml`).
-- `MOVIES_PATH`: `/movies` (set in the base `docker-compose.yml`; this is where the SMB share is bound-mounted inside the container).
+- `MOVIES_PATH`: `/media-share/Movies` on the VM (the CIFS named volume; the base compose default `/movies` applies only to local dev).
 - `POSTER_CACHE_DIR`: `/app/data/posters` (set in the base `docker-compose.yml`).
-- `MOVIES_HOST_PATH`: `/mnt/movies` (or wherever you mounted the SMB share on the VM — passed to the container).
+- `MOVIES_SMB_HOST/SHARE/USERNAME/PASSWORD`: the CIFS named-volume credentials (see `.env.docker.example`); `MOVIES_HOST_PATH` points at an empty placeholder dir.
 - `TMDB_API_KEY`: Free key (optional; leave blank for scan-only).
 
 No `FFPROBE_DOCKER_IMAGE` needed — the runner image installs ffmpeg.
