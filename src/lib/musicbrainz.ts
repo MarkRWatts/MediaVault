@@ -281,8 +281,17 @@ async function reconcileArtistAlbums(artistId: number, artistName: string, artis
 
     let owned = ownedAlbums.find((a) => a.mbid === rg.id);
     if (!owned) {
+      // Also try the folder title prefixed with the artist name: release
+      // groups are often titled "<Artist>: <Album>" where the folder is just
+      // "<Album>" (real case: Blur's "The Best Of" folder vs MusicBrainz's
+      // "Blur: The Best Of" — normalizeTitle folds the ":" so the prefixed
+      // variant matches exactly).
       owned = ownedAlbums.find(
-        (a) => !claimedOwnedIds.has(a.id) && !a.mbid && normalizeAlbumTitle(a.title) === wantTitle,
+        (a) =>
+          !claimedOwnedIds.has(a.id) &&
+          !a.mbid &&
+          (normalizeAlbumTitle(a.title) === wantTitle ||
+            normalizeAlbumTitle(`${artistName} ${a.title}`) === wantTitle),
       );
     }
     if (!owned) continue;
@@ -324,6 +333,9 @@ async function reconcileArtistAlbums(artistId: number, artistName: string, artis
     if (/\blive\b/i.test(a.title)) {
       await prisma.album.update({ where: { id: a.id }, data: { kind: "LIVE" } });
       log.push(`Reclassified unmatched "${a.title}" (${artistName}) as LIVE by title heuristic`);
+    } else if (/\b(best of|greatest hits|the hits|singles|collection|anthology)\b/i.test(a.title)) {
+      await prisma.album.update({ where: { id: a.id }, data: { kind: "COMPILATION" } });
+      log.push(`Reclassified unmatched "${a.title}" (${artistName}) as COMPILATION by title heuristic`);
     }
   }
 
