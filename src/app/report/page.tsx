@@ -27,15 +27,17 @@ function CollapsibleSection({
   title,
   subtitle,
   count,
+  defaultOpen,
   children,
 }: {
   title: string;
   subtitle?: string;
   count: string;
+  defaultOpen?: boolean;
   children: React.ReactNode;
 }) {
   return (
-    <details className="group">
+    <details className="group" open={defaultOpen}>
       <summary className="flex cursor-pointer select-none list-none items-baseline gap-3 [&::-webkit-details-marker]:hidden">
         <svg
           viewBox="0 0 12 12"
@@ -53,11 +55,19 @@ function CollapsibleSection({
   );
 }
 
-export default async function ReportPage() {
-  const [{ totals, missingByCollection, upgradeCandidates, issues }, tv] = await Promise.all([
+export default async function ReportPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ open?: string }>;
+}) {
+  const [{ totals, missingByCollection, upgradeCandidates, issues }, tv, params] = await Promise.all([
     getReportData(),
     getTvReportData(),
+    searchParams,
   ]);
+  // Deep-linkable expansion: /report?open=collections|upgrades|issues|shows
+  // (comma-separable). Sections default collapsed otherwise.
+  const open = new Set((params.open ?? "").split(",").filter(Boolean));
 
   const tiles: { label: string; value: number | string; tone?: "accent" | "missing" }[] = [
     { label: "Films owned", value: totals.filmsOwned },
@@ -108,6 +118,7 @@ export default async function ReportPage() {
 
       <CollapsibleSection
         title="Missing from collections"
+        defaultOpen={open.has("collections")}
         count={`${totals.missingCount} film${totals.missingCount === 1 ? "" : "s"} across ${missingByCollection.length} collection${missingByCollection.length === 1 ? "" : "s"}`}
       >
         {missingByCollection.length === 0 ? (
@@ -155,6 +166,7 @@ export default async function ReportPage() {
 
       <CollapsibleSection
         title="Blu-ray upgrade candidates"
+        defaultOpen={open.has("upgrades")}
         subtitle="Owned only on DVD — no Blu-ray version on disk."
         count={`${upgradeCandidates.length} film${upgradeCandidates.length === 1 ? "" : "s"}`}
       >
@@ -191,6 +203,7 @@ export default async function ReportPage() {
 
       <CollapsibleSection
         title="Library issues"
+        defaultOpen={open.has("issues")}
         subtitle="Films that could use another look — a low-confidence or missing metadata match, an unrecognised disc format, or no release year."
         count={`${issues.length} film${issues.length === 1 ? "" : "s"}`}
       >
@@ -227,6 +240,7 @@ export default async function ReportPage() {
 
       <CollapsibleSection
         title="Missing from shows"
+        defaultOpen={open.has("shows")}
         count={`${tv.episodesTotal - tv.episodesOwned} episode${tv.episodesTotal - tv.episodesOwned === 1 ? "" : "s"} across ${tv.missingByShow.length} show${tv.missingByShow.length === 1 ? "" : "s"}`}
       >
         {tv.missingByShow.length === 0 ? (

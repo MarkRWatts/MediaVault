@@ -35,6 +35,10 @@ pages, and a "what's missing" collector's report.
 | --- | --- |
 | ![Season-by-season episode lists](docs/screenshots/show-detail.png) | ![Collector's report with collapsible sections](docs/screenshots/report.png) |
 
+<p align="center">
+  <img src="docs/screenshots/report-expanded.png" alt="Missing-from-collections section expanded, showing gap posters per collection" width="900" />
+</p>
+
 ## Stack
 
 Next.js 15 (App Router) · Prisma 7 + SQLite · Tailwind v4 · ffprobe · TMDB
