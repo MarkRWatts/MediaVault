@@ -12,6 +12,7 @@ const execFileAsync = promisify(execFile);
 export interface ProbedAudioTrack {
   streamIdx: number;
   codec: string | null;
+  profile: string | null;
   language: string | null;
   channels: number | null;
   layout: string | null;
@@ -22,13 +23,23 @@ export interface ProbeResult {
   width: number | null;
   height: number | null;
   videoCodec: string | null;
+  colorTransfer: string | null;
+  hasDolbyVision: boolean;
   durationSecs: number | null;
   sizeBytes: number | null;
   audioTracks: ProbedAudioTrack[];
 }
 
+// `profile` (both video and audio — this is how ffprobe surfaces "DTS-HD MA"
+// vs plain "DTS", "DD+" vs "AC-3", etc.), `color_transfer` (video HDR
+// transfer function: smpte2084 = PQ/HDR10, arib-std-b67 = HLG), and
+// `side_data_list` (video only — Dolby Vision shows up as a "DOVI
+// configuration record" entry, not as a codec/profile field at all) must be
+// requested by name or ffprobe omits them; verified against a real file on
+// the share (Die Hard (1988), which has one DTS-HD MA and one plain DTS
+// track — see src/lib/ffprobe.ts history / PLAN.md).
 const SHOW_ENTRIES =
-  "format=duration,size:stream=index,codec_type,codec_name,width,height,channels,channel_layout:stream_tags=language,title";
+  "format=duration,size:stream=index,codec_type,codec_name,profile,width,height,channels,channel_layout,color_transfer,side_data_list:stream_tags=language,title";
 
 const FFPROBE_ARGS = ["-hide_banner", "-loglevel", "error", "-show_entries", SHOW_ENTRIES, "-of", "json"];
 
@@ -44,20 +55,35 @@ function detectLocalFfprobe(): Promise<boolean> {
   return hasLocalFfprobePromise;
 }
 
+interface FfprobeSideData {
+  side_data_type?: string;
+}
+
 interface FfprobeStream {
   index: number;
   codec_type: string;
   codec_name?: string;
+  profile?: string;
   width?: number;
   height?: number;
   channels?: number;
   channel_layout?: string;
+  color_transfer?: string;
+  side_data_list?: FfprobeSideData[];
   tags?: { language?: string; title?: string };
 }
 
 interface FfprobeJson {
   format?: { duration?: string; size?: string };
   streams?: FfprobeStream[];
+}
+
+// Dolby Vision has no codec_name/profile of its own — it rides alongside the
+// base HEVC/H.264 stream as side data. ffprobe (built with libdovi, as the
+// mwader/static-ffmpeg image is) surfaces it as a side_data_list entry named
+// "DOVI configuration record".
+function hasDoviSideData(stream: FfprobeStream | undefined): boolean {
+  return (stream?.side_data_list ?? []).some((sd) => sd.side_data_type === "DOVI configuration record");
 }
 
 function parseFfprobeJson(stdout: string): ProbeResult {
@@ -70,6 +96,7 @@ function parseFfprobeJson(stdout: string): ProbeResult {
   const audioTracks: ProbedAudioTrack[] = audioStreams.map((s) => ({
     streamIdx: s.index,
     codec: s.codec_name ?? null,
+    profile: s.profile ?? null,
     language: s.tags?.language ?? null,
     channels: s.channels ?? null,
     layout: s.channel_layout ?? null,
@@ -83,6 +110,8 @@ function parseFfprobeJson(stdout: string): ProbeResult {
     width: videoStream?.width ?? null,
     height: videoStream?.height ?? null,
     videoCodec: videoStream?.codec_name ?? null,
+    colorTransfer: videoStream?.color_transfer ?? null,
+    hasDolbyVision: hasDoviSideData(videoStream),
     durationSecs: Number.isFinite(durationSecs) ? durationSecs : null,
     sizeBytes: Number.isFinite(sizeBytes) ? sizeBytes : null,
     audioTracks,

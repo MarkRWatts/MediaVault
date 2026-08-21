@@ -49,6 +49,19 @@
   --res-hd-quiet: #7c8ca0;
   --res-hd-quiet-bg: rgba(124, 140, 160, 0.08);
   --res-hd-quiet-border: rgba(124, 140, 160, 0.24);
+
+  /* Audio codec-family chip colors (VersionCard) — deliberately distinct
+     hues from both the disc-format and resolution-tier badge families above,
+     since an audio chip can sit on the same card as those. Dolby gets a
+     quiet violet (a nod to the Dolby brand without reproducing its mark);
+     DTS gets a quiet teal. Both stay subtle — small mono chips, not shouty. */
+  --audio-dolby: #ab9ee0;
+  --audio-dolby-bg: rgba(171, 158, 224, 0.12);
+  --audio-dolby-border: rgba(171, 158, 224, 0.32);
+
+  --audio-dts: #7fc4b8;
+  --audio-dts-bg: rgba(127, 196, 184, 0.1);
+  --audio-dts-border: rgba(127, 196, 184, 0.3);
 }
 
 @theme inline {
@@ -83,6 +96,12 @@
   --color-res-hd-quiet: var(--res-hd-quiet);
   --color-res-hd-quiet-bg: var(--res-hd-quiet-bg);
   --color-res-hd-quiet-border: var(--res-hd-quiet-border);
+  --color-audio-dolby: var(--audio-dolby);
+  --color-audio-dolby-bg: var(--audio-dolby-bg);
+  --color-audio-dolby-border: var(--audio-dolby-border);
+  --color-audio-dts: var(--audio-dts);
+  --color-audio-dts-bg: var(--audio-dts-bg);
+  --color-audio-dts-border: var(--audio-dts-border);
 
   --font-display: var(--font-bebas), "Arial Narrow", sans-serif;
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;

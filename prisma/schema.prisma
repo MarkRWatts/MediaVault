@@ -3,6 +3,7 @@
 // SQLite (no native enums), so category fields are strings constrained by the
 // constants in src/lib/constants.ts:
 //   Version.format:        BLURAY | DVD | HD | SD | UNKNOWN
+//   Version.videoRange:    SDR | HDR10 | HLG | DOLBY_VISION
 //   Film.matchConfidence:  EXACT | SEARCH | LOW | UNMATCHED
 //   ScanRun.kind:          SCAN | ENRICH | JELLYFIN   ScanRun.status: RUNNING | DONE | FAILED
 
@@ -68,6 +69,7 @@ model Version {
   width        Int?
   height       Int?
   videoCodec   String?
+  videoRange   String? // SDR | HDR10 | HLG | DOLBY_VISION — null until probed
   container    String? // mkv, mp4…
   sizeBytes    BigInt?
   durationSecs Float?
@@ -85,6 +87,7 @@ model AudioTrack {
   version   Version @relation(fields: [versionId], references: [id], onDelete: Cascade)
   streamIdx Int
   codec     String?
+  profile   String? // e.g. "DTS-HD MA", "DTS", "DD+" — from ffprobe stream profile
   language  String?
   channels  Int?
   layout    String? // "5.1", "stereo"…

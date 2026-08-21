@@ -118,6 +118,7 @@ export async function getLibraryFilms(): Promise<LibraryData> {
 export interface AudioTrackView {
   id: number;
   codec: string | null;
+  profile: string | null;
   language: string | null;
   channels: number | null;
   layout: string | null;
@@ -133,6 +134,7 @@ export interface VersionView {
   resolution: string;
   tier: ResolutionTier;
   videoCodec: string | null;
+  videoRange: string | null;
   container: string | null;
   sizeLabel: string;
   durationLabel: string;
@@ -192,6 +194,7 @@ export async function getFilmDetail(id: number): Promise<FilmDetail | null> {
     resolution: resolutionLabel(v.width, v.height),
     tier: resolutionTier(v.width, v.height),
     videoCodec: v.videoCodec,
+    videoRange: v.videoRange,
     container: v.container,
     sizeLabel: formatBytes(v.sizeBytes === null ? null : Number(v.sizeBytes)),
     durationLabel: formatDuration(v.durationSecs),
@@ -199,6 +202,7 @@ export async function getFilmDetail(id: number): Promise<FilmDetail | null> {
     audioTracks: v.audioTracks.map((a) => ({
       id: a.id,
       codec: a.codec,
+      profile: a.profile,
       language: a.language,
       channels: a.channels,
       layout: a.layout,

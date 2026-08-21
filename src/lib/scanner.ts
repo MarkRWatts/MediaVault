@@ -102,11 +102,29 @@ async function resolveFilm(representative: ParsedFile, log: string[]): Promise<n
   return created.id;
 }
 
-async function processVersion(file: CandidateFile, filmId: number, log: string[]): Promise<void> {
+// Derive Version.videoRange from the probe's HDR signals. Dolby Vision side
+// data wins regardless of the base layer's transfer characteristic (most DV
+// encodes carry an HDR10-compatible base layer, i.e. smpte2084, alongside
+// the DV enhancement layer). Only set when the probe actually succeeded —
+// callers should leave videoRange untouched on probe failure.
+function deriveVideoRange(colorTransfer: string | null, hasDolbyVision: boolean): string {
+  if (hasDolbyVision) return "DOLBY_VISION";
+  if (colorTransfer === "smpte2084") return "HDR10";
+  if (colorTransfer === "arib-std-b67") return "HLG";
+  return "SDR";
+}
+
+async function processVersion(
+  file: CandidateFile,
+  filmId: number,
+  log: string[],
+  force: boolean,
+): Promise<void> {
   const { parsed, absPath, size, mtimeMs } = file;
   const existing = await prisma.version.findUnique({ where: { filePath: parsed.relPath } });
 
-  const needProbe = !existing || existing.sizeBytes === null || Number(existing.sizeBytes) !== size || existing.mtimeMs !== mtimeMs;
+  const needProbe =
+    force || !existing || existing.sizeBytes === null || Number(existing.sizeBytes) !== size || existing.mtimeMs !== mtimeMs;
 
   const baseData = {
     filmId,
@@ -123,6 +141,7 @@ async function processVersion(file: CandidateFile, filmId: number, log: string[]
   try {
     const result = await probe(absPath);
     const format = classifyFormat(result.width);
+    const videoRange = deriveVideoRange(result.colorTransfer, result.hasDolbyVision);
     const sizeBytes = BigInt(Math.round(result.sizeBytes ?? size));
 
     const version = await prisma.version.upsert({
@@ -133,6 +152,7 @@ async function processVersion(file: CandidateFile, filmId: number, log: string[]
         width: result.width,
         height: result.height,
         videoCodec: result.videoCodec,
+        videoRange,
         durationSecs: result.durationSecs,
         sizeBytes,
         mtimeMs,
@@ -144,6 +164,7 @@ async function processVersion(file: CandidateFile, filmId: number, log: string[]
         width: result.width,
         height: result.height,
         videoCodec: result.videoCodec,
+        videoRange,
         durationSecs: result.durationSecs,
         sizeBytes,
         mtimeMs,
@@ -159,6 +180,7 @@ async function processVersion(file: CandidateFile, filmId: number, log: string[]
           versionId: version.id,
           streamIdx: t.streamIdx,
           codec: t.codec,
+          profile: t.profile,
           language: t.language,
           channels: t.channels,
           layout: t.layout,
@@ -178,7 +200,7 @@ async function processVersion(file: CandidateFile, filmId: number, log: string[]
   }
 }
 
-async function doScan(runId: number): Promise<void> {
+async function doScan(runId: number, force: boolean): Promise<void> {
   const log: string[] = [];
   const moviesPath = process.env.MOVIES_PATH;
   if (!moviesPath) throw new Error("MOVIES_PATH is not set");
@@ -223,7 +245,7 @@ async function doScan(runId: number): Promise<void> {
   let completed = 0;
   await mapPool(candidates, PROBE_CONCURRENCY, async (file) => {
     const filmId = filmIdByPath.get(file.parsed.relPath)!;
-    await processVersion(file, filmId, log);
+    await processVersion(file, filmId, log, force);
     completed++;
     if (completed % PROGRESS_UPDATE_EVERY === 0 || completed === total) {
       await updateProgress(runId, {
@@ -274,12 +296,18 @@ async function doScan(runId: number): Promise<void> {
  * Kick off a scan. Resolves quickly once the run is registered (or an
  * existing run is found) — the actual walk/probe/upsert work continues in
  * the background and is not awaited here.
+ *
+ * `force` ignores the size+mtime probe cache and re-probes every file even
+ * when nothing on disk changed — used for a one-off re-probe after adding
+ * new ffprobe-derived fields (e.g. audio profile, HDR range) so existing
+ * rows pick up values that would otherwise stay null forever.
  */
-export async function runScan(): Promise<{ runId: number; started: boolean }> {
+export async function runScan(options: { force?: boolean } = {}): Promise<{ runId: number; started: boolean }> {
+  const force = options.force ?? false;
   const { run, started } = await guardAndCreateRun("SCAN");
   if (!started) return { runId: run.id, started: false };
 
-  doScan(run.id).catch(async (err) => {
+  doScan(run.id, force).catch(async (err) => {
     console.error("[scanner] scan failed:", err);
     await failRun(run.id, err).catch((e) => console.error("[scanner] failed to record failure:", e));
   });
