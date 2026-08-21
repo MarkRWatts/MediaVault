@@ -13,18 +13,24 @@
 // { startAt, duration } in scheduleRef, keyed by track index — startAt is
 // an absolute AudioContext.currentTime coordinate, duration is the
 // *decoded* buffer's real duration (not the DB's durationSecs estimate,
-// which is what makes the join sample-accurate). scheduleAt() always
-// immediately kicks off prefetch(index + 1) the moment it schedules a
-// track's source node, and prefetch(), once its fetch+decode resolves,
-// chains itself onto whatever anchor its immediate predecessor left behind
-// in scheduleRef (predecessor.startAt + predecessor.duration) — that
-// mutual recursion is the entire gapless engine. A track that fails to
-// load leaves a zero-duration passthrough anchor instead of a real one, so
-// the chain still advances past it (console.warn'd) rather than stalling.
-// Because prefetch(index + 1) only ever fires once index has *started*
-// (been scheduled), at most two decoded AudioBuffers are ever alive at once
-// (current + next) — buffersRef is pruned down to the current index as
-// soon as the UI advances past a track.
+// which is what makes the join sample-accurate). prefetch(), once its
+// fetch+decode resolves, chains itself onto whatever anchor its immediate
+// predecessor left behind in scheduleRef (predecessor.startAt +
+// predecessor.duration) — that chaining is the gapless engine. A track that
+// fails to load leaves a zero-duration passthrough anchor instead of a real
+// one, so the chain still advances past it (console.warn'd) rather than
+// stalling.
+//
+// Prefetch pacing is driven by PLAYBACK, not by decode completion:
+// scheduleAt(idx) only kicks off prefetch(idx + 1) when idx is the track
+// playing right now, and handleTrackEnded triggers the next prefetch as
+// playback advances. Without that gate the schedule→decode→schedule cascade
+// races through the whole album in seconds (observed: a 6-track EP fully
+// fetched immediately), holding every decoded AudioBuffer at once — ~1.5 GB
+// of PCM for a 20-track album. With it, at most two decoded buffers are
+// alive (current + next; each track's multi-minute runtime is ample decode
+// headroom for the following join), and buffersRef is pruned down to the
+// current index as soon as the UI advances past a track.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -150,11 +156,10 @@ export default function AlbumPlayer({
       setStatus("playing");
     }
 
-    // The moment this track is scheduled to play, start decoding the one
-    // after it — this is both the "immediately prefetch the next track" and
-    // the "when a track starts playing, prefetch the following one" rule
-    // from the same mechanism, since scheduling *is* the start-playing event.
-    prefetch(idx + 1, session);
+    // Only the currently-playing track pulls in its successor — a track
+    // scheduled for the future must NOT (see the pacing note in the header
+    // comment; handleTrackEnded advances the chain when playback reaches it).
+    if (idx <= currentIndexRef.current) prefetch(idx + 1, session);
   }
 
   function prefetch(idx: number, session: number) {
@@ -216,6 +221,9 @@ export default function AlbumPlayer({
     currentIndexRef.current = nextIdx;
     setIndex(nextIdx);
     releaseBuffersBefore(nextIdx);
+    // Playback reached nextIdx (already scheduled & decoded) — now, and only
+    // now, pull in the track after it.
+    prefetch(nextIdx + 1, session);
 
     const info = scheduleRef.current.get(nextIdx);
     if (info) {
