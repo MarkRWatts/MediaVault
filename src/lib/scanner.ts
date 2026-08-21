@@ -260,6 +260,14 @@ async function doScan(runId: number): Promise<void> {
   }
 
   await finishRun(runId, log, `Scanned ${total} files`);
+
+  // Lazy import to avoid a module-load cycle (jellyfin.ts doesn't import
+  // scanner.ts, but keeping the coupling one-directional and load-time-free
+  // is cheap insurance). Fire-and-forget: a scan shouldn't block on Jellyfin.
+  const { jellyfinConfigured, runJellyfinSync } = await import("@/lib/jellyfin");
+  if (jellyfinConfigured()) {
+    runJellyfinSync().catch((err) => console.error("[scanner] post-scan Jellyfin sync failed to start:", err));
+  }
 }
 
 /**

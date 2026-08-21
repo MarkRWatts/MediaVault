@@ -11,6 +11,11 @@ services:
       # TMDB API key (optional, free) — enables posters, metadata, and
       # collection/missing-film detection. Leave blank to scan-only.
       TMDB_API_KEY: ${TMDB_API_KEY:-}
+      # Jellyfin integration (optional) — enables "Play in Jellyfin" links and
+      # a post-scan library sync. Leave blank to disable.
+      JELLYFIN_URL: ${JELLYFIN_URL:-}
+      JELLYFIN_API_KEY: ${JELLYFIN_API_KEY:-}
+      JELLYFIN_MOVIES_PREFIX: ${JELLYFIN_MOVIES_PREFIX:-}
     volumes:
       # SQLite database and cached posters.
       - data:/app/data

@@ -38,6 +38,17 @@ curl -X POST localhost:3000/api/scan
 curl -X POST localhost:3000/api/enrich
 ```
 
+## Jellyfin integration
+
+Optional: set `JELLYFIN_URL` and `JELLYFIN_API_KEY` (a Dashboard → API Keys
+token) to enable "Play in Jellyfin" links on film detail pages. A sync job
+matches Jellyfin library items to `Version` rows by file path (normalizing
+Unicode so macOS-scanned NFD paths match Jellyfin's NFC ones), runs
+automatically after every scan, and can be triggered manually via
+`curl -X POST localhost:3000/api/jellyfin-sync`. `JELLYFIN_MOVIES_PREFIX`
+(default `/media/Movies/`) controls how the item path is made relative to
+`MOVIES_PATH` before matching.
+
 ## Tests
 
 ```bash

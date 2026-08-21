@@ -5,6 +5,7 @@ import PosterImage from "@/components/PosterImage";
 import VersionCard from "@/components/VersionCard";
 import CollectionStrip from "@/components/CollectionStrip";
 import { getFilmDetail } from "@/lib/queries";
+import { getJellyfinServerInfo, jellyfinPlayUrl } from "@/lib/jellyfin";
 
 export default async function FilmPage({
   params,
@@ -17,6 +18,10 @@ export default async function FilmPage({
 
   const film = await getFilmDetail(filmId);
   if (!film) notFound();
+
+  // Only build deep links when the server is actually reachable — no error
+  // state in the UI, versions without a match simply get no button.
+  const jellyfinServer = await getJellyfinServerInfo();
 
   return (
     <div className="flex flex-1 flex-col">
@@ -120,7 +125,13 @@ export default async function FilmPage({
           ) : (
             <div className="flex flex-col gap-3">
               {film.versions.map((v) => (
-                <VersionCard key={v.id} version={v} />
+                <VersionCard
+                  key={v.id}
+                  version={v}
+                  jellyfinHref={
+                    v.jellyfinId && jellyfinServer ? jellyfinPlayUrl(v.jellyfinId, jellyfinServer.serverId) : null
+                  }
+                />
               ))}
             </div>
           )}

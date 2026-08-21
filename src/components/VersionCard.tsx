@@ -2,7 +2,13 @@ import FormatBadge from "@/components/FormatBadge";
 import ResolutionBadge from "@/components/ResolutionBadge";
 import type { VersionView } from "@/lib/queries";
 
-export default function VersionCard({ version }: { version: VersionView }) {
+export default function VersionCard({
+  version,
+  jellyfinHref,
+}: {
+  version: VersionView;
+  jellyfinHref?: string | null;
+}) {
   const specs: { label: string; value: string }[] = [
     { label: "Resolution", value: version.resolution },
     { label: "Codec", value: version.videoCodec ?? "—" },
@@ -18,6 +24,19 @@ export default function VersionCard({ version }: { version: VersionView }) {
         <ResolutionBadge tier={version.tier} className="px-2 py-1 text-[11px]" />
         {version.edition && (
           <span className="text-sm italic text-text-muted">{version.edition}</span>
+        )}
+        {jellyfinHref && (
+          <a
+            href={jellyfinHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-[11px] font-medium tracking-wide text-text-muted transition-colors hover:border-accent-border hover:text-accent-bright"
+          >
+            <svg aria-hidden viewBox="0 0 12 12" className="h-2.5 w-2.5 fill-current">
+              <path d="M2.5 1.2c0-.55.6-.9 1.08-.62l6.2 3.8c.46.28.46.94 0 1.22l-6.2 3.8c-.48.28-1.08-.07-1.08-.62V1.2z" />
+            </svg>
+            Play in Jellyfin
+          </a>
         )}
       </div>
 

@@ -136,6 +136,7 @@ export interface VersionView {
   container: string | null;
   sizeLabel: string;
   durationLabel: string;
+  jellyfinId: string | null;
   audioTracks: AudioTrackView[];
 }
 
@@ -194,6 +195,7 @@ export async function getFilmDetail(id: number): Promise<FilmDetail | null> {
     container: v.container,
     sizeLabel: formatBytes(v.sizeBytes === null ? null : Number(v.sizeBytes)),
     durationLabel: formatDuration(v.durationSecs),
+    jellyfinId: v.jellyfinId,
     audioTracks: v.audioTracks.map((a) => ({
       id: a.id,
       codec: a.codec,

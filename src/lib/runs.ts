@@ -7,7 +7,7 @@ import type { ScanRun } from "@/generated/prisma/client";
 
 const STALE_RUN_MS = 30 * 60 * 1000; // 30 minutes
 
-export type RunKind = "SCAN" | "ENRICH";
+export type RunKind = "SCAN" | "ENRICH" | "JELLYFIN";
 
 /**
  * Guard + register a new run of `kind`. If a RUNNING run of the same kind
@@ -113,18 +113,24 @@ function toSummary(run: ScanRun | null): RunSummary | null {
 export async function getLatestRuns(): Promise<{
   latestScan: RunSummary | null;
   latestEnrich: RunSummary | null;
+  latestJellyfin: RunSummary | null;
   running: boolean;
 }> {
-  const [latestScanRun, latestEnrichRun] = await Promise.all([
+  const [latestScanRun, latestEnrichRun, latestJellyfinRun] = await Promise.all([
     prisma.scanRun.findFirst({ where: { kind: "SCAN" }, orderBy: { startedAt: "desc" } }),
     prisma.scanRun.findFirst({ where: { kind: "ENRICH" }, orderBy: { startedAt: "desc" } }),
+    prisma.scanRun.findFirst({ where: { kind: "JELLYFIN" }, orderBy: { startedAt: "desc" } }),
   ]);
 
-  const running = latestScanRun?.status === "RUNNING" || latestEnrichRun?.status === "RUNNING";
+  const running =
+    latestScanRun?.status === "RUNNING" ||
+    latestEnrichRun?.status === "RUNNING" ||
+    latestJellyfinRun?.status === "RUNNING";
 
   return {
     latestScan: toSummary(latestScanRun),
     latestEnrich: toSummary(latestEnrichRun),
+    latestJellyfin: toSummary(latestJellyfinRun),
     running,
   };
 }

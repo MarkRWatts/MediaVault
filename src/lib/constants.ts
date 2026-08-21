@@ -6,7 +6,7 @@ export type Format = (typeof FORMATS)[number];
 export const MATCH_CONFIDENCE = ["EXACT", "SEARCH", "LOW", "UNMATCHED"] as const;
 export type MatchConfidence = (typeof MATCH_CONFIDENCE)[number];
 
-export const RUN_KINDS = ["SCAN", "ENRICH"] as const;
+export const RUN_KINDS = ["SCAN", "ENRICH", "JELLYFIN"] as const;
 export const RUN_STATUSES = ["RUNNING", "DONE", "FAILED"] as const;
 
 // Source-format judgement from actual video width (heights lie: widescreen
