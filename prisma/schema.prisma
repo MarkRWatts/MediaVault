@@ -6,6 +6,7 @@
 //   Version.videoRange:    SDR | HDR10 | HLG | DOLBY_VISION
 //   Film.matchConfidence:  EXACT | SEARCH | LOW | UNMATCHED
 //   Album.kind:            STUDIO | COMPILATION | EP | LIVE | SINGLE | REMIX | SOUNDTRACK | OTHER
+//   Album.coverSource:     embedded | caa | itunes | manual
 //   Track.codec:           alac | aac | mp3 | flac | drm | unknown
 //   ScanRun.kind:          SCAN | ENRICH | JELLYFIN | ENRICH_MUSIC   ScanRun.status: RUNNING | DONE | FAILED
 
@@ -228,6 +229,7 @@ model Album {
   mbid        String?   @unique // MusicBrainz release-group id
   kind        String    @default("STUDIO") // STUDIO | COMPILATION | EP | LIVE | SINGLE | REMIX | SOUNDTRACK | OTHER
   coverPath   String?   // cached cover art file name under the cover cache dir
+  coverSource String?   // embedded | caa | itunes | manual — provenance of coverPath; "manual" is never overwritten
   owned       Boolean   @default(true)
   folder      String?   // album folder name under the artist folder (null when owned=false)
   trackTotal  Int?      // canonical track count from MusicBrainz, if known

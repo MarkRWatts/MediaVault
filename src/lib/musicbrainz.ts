@@ -26,6 +26,12 @@ const USER_AGENT = "filmDB/1.3 (https://github.com/MarkRWatts/filmDB)";
 const MIN_INTERVAL_MS = 1000;
 const RG_PAGE_LIMIT = 100;
 const PROGRESS_UPDATE_EVERY = 3;
+// A transient 503 (MusicBrainz under load) or 429 (rate-limit blip) left the
+// artist "Blur" UNMATCHED on a real run — one retry after a fixed backoff is
+// enough to ride out a blip without turning a real outage into a hang. The
+// 1 req/s gate still applies to the retry (throttle() is called again before
+// it), so this never bursts past the rate limit.
+const RETRY_BACKOFF_MS = 3000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -38,16 +44,26 @@ async function throttle(): Promise<void> {
   lastCallAt = Date.now();
 }
 
+function isTransientStatus(status: number): boolean {
+  return status === 429 || (status >= 500 && status < 600);
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function mbFetch(pathname: string, params: Record<string, string>): Promise<any> {
-  await throttle();
   const url = new URL(`${MB_BASE}${pathname}`);
   url.searchParams.set("fmt", "json");
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
 
-  const res = await fetch(url.toString(), { headers: { "User-Agent": USER_AGENT } });
-  if (!res.ok) throw new Error(`MusicBrainz ${pathname} -> HTTP ${res.status}`);
-  return res.json();
+  for (let attempt = 0; ; attempt++) {
+    await throttle();
+    const res = await fetch(url.toString(), { headers: { "User-Agent": USER_AGENT } });
+    if (res.ok) return res.json();
+    if (attempt === 0 && isTransientStatus(res.status)) {
+      await sleep(RETRY_BACKOFF_MS);
+      continue;
+    }
+    throw new Error(`MusicBrainz ${pathname} -> HTTP ${res.status}`);
+  }
 }
 
 // --- Pure helpers (exported for musicbrainz.test.ts — no network) ---
@@ -209,12 +225,27 @@ async function searchReleaseGroups(artistMbid: string): Promise<any[]> {
 // --- Cover art pass (shared by matched and various=true artists) ---
 
 async function fetchMissingCoversForArtist(artistId: number, artistName: string, log: string[]): Promise<void> {
-  const needCovers = await prisma.album.findMany({ where: { artistId, coverPath: null } });
+  // coverSource "manual" is an owner-curated override — never revisited here
+  // even if coverPath were somehow null (fetchCover also refuses outright,
+  // this just avoids the wasted attempt).
+  const needCovers = await prisma.album.findMany({
+    where: { artistId, coverPath: null, NOT: { coverSource: "manual" } },
+  });
   for (const album of needCovers) {
     try {
-      const coverPath = await fetchCover({ id: album.id, mbid: album.mbid, title: album.title, artistName });
-      if (coverPath) {
-        await prisma.album.update({ where: { id: album.id }, data: { coverPath } });
+      const result = await fetchCover({
+        id: album.id,
+        mbid: album.mbid,
+        title: album.title,
+        artistName,
+        owned: album.owned,
+        coverSource: album.coverSource,
+      });
+      if (result) {
+        await prisma.album.update({
+          where: { id: album.id },
+          data: { coverPath: result.fileName, coverSource: result.source },
+        });
       }
     } catch (err) {
       // Cover art is best-effort — a failure here must never abort enrichment.
