@@ -263,8 +263,20 @@ async function fetchMissingCoversForArtist(artistId: number, artistName: string,
 
 // --- Album reconciliation ---
 
+// When two release groups share a normalized title (real case: Linkin Park's
+// "Hybrid Theory" studio album vs the band's 1999 "Hybrid Theory" EP), the
+// owned album must be claimed by the best-ranked kind, not whichever the
+// search happened to return first.
+const KIND_CLAIM_ORDER: AlbumKind[] = ["STUDIO", "EP", "LIVE", "COMPILATION", "REMIX", "SOUNDTRACK", "OTHER"];
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function rgKindRank(rg: any): number {
+  const idx = KIND_CLAIM_ORDER.indexOf(classifyAlbumKind(rg["primary-type"], rg["secondary-types"]));
+  return idx === -1 ? KIND_CLAIM_ORDER.length : idx;
+}
+
 async function reconcileArtistAlbums(artistId: number, artistName: string, artistMbid: string, log: string[]): Promise<void> {
-  const releaseGroups = await searchReleaseGroups(artistMbid);
+  const releaseGroups = (await searchReleaseGroups(artistMbid)).sort((a, b) => rgKindRank(a) - rgKindRank(b));
+  const rgById = new Map(releaseGroups.map((rg) => [rg.id as string, rg]));
   const ownedAlbums = await prisma.album.findMany({ where: { artistId, owned: true } });
 
   const claimedRgIds = new Set<string>();
@@ -279,20 +291,36 @@ async function reconcileArtistAlbums(artistId: number, artistName: string, artis
     const { year, releaseDate } = parseReleaseDate(rg["first-release-date"]);
     const wantTitle = normalizeAlbumTitle(rg.title ?? "");
 
-    let owned = ownedAlbums.find((a) => a.mbid === rg.id);
+    const titleMatches = (a: { title: string }) =>
+      normalizeAlbumTitle(a.title) === wantTitle || normalizeAlbumTitle(`${artistName} ${a.title}`) === wantTitle;
+
+    let reclaimedFromWorseKind = false;
+    let owned = ownedAlbums.find((a) => !claimedOwnedIds.has(a.id) && a.mbid === rg.id);
     if (!owned) {
       // Also try the folder title prefixed with the artist name: release
       // groups are often titled "<Artist>: <Album>" where the folder is just
       // "<Album>" (real case: Blur's "The Best Of" folder vs MusicBrainz's
       // "Blur: The Best Of" — normalizeTitle folds the ":" so the prefixed
       // variant matches exactly).
-      owned = ownedAlbums.find(
-        (a) =>
-          !claimedOwnedIds.has(a.id) &&
-          !a.mbid &&
-          (normalizeAlbumTitle(a.title) === wantTitle ||
-            normalizeAlbumTitle(`${artistName} ${a.title}`) === wantTitle),
-      );
+      owned = ownedAlbums.find((a) => !claimedOwnedIds.has(a.id) && !a.mbid && titleMatches(a));
+    }
+    if (!owned) {
+      // Self-heal a prior wrong claim: this rg's title matches an album that
+      // is currently attached to a WORSE-ranked release group with the same
+      // ambiguous title (the Hybrid Theory studio/EP case). Re-claim it here
+      // — release groups iterate best-kind-first, so this rg wins.
+      owned = ownedAlbums.find((a) => {
+        if (claimedOwnedIds.has(a.id) || !a.mbid || a.mbid === rg.id) return false;
+        const prevRg = rgById.get(a.mbid);
+        if (!prevRg || rgKindRank(prevRg) <= rgKindRank(rg)) return false;
+        return titleMatches(a);
+      });
+      if (owned) {
+        reclaimedFromWorseKind = true;
+        log.push(
+          `Re-claimed "${owned.title}" (${artistName}) from ${classifyAlbumKind(rgById.get(owned.mbid!)?.["primary-type"], rgById.get(owned.mbid!)?.["secondary-types"])} release-group ${owned.mbid} to ${kind} ${rg.id}`,
+        );
+      }
     }
     if (!owned) continue;
 
@@ -319,7 +347,26 @@ async function reconcileArtistAlbums(artistId: number, artistName: string, artis
       }
     }
 
-    await prisma.album.update({ where: { id: owned.id }, data: { mbid: rg.id, year, releaseDate, kind } });
+    // A re-claim means the previously fetched cover belongs to the WRONG
+    // release group — invalidate it so the cover pass re-fetches, unless it
+    // came from the file's own embedded art or a manual pick (both are
+    // correct regardless of which release group we matched).
+    const invalidateCover =
+      reclaimedFromWorseKind && owned.coverSource !== "embedded" && owned.coverSource !== "manual";
+    await prisma.album.update({
+      where: { id: owned.id },
+      data: {
+        mbid: rg.id,
+        year,
+        releaseDate,
+        kind,
+        ...(invalidateCover ? { coverPath: null, coverSource: null } : {}),
+      },
+    });
+    // Keep the in-memory row consistent so a worse-ranked release group later
+    // in this loop can't find the stale mbid and claim the album back.
+    owned.mbid = rg.id;
+    owned.kind = kind;
   }
 
   // Owned albums that matched no release group at all keep the scanner's
