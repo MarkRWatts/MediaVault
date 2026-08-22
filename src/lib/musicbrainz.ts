@@ -432,12 +432,15 @@ async function reconcileArtistAlbums(artistId: number, artistName: string, artis
     claimedRgIds.add(rg.id);
     claimedOwnedIds.add(owned.id);
 
-    if (!owned.mbid) {
+    if (owned.mbid !== rg.id) {
       // Another row may already hold this release-group id: a missing-album
       // placeholder from a prior run (reclaim it — the album on disk takes
       // its place) or a genuine second owned album (never merge on a title
       // match alone — flag it and leave both untouched, mirroring tmdb.ts's
-      // caution around search-based collisions).
+      // caution around search-based collisions). This must run for re-claims
+      // too, not just first-time matches: Pulp's "This Is Hardcore" moving
+      // off the EP group repeatedly hit the unique constraint because the
+      // studio group's own placeholder row was never reclaimed first.
       const holder = await prisma.album.findUnique({ where: { mbid: rg.id } });
       if (holder && holder.id !== owned.id) {
         if (!holder.owned) {
