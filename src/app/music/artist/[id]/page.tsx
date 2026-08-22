@@ -80,10 +80,10 @@ function ShelfAlbumCard({ album }: { album: ArtistShelfAlbum }) {
       className="hover-lift block overflow-hidden rounded-lg border border-border bg-bg-elevated"
     >
       <CoverImage albumId={album.hasCover ? album.id : null} version={album.coverVersion} title={album.title} className="w-full" />
-      <div className="flex flex-col gap-0.5 p-2">
+      <div className="flex flex-col gap-0.5 p-2.5">
         <h3 className="line-clamp-2 text-xs text-text-muted">{album.title}</h3>
         <span className="flex items-center justify-between gap-2">
-          <span className="font-mono text-[10px] text-text-faint">{album.year ?? "—"}</span>
+          <span className="font-mono text-[11px] text-text-faint">{album.year ?? "—"}</span>
           <Chip tone="dvd">{KIND_LABELS[album.kind] ?? album.kind}</Chip>
         </span>
       </div>
@@ -249,7 +249,7 @@ export default async function ArtistPage({
           {shelf.length > 0 && (
             <section className="flex flex-col gap-3 border-t border-border pt-6">
               <h2 className="font-display text-xl tracking-wide">Also on the shelf</h2>
-              <div className="grid grid-cols-[repeat(auto-fill,minmax(7rem,1fr))] gap-2.5">
+              <div className={ALBUM_GRID}>
                 {shelf.map((a) => (
                   <ShelfAlbumCard key={a.id} album={a} />
                 ))}
