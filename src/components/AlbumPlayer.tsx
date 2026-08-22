@@ -55,6 +55,42 @@ interface ScheduleInfo {
 // browsers and clip the first few samples.
 const START_EPSILON = 0.05;
 
+// Plain glyphs (⏮ ⏸ ▶ ⏭) render inconsistently across platforms — mobile
+// browsers pull them from the system emoji font (colorful, differently
+// shaped) while desktop renders the plain text-symbol form. SVGs sidestep
+// that entirely, matching the pattern used elsewhere (see VersionCard).
+function PreviousIcon() {
+  return (
+    <svg aria-hidden viewBox="0 0 24 24" className="h-4 w-4 fill-current">
+      <path d="M6 6h2v12H6zm3.5 6 8.5 6V6z" />
+    </svg>
+  );
+}
+
+function NextIcon() {
+  return (
+    <svg aria-hidden viewBox="0 0 24 24" className="h-4 w-4 fill-current">
+      <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6z" />
+    </svg>
+  );
+}
+
+function PlayIcon() {
+  return (
+    <svg aria-hidden viewBox="0 0 24 24" className="h-4 w-4 fill-current">
+      <path d="M8 5v14l11-7z" />
+    </svg>
+  );
+}
+
+function PauseIcon() {
+  return (
+    <svg aria-hidden viewBox="0 0 24 24" className="h-4 w-4 fill-current">
+      <path d="M6 19h4V5H6v14zm8-14v14h4V5z" />
+    </svg>
+  );
+}
+
 function formatTime(secs: number): string {
   const clamped = Number.isFinite(secs) && secs > 0 ? secs : 0;
   const total = Math.floor(clamped);
@@ -360,7 +396,7 @@ export default function AlbumPlayer({
             aria-label="Previous track"
             className="shrink-0 rounded px-2 py-1 text-text-muted hover:text-text disabled:opacity-30"
           >
-            ⏮
+            <PreviousIcon />
           </button>
           <button
             type="button"
@@ -368,7 +404,15 @@ export default function AlbumPlayer({
             aria-label={isPlaying ? "Pause" : "Play album"}
             className="shrink-0 rounded border border-border-strong bg-bg-elevated-2 px-3 py-1.5 text-sm font-medium text-text hover:border-accent-border hover:text-accent-bright"
           >
-            {status === "idle" ? "Play album" : isPlaying ? "⏸" : isLoading ? "…" : "▶"}
+            {status === "idle" ? (
+              "Play album"
+            ) : isPlaying ? (
+              <PauseIcon />
+            ) : isLoading ? (
+              "…"
+            ) : (
+              <PlayIcon />
+            )}
           </button>
           <button
             type="button"
@@ -377,7 +421,7 @@ export default function AlbumPlayer({
             aria-label="Next track"
             className="shrink-0 rounded px-2 py-1 text-text-muted hover:text-text disabled:opacity-30"
           >
-            ⏭
+            <NextIcon />
           </button>
 
           <div className="min-w-0 flex-1">
