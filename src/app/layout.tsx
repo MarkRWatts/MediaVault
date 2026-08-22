@@ -20,8 +20,8 @@ const jbMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "filmDB",
-  description: "A personal index of a DVD / Blu-ray collection.",
+  title: "MediaVault",
+  description: "A personal index of a DVD / Blu-ray and music collection.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

@@ -6,10 +6,10 @@ export default function Nav() {
   return (
     <header className="sticky top-0 z-50 bg-bg/90 backdrop-blur">
       <div className="mx-auto flex max-w-[1600px] flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 sm:gap-x-6 sm:px-6 lg:flex-nowrap lg:py-3">
-        <Link href="/" className="shrink-0" aria-label="filmDB — home">
-          {/* Logo PNG's ground is near-identical to --bg, so it sits flush. */}
+        <Link href="/" className="shrink-0" aria-label="MediaVault — home">
+          {/* Logo PNG is transparent, so it sits flush against --bg. */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo.png" alt="filmDB" className="h-8 w-auto sm:h-10" />
+          <img src="/logo.png" alt="MediaVault" className="h-8 w-auto sm:h-10" />
         </Link>
         <NavLinks />
         {/* Below lg there isn't room for the admin strip on the same row as

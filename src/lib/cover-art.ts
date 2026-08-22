@@ -22,7 +22,7 @@ const POSTER_CACHE_DIR = process.env.POSTER_CACHE_DIR ?? "./data/posters";
 const COVERS_DIR = path.join(POSTER_CACHE_DIR, "covers");
 const CAA_BASE = "https://coverartarchive.org";
 const ITUNES_SEARCH_BASE = "https://itunes.apple.com/search";
-const USER_AGENT = "filmDB/1.3 (https://github.com/MarkRWatts/filmDB)";
+const USER_AGENT = "MediaVault/1.4 (https://github.com/MarkRWatts/MediaVault)";
 // Sanity floor for the online sources — a real cover is comfortably above
 // this; CAA occasionally serves a tiny placeholder/error image on a
 // technicality 200, and a truncated/failed download would also land under
@@ -213,7 +213,7 @@ const FFMPEG_ARGS = ["-y", "-map", "0:v:0", "-frames:v", "1", "-c", "copy"];
 async function extractEmbeddedCover(absTrackPath: string, musicPath: string): Promise<Buffer | null> {
   let tmpDir: string;
   try {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "filmdb-cover-"));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "mediavault-cover-"));
   } catch {
     return null;
   }

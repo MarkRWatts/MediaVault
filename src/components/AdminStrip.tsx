@@ -50,7 +50,7 @@ function relativeTime(iso: string | null): string {
   return `${days}d ago`;
 }
 
-// filmDB has not run a scan/enrich yet, or the /api routes aren't reachable
+// MediaVault has not run a scan/enrich yet, or the /api routes aren't reachable
 // (e.g. mid-build while another agent finishes them) — fail quiet, no strip.
 const EMPTY: RunsResponse = {
   latestScan: null,

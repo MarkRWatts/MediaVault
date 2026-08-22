@@ -1,4 +1,4 @@
-# filmDB — Plan
+# MediaVault — Plan
 
 A good-looking web app + lightweight database indexing the DVD/BluRay rips in
 a NAS SMB share (mounted at `/Volumes/media/Movies` on the Mac;
@@ -80,7 +80,7 @@ a DVD and a BluRay rip of the same film = 1 film, 2 versions).
   `prisma migrate deploy && npm start` at boot.
 - `docker-compose.yml` (base) + `docker-compose.override.yml` (local port
   3002 — 3000/3001 are taken) + `docker-compose.prod.yml` (joins external
-  `edge` network with alias `filmdb`; shared Caddy on the VM proxies to it).
+  `edge` network with alias `mediavault`; shared Caddy on the VM proxies to it).
 - Volumes: `data` (SQLite + poster cache); bind-mount of the SMB share →
   `/movies:ro` (`MOVIES_HOST_PATH` env: `/Volumes/media/Movies` locally, the
   VM's mount point in prod).

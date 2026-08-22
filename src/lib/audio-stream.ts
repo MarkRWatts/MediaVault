@@ -135,7 +135,7 @@ async function flacRemuxStream(absPath: string, musicRoot: string): Promise<Read
 // Safari) reject. Convert to a temp file first — the header gets written
 // correctly on close — then stream that, unlinking once the response ends.
 async function wavConvertStream(absPath: string, musicRoot: string): Promise<ReadableStream<Uint8Array> | null> {
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "filmdb-audio-"));
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "mediavault-audio-"));
   const tmpOut = path.join(tmpDir, "out.wav");
   const cleanup = () => fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
 

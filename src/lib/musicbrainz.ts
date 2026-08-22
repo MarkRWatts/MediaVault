@@ -18,7 +18,7 @@ import { guardAndCreateRun, updateProgress, finishRun, failRun } from "@/lib/run
 import { fetchCover } from "@/lib/cover-art";
 
 const MB_BASE = "https://musicbrainz.org/ws/2";
-const USER_AGENT = "filmDB/1.3 (https://github.com/MarkRWatts/filmDB)";
+const USER_AGENT = "MediaVault/1.4 (https://github.com/MarkRWatts/MediaVault)";
 // MusicBrainz's API ToS caps unauthenticated clients at 1 request/second,
 // enforced globally (not per-endpoint) — every ws/2 call funnels through
 // mbFetch, which gates on a shared "earliest next call" clock rather than a

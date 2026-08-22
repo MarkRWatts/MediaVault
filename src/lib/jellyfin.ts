@@ -1,9 +1,10 @@
-// Jellyfin integration: match the same movie share indexed by filmDB against
-// the Jellyfin server's library items so film detail pages can link straight
-// into playback. Degrades gracefully with no JELLYFIN_URL/JELLYFIN_API_KEY.
+// Jellyfin integration: match the same movie share indexed by MediaVault
+// against the Jellyfin server's library items so film detail pages can link
+// straight into playback. Degrades gracefully with no
+// JELLYFIN_URL/JELLYFIN_API_KEY.
 //
 // Path matching gotcha: Jellyfin (running on Linux) reports NFC-normalized
-// Unicode paths; some of filmDB's Version.filePath values came from a macOS
+// Unicode paths; some of MediaVault's Version.filePath values came from a macOS
 // scan and are NFD-normalized (e.g. "Léon" as "e" + combining acute accent).
 // Both sides MUST be run through String.prototype.normalize("NFC") before
 // comparison, or accented filenames silently fail to match.
@@ -187,20 +188,20 @@ async function doJellyfinSync(runId: number): Promise<void> {
     }
   }
 
-  // Any version we didn't match this run: unmatched-in-filmDB, and clear a
+  // Any version we didn't match this run: unmatched-in-MediaVault, and clear a
   // stale jellyfinId if it had one from a previous sync.
-  const unmatchedInFilmDb: string[] = [];
+  const unmatchedInMediaVault: string[] = [];
   for (const v of versions) {
     if (matchedVersionIds.has(v.id)) continue;
-    unmatchedInFilmDb.push(v.filePath);
+    unmatchedInMediaVault.push(v.filePath);
     if (v.jellyfinId !== null) {
       await prisma.version.update({ where: { id: v.id }, data: { jellyfinId: null } });
     }
   }
 
-  log.push(`Matched ${matched} of ${versions.length} filmDB versions to Jellyfin items`);
-  if (unmatchedInFilmDb.length > 0) {
-    log.push(`Unmatched in filmDB (${unmatchedInFilmDb.length}): ${unmatchedInFilmDb.join(", ")}`);
+  log.push(`Matched ${matched} of ${versions.length} MediaVault versions to Jellyfin items`);
+  if (unmatchedInMediaVault.length > 0) {
+    log.push(`Unmatched in MediaVault (${unmatchedInMediaVault.length}): ${unmatchedInMediaVault.join(", ")}`);
   }
   if (unmatchedInJellyfin.length > 0) {
     log.push(`Unmatched in Jellyfin (${unmatchedInJellyfin.length}): ${unmatchedInJellyfin.join(", ")}`);
@@ -253,12 +254,12 @@ async function doJellyfinSync(runId: number): Promise<void> {
     }
   }
 
-  // Any filePath we didn't match this run: unmatched-in-filmDB, and clear a
+  // Any filePath we didn't match this run: unmatched-in-MediaVault, and clear a
   // stale jellyfinId on every row sharing it.
-  const unmatchedInFilmDbTv: string[] = [];
+  const unmatchedInMediaVaultTv: string[] = [];
   for (const [normPath, rows] of episodeFilesByNormPath) {
     if (matchedTvNormPaths.has(normPath)) continue;
-    unmatchedInFilmDbTv.push(rows[0].filePath);
+    unmatchedInMediaVaultTv.push(rows[0].filePath);
     for (const row of rows) {
       if (row.jellyfinId !== null) {
         await prisma.episodeFile.update({ where: { id: row.id }, data: { jellyfinId: null } });
@@ -266,9 +267,9 @@ async function doJellyfinSync(runId: number): Promise<void> {
     }
   }
 
-  log.push(`Matched ${tvMatched} of ${episodeFilesByNormPath.size} filmDB TV file(s) to Jellyfin items`);
-  if (unmatchedInFilmDbTv.length > 0) {
-    log.push(`Unmatched TV in filmDB (${unmatchedInFilmDbTv.length}): ${unmatchedInFilmDbTv.join(", ")}`);
+  log.push(`Matched ${tvMatched} of ${episodeFilesByNormPath.size} MediaVault TV file(s) to Jellyfin items`);
+  if (unmatchedInMediaVaultTv.length > 0) {
+    log.push(`Unmatched TV in MediaVault (${unmatchedInMediaVaultTv.length}): ${unmatchedInMediaVaultTv.join(", ")}`);
   }
   if (unmatchedInJellyfinTv.length > 0) {
     log.push(`Unmatched TV in Jellyfin (${unmatchedInJellyfinTv.length}): ${unmatchedInJellyfinTv.join(", ")}`);

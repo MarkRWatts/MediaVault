@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo.png" alt="filmDB" width="320" />
+  <img src="docs/logo.png" alt="MediaVault" width="320" />
 </p>
 
 A personal index of a DVD/Blu-ray film and TV collection stored on a NAS SMB
@@ -75,7 +75,7 @@ the Docker deployment reads `.env.docker` on the server (template:
 | `TVSHOWS_PATH` | Folder of TV shows (`Show (Year)/Season NN/Show SxxEyy.ext`). Optional — unset skips all TV features. |
 | `MUSIC_PATH` | Folder of a music library in iTunes layout (`Artist/Album/NN Track.m4a`). Optional — unset skips all music features. |
 | `POSTER_CACHE_DIR` | Where downloaded TMDB artwork is cached. |
-| `DATABASE_URL` | SQLite location, e.g. `file:./data/filmdb.db`. |
+| `DATABASE_URL` | SQLite location, e.g. `file:./data/mediavault.db`. |
 | `FFPROBE_DOCKER_IMAGE` | Dev-only fallback: run ffprobe via `docker run` when it isn't on PATH (the deploy image installs ffmpeg). |
 
 ### SMB share (Docker deployment only)

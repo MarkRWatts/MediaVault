@@ -4,7 +4,7 @@ services:
     restart: unless-stopped
     environment:
       # SQLite database and poster cache live in the named volume.
-      DATABASE_URL: file:/app/data/filmdb.db
+      DATABASE_URL: file:/app/data/mediavault.db
       POSTER_CACHE_DIR: /app/data/posters
       # Root of the movie share (bind-mounted read-only from the host).
       MOVIES_PATH: /movies
@@ -35,4 +35,8 @@ services:
       - ${MOVIES_HOST_PATH:-/Volumes/media/Movies}:/movies:ro
 
 volumes:
+  # Explicit name so the volume survives directory/project renames — Compose
+  # otherwise derives the volume name from the project dir, which would
+  # orphan existing data on a rename (see DEPLOYMENT.md's migration note).
   data:
+    name: mediavault_data

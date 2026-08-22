@@ -3,7 +3,7 @@
 # `app` joins the shared `edge` Docker network (external, created once on the
 # VM — see the ~/edge stack, documented in DEPLOYMENT.md) instead of
 # publishing a host port directly. A single shared Caddy instance there
-# reverse-proxies to `app` by its `filmdb` alias on that network, and
+# reverse-proxies to `app` by its `mediavault` alias on that network, and
 # to any other app on the same VM by its own alias — one Caddy instance is
 # how you serve multiple HTTPS domains from one host, since only one process
 # can bind ports 443/80. Deliberately not merged into the base
@@ -15,7 +15,7 @@ services:
       default: {}
       edge:
         aliases:
-          - filmdb
+          - mediavault
     # The VM has no host-level SMB mount (deploy has no sudo, by design).
     # Instead the Docker daemon itself mounts the NAS share as a CIFS
     # named volume — a read-only, purpose-made SMB account, credentials in
