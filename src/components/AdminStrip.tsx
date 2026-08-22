@@ -16,12 +16,23 @@ interface RunInfo {
 interface RunsResponse {
   latestScan: RunInfo | null;
   latestEnrich: RunInfo | null;
+  latestJellyfin: RunInfo | null;
+  latestMusicEnrich: RunInfo | null;
   running: boolean;
 }
 
 const KIND_LABEL: Record<string, string> = {
   SCAN: "Scanning",
   ENRICH: "Fetching metadata",
+  JELLYFIN: "Syncing Jellyfin",
+  ENRICH_MUSIC: "Fetching music metadata",
+};
+
+const IDLE_KIND_LABEL: Record<string, string> = {
+  SCAN: "Scan",
+  ENRICH: "Enrich",
+  JELLYFIN: "Jellyfin sync",
+  ENRICH_MUSIC: "Music enrich",
 };
 
 function relativeTime(iso: string | null): string {
@@ -41,7 +52,13 @@ function relativeTime(iso: string | null): string {
 
 // filmDB has not run a scan/enrich yet, or the /api routes aren't reachable
 // (e.g. mid-build while another agent finishes them) — fail quiet, no strip.
-const EMPTY: RunsResponse = { latestScan: null, latestEnrich: null, running: false };
+const EMPTY: RunsResponse = {
+  latestScan: null,
+  latestEnrich: null,
+  latestJellyfin: null,
+  latestMusicEnrich: null,
+  running: false,
+};
 
 export default function AdminStrip() {
   const [runs, setRuns] = useState<RunsResponse>(EMPTY);
@@ -122,11 +139,13 @@ export default function AdminStrip() {
     [fetchRuns],
   );
 
-  if (!reachable && !runs.latestScan && !runs.latestEnrich) return null;
+  if (!reachable && !runs.latestScan && !runs.latestEnrich && !runs.latestJellyfin && !runs.latestMusicEnrich)
+    return null;
 
   const running = runs.running;
-  const activeRun = [runs.latestScan, runs.latestEnrich].find((r) => r?.status === "RUNNING");
-  const mostRecent = [runs.latestScan, runs.latestEnrich]
+  const allRuns = [runs.latestScan, runs.latestEnrich, runs.latestJellyfin, runs.latestMusicEnrich];
+  const activeRun = allRuns.find((r) => r?.status === "RUNNING");
+  const mostRecent = allRuns
     .filter((r): r is RunInfo => r !== null)
     .sort((a, b) => new Date(b.finishedAt ?? b.startedAt).getTime() - new Date(a.finishedAt ?? a.startedAt).getTime())[0];
 
@@ -150,7 +169,7 @@ export default function AdminStrip() {
         ) : mostRecent ? (
           // Idle status is informational — not worth a header row on phones.
           <span className="hidden sm:inline">
-            {mostRecent.kind === "SCAN" ? "Scan" : "Enrich"}{" "}
+            {IDLE_KIND_LABEL[mostRecent.kind] ?? "Enrich"}{" "}
             {mostRecent.status === "FAILED" ? (
               <span className="text-missing">failed</span>
             ) : (
