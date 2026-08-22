@@ -2,20 +2,32 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import type { VinylView } from "@/lib/queries-music";
+import type { PhysicalCopyView } from "@/lib/queries-music";
 
-export default function VinylForm({ albumId, initial }: { albumId: number; initial: VinylView | null }) {
+const MEDIUM_LABEL: Record<string, string> = { VINYL: "vinyl", CD: "CD" };
+
+export default function PhysicalCopyForm({
+  albumId,
+  medium,
+  initial,
+}: {
+  albumId: number;
+  medium: "VINYL" | "CD";
+  initial: PhysicalCopyView | null;
+}) {
   const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
-  const [format, setFormat] = useState(initial?.format ?? "LP");
+  const [format, setFormat] = useState(initial?.format ?? (medium === "VINYL" ? "LP" : "CD"));
   const [catalogNo, setCatalogNo] = useState(initial?.catalogNo ?? "");
   const [label, setLabel] = useState(initial?.label ?? "");
   const [pressYear, setPressYear] = useState(initial?.pressYear?.toString() ?? "");
   const [condition, setCondition] = useState(initial?.condition ?? "");
   const [notes, setNotes] = useState(initial?.notes ?? "");
+
+  const mediumLabel = MEDIUM_LABEL[medium] ?? medium.toLowerCase();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -23,11 +35,12 @@ export default function VinylForm({ albumId, initial }: { albumId: number; initi
     setIsSaving(true);
 
     try {
-      const res = await fetch("/api/vinyl", {
+      const res = await fetch("/api/physical", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           albumId,
+          medium,
           format: format || undefined,
           catalogNo: catalogNo || undefined,
           label: label || undefined,
@@ -57,7 +70,7 @@ export default function VinylForm({ albumId, initial }: { albumId: number; initi
     setIsSaving(true);
 
     try {
-      const res = await fetch(`/api/vinyl?albumId=${albumId}`, {
+      const res = await fetch(`/api/physical?albumId=${albumId}&medium=${medium}`, {
         method: "DELETE",
       });
 
@@ -82,7 +95,11 @@ export default function VinylForm({ albumId, initial }: { albumId: number; initi
           onClick={() => setIsOpen(true)}
           className="rounded border border-border px-2 py-1 text-xs font-medium text-text-muted transition-colors hover:border-border-strong hover:text-text"
         >
-          {initial ? "Edit vinyl copy" : "+ Add vinyl copy"}
+          {initial
+            ? initial.inferred
+              ? `Confirm ${mediumLabel} copy`
+              : `Edit ${mediumLabel} copy`
+            : `+ Add ${mediumLabel} copy`}
         </button>
         {initial && (
           <button
@@ -107,7 +124,7 @@ export default function VinylForm({ albumId, initial }: { albumId: number; initi
               type="text"
               value={format}
               onChange={(e) => setFormat(e.target.value)}
-              placeholder="LP"
+              placeholder={medium === "VINYL" ? "LP" : "CD"}
               className="rounded border border-border bg-bg px-2 py-1 text-sm text-text placeholder-text-faint"
             />
           </div>

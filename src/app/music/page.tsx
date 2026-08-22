@@ -4,7 +4,7 @@ export const dynamic = "force-dynamic";
 
 import Link from "next/link";
 import CoverImage from "@/components/CoverImage";
-import VinylAddForm from "@/components/VinylAddForm";
+import PhysicalAddForm from "@/components/PhysicalAddForm";
 import { getMusicIndex, getArtistDetail } from "@/lib/queries-music";
 
 export default async function MusicPage() {
@@ -19,12 +19,13 @@ export default async function MusicPage() {
     ? await getArtistDetail(variousArtist.id).then((d) => (d ? d.studio.length + d.shelf.length : 0))
     : 0;
 
-  const tiles: { label: string; value: number | string }[] = [
+  const tiles: { label: string; value: number | string; href?: string }[] = [
     { label: "Artists", value: totals.artists },
     { label: "Albums owned", value: totals.albumsOwned },
     { label: "Tracks", value: totals.tracks },
     { label: "Lossless", value: `${totals.losslessPct}%` },
-    { label: "On vinyl", value: totals.vinylOwned },
+    { label: "On CD", value: totals.cdOwned, href: "/music/formats" },
+    { label: "On vinyl", value: totals.vinylOwned, href: "/music/formats" },
   ];
 
   return (
@@ -43,25 +44,35 @@ export default async function MusicPage() {
 
       <div className="flex flex-1 flex-col gap-8 px-4 py-6 sm:px-6">
         {artists.length > 0 && (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-            {tiles.map((t) => (
-              <div
-                key={t.label}
-                className="flex flex-col gap-1 rounded-lg border border-border bg-bg-elevated p-3.5"
-              >
-                <span className="font-display text-3xl leading-none text-text">{t.value}</span>
-                <span className="text-[10px] uppercase leading-tight tracking-widest text-text-faint">
-                  {t.label}
-                </span>
-              </div>
-            ))}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-6">
+            {tiles.map((t) => {
+              const inner = (
+                <>
+                  <span className="font-display text-3xl leading-none text-text">{t.value}</span>
+                  <span className="text-[10px] uppercase leading-tight tracking-widest text-text-faint">
+                    {t.label}
+                  </span>
+                </>
+              );
+              const tileClass =
+                "flex flex-col gap-1 rounded-lg border border-border bg-bg-elevated p-3.5";
+              return t.href ? (
+                <Link key={t.label} href={t.href} className={`${tileClass} hover-lift transition-colors hover:border-border-strong`}>
+                  {inner}
+                </Link>
+              ) : (
+                <div key={t.label} className={tileClass}>
+                  {inner}
+                </div>
+              );
+            })}
           </div>
         )}
 
-        {/* Vinyl-only albums have nothing to do with the scanned digital
+        {/* Physical-only albums have nothing to do with the scanned digital
             library, so this stays reachable even before a scan has ever
             run — an empty artist list must not hide it. */}
-        <VinylAddForm />
+        <PhysicalAddForm />
 
         {artists.length === 0 ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 py-24 text-center">

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-interface VinylAddResponse {
+interface PhysicalAddResponse {
   id: number;
   title: string;
   artistName: string;
@@ -11,17 +11,18 @@ interface VinylAddResponse {
   year: number | null;
 }
 
-interface VinylAddError {
+interface PhysicalAddError {
   error: string;
 }
 
-export default function VinylAddForm() {
+export default function PhysicalAddForm() {
   const router = useRouter();
   const [expanded, setExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [mb, setMb] = useState("");
+  const [medium, setMedium] = useState<"VINYL" | "CD">("VINYL");
   const [format, setFormat] = useState("");
   const [catalogNo, setCatalogNo] = useState("");
   const [label, setLabel] = useState("");
@@ -35,7 +36,7 @@ export default function VinylAddForm() {
     setLoading(true);
 
     try {
-      const body: Record<string, unknown> = { mb };
+      const body: Record<string, unknown> = { mb, medium };
 
       if (format) body.format = format;
       if (catalogNo) body.catalogNo = catalogNo;
@@ -44,19 +45,19 @@ export default function VinylAddForm() {
       if (condition) body.condition = condition;
       if (notes) body.notes = notes;
 
-      const res = await fetch("/api/vinyl-add", {
+      const res = await fetch("/api/physical-add", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
 
       if (!res.ok) {
-        const data: VinylAddError = await res.json();
-        setError(data.error || "Failed to add vinyl album");
+        const data: PhysicalAddError = await res.json();
+        setError(data.error || "Failed to add album");
         return;
       }
 
-      const data: VinylAddResponse = await res.json();
+      const data: PhysicalAddResponse = await res.json();
       router.push(`/music/album/${data.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred");
@@ -72,7 +73,7 @@ export default function VinylAddForm() {
         onClick={() => setExpanded(true)}
         className="inline-flex min-h-10 items-center justify-center rounded-md border border-border px-2.5 py-1 font-medium tracking-wide text-text-muted transition-colors hover:border-border-strong hover:text-text disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0"
       >
-        + Add vinyl-only album
+        + Add physical-only album
       </button>
     );
   }
@@ -83,7 +84,7 @@ export default function VinylAddForm() {
       className="flex flex-col gap-3 rounded-lg border border-border bg-bg-elevated p-4"
     >
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-text">Add vinyl-only album</h3>
+        <h3 className="text-sm font-semibold text-text">Add physical-only album</h3>
         <button
           type="button"
           onClick={() => {
@@ -114,6 +115,21 @@ export default function VinylAddForm() {
 
         <div className="grid grid-cols-2 gap-3">
           <div>
+            <label htmlFor="medium" className="block text-xs font-medium text-text-muted mb-1">
+              Medium
+            </label>
+            <select
+              id="medium"
+              value={medium}
+              onChange={(e) => setMedium(e.target.value as "VINYL" | "CD")}
+              className="w-full rounded-md border border-border bg-bg-elevated px-3 py-1.5 text-sm text-text focus-visible:outline-none"
+            >
+              <option value="VINYL">Vinyl</option>
+              <option value="CD">CD</option>
+            </select>
+          </div>
+
+          <div>
             <label htmlFor="format" className="block text-xs font-medium text-text-muted mb-1">
               Format
             </label>
@@ -122,7 +138,7 @@ export default function VinylAddForm() {
               type="text"
               value={format}
               onChange={(e) => setFormat(e.target.value)}
-              placeholder="LP"
+              placeholder={medium === "VINYL" ? "LP" : "CD"}
               className="w-full rounded-md border border-border bg-bg-elevated px-3 py-1.5 text-sm text-text placeholder:text-text-faint focus-visible:outline-none"
             />
           </div>

@@ -532,11 +532,13 @@ async function reconcileArtistAlbums(artistId: number, artistName: string, artis
     // placeholders created by a prior run (before this gate existed, or from
     // when the artist briefly qualified) are cleaned up. Owned-album
     // backfill above and owned-album cover fetch below still happen.
-    // vinylCopy: null excludes vinyl-only albums — those are owned=false
-    // (no digital rip) by construction but represent a physical LP you
-    // actually have, not a gap-tracking guess, so gap tracking must never
-    // sweep them up regardless of whether the artist qualifies.
-    const removed = await prisma.album.deleteMany({ where: { artistId, owned: false, vinylCopy: null } });
+    // physicalCopies none excludes physical-only albums — those are
+    // owned=false (no digital rip) by construction but represent an LP/CD
+    // you actually have, not a gap-tracking guess, so gap tracking must
+    // never sweep them up regardless of whether the artist qualifies.
+    const removed = await prisma.album.deleteMany({
+      where: { artistId, owned: false, physicalCopies: { none: {} } },
+    });
     if (removed.count > 0) {
       log.push(`Removed ${removed.count} back-catalogue placeholder(s) for "${artistName}" — gap tracking off`);
     }
@@ -579,17 +581,17 @@ async function reconcileArtistAlbums(artistId: number, artistName: string, artis
 
   // Pass 3: delete owned=false placeholders whose release group vanished
   // from this run's STUDIO listing (deleted upstream, or reclassified away
-  // from album/ep/studio). vinylCopy: null excludes vinyl-only albums —
-  // e.g. a vinyl-only live album or compilation would never appear in
-  // seenStudioMbids (which is STUDIO-only) and would otherwise get deleted
-  // on the very next enrich run despite being a real, owned physical copy.
+  // from album/ep/studio). physicalCopies none excludes physical-only
+  // albums — e.g. a vinyl-only live album or compilation would never appear
+  // in seenStudioMbids (which is STUDIO-only) and would otherwise get
+  // deleted on the very next enrich run despite being a real, owned copy.
   const seenStudioMbids = new Set(
     releaseGroups
       .filter((rg) => classifyAlbumKind(rg["primary-type"], rg["secondary-types"]) === "STUDIO")
       .map((rg) => rg.id as string),
   );
   const stalePlaceholders = await prisma.album.findMany({
-    where: { artistId, owned: false, mbid: { not: null }, vinylCopy: null },
+    where: { artistId, owned: false, mbid: { not: null }, physicalCopies: { none: {} } },
   });
   for (const stale of stalePlaceholders) {
     if (stale.mbid && !seenStudioMbids.has(stale.mbid)) {
@@ -770,10 +772,13 @@ export async function applyManualAlbumMatch(
   return { ok: true, album: { id: updated.id, title: updated.title, kind: updated.kind, year: updated.year, mbid: rg.id } };
 }
 
-// --- Vinyl ---
+// --- Physical copies (vinyl, CD, ...) ---
 
-export interface VinylFields {
+export type PhysicalMedium = "VINYL" | "CD";
+
+export interface PhysicalFields {
   format?: string;
+  discs?: number;
   catalogNo?: string;
   label?: string;
   pressYear?: number;
@@ -781,30 +786,36 @@ export interface VinylFields {
   notes?: string;
 }
 
-export function vinylCopyData(v: VinylFields) {
+export function physicalCopyData(medium: PhysicalMedium, v: PhysicalFields) {
   return {
-    format: v.format || "LP",
+    format: v.format || (medium === "VINYL" ? "LP" : "CD"),
+    discs: v.discs ?? null,
     catalogNo: v.catalogNo || null,
     label: v.label || null,
     pressYear: v.pressYear ?? null,
     condition: v.condition || null,
     notes: v.notes || null,
+    // An explicit save is a confirmation — backfilled rows lose their
+    // "inferred" status the moment they're edited by hand.
+    inferred: false,
   };
 }
 
 /**
- * Add a vinyl-only album from a MusicBrainz release/release-group URL — for
- * LPs with no digital rip at all, so there's no existing Album row (and
- * possibly no existing Artist row) to attach to the way applyManualAlbumMatch
- * does. Creates whatever's missing (Artist folder=null, Album owned=false,
- * same shape as a gap-tracking placeholder) and attaches the VinylCopy.
- * If the release group turns out to already have an Album row (owned
- * digitally, or an existing back-catalogue placeholder), the vinyl copy is
- * just attached to it instead of creating a duplicate.
+ * Add a physical-only album from a MusicBrainz release/release-group URL —
+ * for LPs (or unripped CDs) with no digital rip at all, so there's no
+ * existing Album row (and possibly no existing Artist row) to attach to the
+ * way applyManualAlbumMatch does. Creates whatever's missing (Artist
+ * folder=null, Album owned=false, same shape as a gap-tracking placeholder)
+ * and attaches the PhysicalCopy. If the release group turns out to already
+ * have an Album row (owned digitally, or an existing back-catalogue
+ * placeholder), the copy is just attached to it instead of creating a
+ * duplicate.
  */
-export async function createVinylOnlyAlbum(
+export async function createPhysicalOnlyAlbum(
   mb: string,
-  vinyl: VinylFields,
+  medium: PhysicalMedium,
+  fields: PhysicalFields,
 ): Promise<
   | { ok: true; album: { id: number; title: string; artistName: string; kind: string; year: number | null } }
   | { ok: false; status: number; error: string }
@@ -845,10 +856,10 @@ export async function createVinylOnlyAlbum(
 
   const existingAlbum = await prisma.album.findUnique({ where: { mbid: rg.id } });
   if (existingAlbum) {
-    await prisma.vinylCopy.upsert({
-      where: { albumId: existingAlbum.id },
-      create: { albumId: existingAlbum.id, ...vinylCopyData(vinyl) },
-      update: vinylCopyData(vinyl),
+    await prisma.physicalCopy.upsert({
+      where: { albumId_medium: { albumId: existingAlbum.id, medium } },
+      create: { albumId: existingAlbum.id, medium, ...physicalCopyData(medium, fields) },
+      update: physicalCopyData(medium, fields),
     });
     const artist = await prisma.artist.findUnique({ where: { id: existingAlbum.artistId } });
     return {
@@ -892,7 +903,7 @@ export async function createVinylOnlyAlbum(
       folder: null,
     },
   });
-  await prisma.vinylCopy.create({ data: { albumId: album.id, ...vinylCopyData(vinyl) } });
+  await prisma.physicalCopy.create({ data: { albumId: album.id, medium, ...physicalCopyData(medium, fields) } });
 
   // Best-effort cover fetch, same shape as fetchMissingCoversForArtist's
   // per-album try/catch — must never fail the add.

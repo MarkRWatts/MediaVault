@@ -34,14 +34,16 @@ function Chip({ tone, children }: { tone: keyof typeof CHIP_TONE; children: Reac
   );
 }
 
-// Studio back-catalogue tile: cover, Owned/Vinyl/Missing chip, title, year. Truly-missing
-// entries (owned=false, vinylOwned=false) are non-links (nothing to view) and get the
-// grayscale/dashed treatment. Vinyl-only (owned=false, vinylOwned=true) render in full
-// color as links since they have metadata to view on the album page.
+// Studio back-catalogue tile: cover, Owned/Vinyl/CD/Missing chip, title, year.
+// Truly-missing entries (owned=false, no physical copy) are non-links (nothing
+// to view) and get the grayscale/dashed treatment. Physical-only (owned=false,
+// physicalMedia non-empty) render in full color as links since they have
+// metadata to view on the album page.
 function StudioAlbumCard({ album }: { album: ArtistCatalogueAlbum }) {
   const isFullyOwned = album.owned === true;
-  const isVinylOnly = album.owned === false && album.vinylOwned === true;
-  const isTrulyMissing = album.owned === false && album.vinylOwned === false;
+  const isPhysicalOnly = album.owned === false && album.physicalMedia.length > 0;
+  const isTrulyMissing = album.owned === false && album.physicalMedia.length === 0;
+  const physicalLabel = album.physicalMedia.includes("VINYL") ? "Vinyl" : (album.physicalMedia[0] ?? "");
 
   const body = (
     <div
@@ -62,16 +64,16 @@ function StudioAlbumCard({ album }: { album: ArtistCatalogueAlbum }) {
         <span className="flex items-center justify-between gap-2">
           <span className="font-mono text-[11px] text-text-faint">{album.year ?? "—"}</span>
           <Chip
-            tone={isFullyOwned ? "good" : isVinylOnly ? "dvd" : "missing"}
+            tone={isFullyOwned ? "good" : isPhysicalOnly ? "dvd" : "missing"}
           >
-            {isFullyOwned ? "Owned" : isVinylOnly ? "Vinyl" : "Missing"}
+            {isFullyOwned ? "Owned" : isPhysicalOnly ? physicalLabel : "Missing"}
           </Chip>
         </span>
       </div>
     </div>
   );
 
-  return isFullyOwned || isVinylOnly ? (
+  return isFullyOwned || isPhysicalOnly ? (
     <Link href={`/music/album/${album.id}`} className="hover-lift block">
       {body}
     </Link>

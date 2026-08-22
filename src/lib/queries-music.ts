@@ -61,12 +61,19 @@ export interface MusicIndexArtist {
 }
 
 export interface MusicIndexData {
-  totals: { artists: number; albumsOwned: number; tracks: number; losslessPct: number; vinylOwned: number };
+  totals: {
+    artists: number;
+    albumsOwned: number;
+    tracks: number;
+    losslessPct: number;
+    vinylOwned: number;
+    cdOwned: number;
+  };
   artists: MusicIndexArtist[]; // sorted by sortName, various=true last
 }
 
 export async function getMusicIndex(): Promise<MusicIndexData> {
-  const [artists, albumsOwned, tracksTotal, tracksLossless, vinylOwned] = await Promise.all([
+  const [artists, albumsOwned, tracksTotal, tracksLossless, vinylOwned, cdOwned] = await Promise.all([
     prisma.artist.findMany({
       select: {
         id: true,
@@ -80,7 +87,8 @@ export async function getMusicIndex(): Promise<MusicIndexData> {
     prisma.album.count({ where: { owned: true } }),
     prisma.track.count(),
     prisma.track.count({ where: { lossless: true } }),
-    prisma.vinylCopy.count(),
+    prisma.physicalCopy.count({ where: { medium: "VINYL" } }),
+    prisma.physicalCopy.count({ where: { medium: "CD" } }),
   ]);
 
   const shaped: MusicIndexArtist[] = artists
@@ -112,6 +120,7 @@ export async function getMusicIndex(): Promise<MusicIndexData> {
       tracks: tracksTotal,
       losslessPct: losslessPct(tracksTotal, tracksLossless),
       vinylOwned,
+      cdOwned,
     },
     artists: shaped,
   };
@@ -126,10 +135,11 @@ export interface ArtistCatalogueAlbum {
   title: string;
   year: number | null;
   owned: boolean;
-  /** A physical LP you own for this album — independent of `owned` (digital).
-   *  An album with owned=false and vinylOwned=true is NOT a gap: you have
-   *  it, just not digitally. UI must not render it as "Missing". */
-  vinylOwned: boolean;
+  /** Physical media you own this album on ("VINYL", "CD"), independent of
+   *  `owned` (digital). An album with owned=false and a non-empty list is
+   *  NOT a gap: you have it, just not digitally. UI must not render it as
+   *  "Missing". */
+  physicalMedia: string[];
   hasCover: boolean;
   /** See MusicIndexArtist.coverVersion. Null when hasCover is false. */
   coverVersion: number | null;
@@ -159,7 +169,7 @@ export async function getArtistDetail(id: number): Promise<ArtistDetail | null> 
   const artist = await prisma.artist.findUnique({
     where: { id },
     include: {
-      albums: { include: { _count: { select: { tracks: true } }, vinylCopy: { select: { id: true } } } },
+      albums: { include: { _count: { select: { tracks: true } }, physicalCopies: { select: { medium: true } } } },
     },
   });
   if (!artist) return null;
@@ -169,7 +179,7 @@ export async function getArtistDetail(id: number): Promise<ArtistDetail | null> 
     title: a.title,
     year: a.year,
     owned: a.owned,
-    vinylOwned: a.vinylCopy != null,
+    physicalMedia: a.physicalCopies.map((c) => c.medium),
     hasCover: a.coverPath != null,
     coverVersion: a.coverPath != null ? a.updatedAt.getTime() : null,
     trackCount: a._count.tracks,
@@ -235,8 +245,11 @@ export interface AlbumDiscView {
   tracks: AlbumTrackView[];
 }
 
-export interface VinylView {
+export interface PhysicalCopyView {
+  medium: string; // "VINYL" | "CD" | ...
   format: string;
+  inferred: boolean;
+  discs: number | null;
   catalogNo: string | null;
   label: string | null;
   pressYear: number | null;
@@ -250,8 +263,8 @@ export interface AlbumDetail {
   year: number | null;
   kind: string;
   owned: boolean;
-  /** See ArtistCatalogueAlbum.vinylOwned. Null when you don't own this on vinyl. */
-  vinyl: VinylView | null;
+  /** See ArtistCatalogueAlbum.physicalMedia. Empty when you own no physical copy. */
+  copies: PhysicalCopyView[];
   hasCover: boolean;
   /** See MusicIndexArtist.coverVersion. Null when hasCover is false. */
   coverVersion: number | null;
@@ -266,7 +279,7 @@ export async function getAlbumDetail(id: number): Promise<AlbumDetail | null> {
     include: {
       artist: { select: { id: true, name: true, various: true } },
       tracks: true,
-      vinylCopy: true,
+      physicalCopies: true,
     },
   });
   if (!album) return null;
@@ -309,16 +322,20 @@ export async function getAlbumDetail(id: number): Promise<AlbumDetail | null> {
     year: album.year,
     kind: album.kind,
     owned: album.owned,
-    vinyl: album.vinylCopy
-      ? {
-          format: album.vinylCopy.format,
-          catalogNo: album.vinylCopy.catalogNo,
-          label: album.vinylCopy.label,
-          pressYear: album.vinylCopy.pressYear,
-          condition: album.vinylCopy.condition,
-          notes: album.vinylCopy.notes,
-        }
-      : null,
+    copies: album.physicalCopies
+      .slice()
+      .sort((a, b) => a.medium.localeCompare(b.medium))
+      .map((c) => ({
+        medium: c.medium,
+        format: c.format,
+        inferred: c.inferred,
+        discs: c.discs,
+        catalogNo: c.catalogNo,
+        label: c.label,
+        pressYear: c.pressYear,
+        condition: c.condition,
+        notes: c.notes,
+      })),
     hasCover: album.coverPath != null,
     coverVersion: album.coverPath != null ? album.updatedAt.getTime() : null,
     trackTotal: album.trackTotal,
@@ -368,7 +385,7 @@ export async function getMusicReportData(): Promise<MusicReportData> {
             owned: true,
             coverPath: true,
             updatedAt: true,
-            vinylCopy: { select: { id: true } },
+            physicalCopies: { select: { id: true } },
           },
         },
       },
@@ -401,9 +418,9 @@ export async function getMusicReportData(): Promise<MusicReportData> {
         ownedStudio / totalStudio >= MUSIC_GAP_MIN_PCT;
       if (!qualifies) return null;
 
-      // Owned=false but with a VinylCopy isn't a gap — you have it, just not
-      // digitally — so it's excluded from the missing-albums report entirely.
-      const missingAlbums = studioAlbums.filter((al) => !al.owned && al.vinylCopy == null);
+      // Owned=false but with a PhysicalCopy isn't a gap — you have it, just
+      // not digitally — so it's excluded from the missing-albums report.
+      const missingAlbums = studioAlbums.filter((al) => !al.owned && al.physicalCopies.length === 0);
       if (missingAlbums.length === 0) return null;
 
       return {
@@ -431,5 +448,153 @@ export async function getMusicReportData(): Promise<MusicReportData> {
       losslessPct: losslessPct(tracksTotal, tracksLossless),
     },
     missingByArtist,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Formats report ("/music/formats")
+// ---------------------------------------------------------------------------
+
+export interface FormatsCrateAlbum {
+  id: number;
+  title: string;
+  year: number | null;
+  artistId: number;
+  artistName: string;
+  format: string;
+  inferred: boolean;
+  discs: number; // resolved: explicit discs, else parsed from format ("2xLP"), else 1
+  catalogNo: string | null;
+  label: string | null;
+  pressYear: number | null;
+  condition: string | null;
+  notes: string | null;
+  digitallyOwned: boolean;
+  hasCover: boolean;
+  coverVersion: number | null;
+}
+
+export interface UnconfirmedSourceAlbum {
+  id: number;
+  title: string;
+  artistName: string;
+  /** Distinct track codecs, e.g. ["aac"] or ["drm"] — why this album isn't
+   *  assumed to be a CD rip. */
+  codecs: string[];
+}
+
+export interface FormatsReportData {
+  totals: {
+    cdAlbums: number;
+    vinylAlbums: number;
+    bothFormats: number;
+    digitalOnly: number; // owned digitally, no physical copy of any medium
+    vinylDiscs: number;
+  };
+  vinylByFormat: { format: string; count: number }[];
+  crate: FormatsCrateAlbum[]; // vinyl albums, artist order then year
+  unconfirmed: UnconfirmedSourceAlbum[]; // digital albums with non-ALAC tracks and no CD row
+}
+
+/** "2xLP" -> 2, "LP"/"7\"" -> 1; explicit discs field wins. */
+function resolveDiscs(format: string, discs: number | null): number {
+  if (discs != null && discs > 0) return discs;
+  const m = /^(\d{1,2})\s*x/i.exec(format.trim());
+  return m ? Number(m[1]) : 1;
+}
+
+export async function getFormatsReport(): Promise<FormatsReportData> {
+  const [copies, digitalOnly, unconfirmedRows] = await Promise.all([
+    prisma.physicalCopy.findMany({
+      include: {
+        album: {
+          select: {
+            id: true,
+            title: true,
+            year: true,
+            owned: true,
+            coverPath: true,
+            updatedAt: true,
+            artist: { select: { id: true, name: true, sortName: true, various: true } },
+          },
+        },
+      },
+    }),
+    prisma.album.count({ where: { owned: true, physicalCopies: { none: {} } } }),
+    // Digital albums whose source can't be assumed to be a CD (per Mark:
+    // every all-ALAC album IS a CD rip; anything else — AAC/MP3/FLAC/DRM —
+    // is an iTunes purchase or download until confirmed by hand).
+    prisma.album.findMany({
+      where: {
+        owned: true,
+        physicalCopies: { none: { medium: "CD" } },
+        tracks: { some: { codec: { not: "alac" } } },
+      },
+      select: {
+        id: true,
+        title: true,
+        artist: { select: { name: true, sortName: true } },
+        tracks: { select: { codec: true } },
+      },
+    }),
+  ]);
+
+  const vinyl = copies.filter((c) => c.medium === "VINYL");
+  const cds = copies.filter((c) => c.medium === "CD");
+  const vinylAlbumIds = new Set(vinyl.map((c) => c.albumId));
+  const bothFormats = cds.filter((c) => vinylAlbumIds.has(c.albumId)).length;
+
+  const byFormat = new Map<string, number>();
+  for (const c of vinyl) byFormat.set(c.format, (byFormat.get(c.format) ?? 0) + 1);
+
+  const crate: FormatsCrateAlbum[] = vinyl
+    .slice()
+    .sort(
+      (a, b) =>
+        a.album.artist.sortName.localeCompare(b.album.artist.sortName) ||
+        (a.album.year ?? 9999) - (b.album.year ?? 9999),
+    )
+    .map((c) => ({
+      id: c.album.id,
+      title: c.album.title,
+      year: c.album.year,
+      artistId: c.album.artist.id,
+      artistName: c.album.artist.name,
+      format: c.format,
+      inferred: c.inferred,
+      discs: resolveDiscs(c.format, c.discs),
+      catalogNo: c.catalogNo,
+      label: c.label,
+      pressYear: c.pressYear,
+      condition: c.condition,
+      notes: c.notes,
+      digitallyOwned: c.album.owned,
+      hasCover: c.album.coverPath != null,
+      coverVersion: c.album.coverPath != null ? c.album.updatedAt.getTime() : null,
+    }));
+
+  const unconfirmed: UnconfirmedSourceAlbum[] = unconfirmedRows
+    .slice()
+    .sort((a, b) => a.artist.sortName.localeCompare(b.artist.sortName) || a.title.localeCompare(b.title))
+    .map((al) => ({
+      id: al.id,
+      title: al.title,
+      artistName: al.artist.name,
+      codecs: Array.from(new Set(al.tracks.map((t) => t.codec ?? "unknown"))).sort(),
+    }));
+
+  return {
+    totals: {
+      cdAlbums: cds.length,
+      vinylAlbums: vinyl.length,
+      bothFormats,
+      digitalOnly,
+      vinylDiscs: vinyl.reduce((sum, c) => sum + resolveDiscs(c.format, c.discs), 0),
+    },
+    vinylByFormat: Array.from(byFormat.entries())
+      .map(([format, count]) => ({ format, count }))
+      .sort((a, b) => b.count - a.count || a.format.localeCompare(b.format)),
+    crate,
+    unconfirmed,
   };
 }
