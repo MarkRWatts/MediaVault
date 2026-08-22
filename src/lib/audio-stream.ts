@@ -28,6 +28,7 @@ import { promisify } from "node:util";
 import { createReadStream, type ReadStream } from "node:fs";
 import { promises as fs } from "node:fs";
 import { Readable } from "node:stream";
+import os from "node:os";
 import path from "node:path";
 import { prisma } from "@/lib/db";
 
@@ -81,6 +82,10 @@ function detectLocalFfmpeg(): Promise<boolean> {
 }
 
 const FLAC_REMUX_ARGS = ["-map", "0:a:0", "-c:a", "flac", "-f", "flac", "-"];
+// WAV fallback for engines whose decodeAudioData rejects FLAC (Safari's
+// CoreAudio does, with a literal null error). 16-bit PCM matches the
+// library's source depth, so this is still lossless.
+const WAV_ARGS = ["-map", "0:a:0", "-c:a", "pcm_s16le", "-f", "wav"];
 
 // Spawn a child process and hand back its stdout as a Web ReadableStream.
 // `Readable.toWeb` wires up errors that arrive *on the stream itself*, but a
@@ -125,6 +130,58 @@ async function flacRemuxStream(absPath: string, musicRoot: string): Promise<Read
   ]);
 }
 
+// WAV can't be streamed straight from ffmpeg's stdout: a non-seekable output
+// leaves the RIFF size fields as placeholders, which strict decoders (again,
+// Safari) reject. Convert to a temp file first — the header gets written
+// correctly on close — then stream that, unlinking once the response ends.
+async function wavConvertStream(absPath: string, musicRoot: string): Promise<ReadableStream<Uint8Array> | null> {
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "filmdb-audio-"));
+  const tmpOut = path.join(tmpDir, "out.wav");
+  const cleanup = () => fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+
+  try {
+    if (await detectLocalFfmpeg()) {
+      await execFileAsync("ffmpeg", ["-y", "-i", absPath, ...WAV_ARGS, tmpOut], { maxBuffer: 1024 * 1024 });
+    } else {
+      const dockerImage = process.env.FFPROBE_DOCKER_IMAGE;
+      if (!dockerImage) {
+        await cleanup();
+        return null;
+      }
+      const rel = path.relative(musicRoot, absPath);
+      if (rel.startsWith("..") || path.isAbsolute(rel)) {
+        await cleanup();
+        return null;
+      }
+      const containerIn = `/probe-root/${rel.split(path.sep).join("/")}`;
+      await execFileAsync("docker", [
+        "run",
+        "--rm",
+        "--entrypoint",
+        "/ffmpeg",
+        "-v",
+        `${musicRoot}:/probe-root:ro`,
+        "-v",
+        `${tmpDir}:/out`,
+        dockerImage,
+        "-y",
+        "-i",
+        containerIn,
+        ...WAV_ARGS,
+        "/out/out.wav",
+      ]);
+    }
+  } catch {
+    await cleanup();
+    return null;
+  }
+
+  const readStream = createReadStream(tmpOut);
+  readStream.once("close", cleanup);
+  readStream.once("error", cleanup);
+  return fileToWebStream(readStream);
+}
+
 /**
  * Resolve one Track to playable audio bytes. Looks up the Track joined with
  * its Album (both so a dangling/orphaned track can't be served, and so an
@@ -134,7 +191,7 @@ async function flacRemuxStream(absPath: string, musicRoot: string): Promise<Read
  * (resolvePlaybackFormat), a file that's missing on disk, or (for the FLAC
  * path) no local ffmpeg and no FFPROBE_DOCKER_IMAGE fallback configured.
  */
-export async function getTrackAudio(trackId: number): Promise<TrackAudio | null> {
+export async function getTrackAudio(trackId: number, opts?: { wav?: boolean }): Promise<TrackAudio | null> {
   const track = await prisma.track.findUnique({
     where: { id: trackId },
     include: { album: { select: { owned: true } } },
@@ -165,6 +222,16 @@ export async function getTrackAudio(trackId: number): Promise<TrackAudio | null>
       stream: fileToWebStream(createReadStream(absPath)),
       contentType: format.contentType,
       filename: track.fileName,
+    };
+  }
+
+  if (opts?.wav) {
+    const wavStream = await wavConvertStream(absPath, musicRoot);
+    if (!wavStream) return null;
+    return {
+      stream: wavStream,
+      contentType: "audio/wav",
+      filename: track.fileName.replace(/\.[^./\\]+$/, "") + ".wav",
     };
   }
 

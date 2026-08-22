@@ -169,12 +169,18 @@ export default function AlbumPlayer({
     if (!ctx) return;
 
     pendingRef.current.add(idx);
-    fetch(`/api/audio/${tracks[idx].id}`)
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.arrayBuffer();
-      })
-      .then((data) => decodeAudioData(ctx, data))
+    // FLAC first (smaller over the wire); if THIS engine can't decode FLAC
+    // (Safari's decodeAudioData rejects it, with a null error no less),
+    // retry once as lossless WAV before giving up on the track.
+    const loadAndDecode = (url: string) =>
+      fetch(url)
+        .then((res) => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return res.arrayBuffer();
+        })
+        .then((data) => decodeAudioData(ctx, data));
+    loadAndDecode(`/api/audio/${tracks[idx].id}`)
+      .catch(() => loadAndDecode(`/api/audio/${tracks[idx].id}?fmt=wav`))
       .then((buffer) => {
         pendingRef.current.delete(idx);
         if (session !== sessionRef.current) return;

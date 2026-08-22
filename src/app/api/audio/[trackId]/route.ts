@@ -16,7 +16,10 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ trackId: s
     return NextResponse.json({ error: "invalid track id" }, { status: 400 });
   }
 
-  const audio = await getTrackAudio(trackId);
+  // ?fmt=wav — lossless PCM fallback for engines whose decodeAudioData
+  // rejects FLAC (Safari); the player retries with this after a decode error.
+  const wav = _req.nextUrl.searchParams.get("fmt") === "wav";
+  const audio = await getTrackAudio(trackId, { wav });
   if (!audio) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
