@@ -164,11 +164,17 @@ works.
 2. **Migrate the data volume.** The compose file previously let Docker derive
    the volume name from the project directory (`filmdb_data`); it's now
    pinned explicitly to `mediavault_data` (see `docker-compose.yml`) so this
-   never happens silently again. Copy the data across once:
+   never happens silently again. Copy the data across, **then rename the
+   database file inside the new volume** to match the new `DATABASE_URL`
+   (`mediavault.db`) — skipping this step leaves the real data at
+   `mediavault_data/filmdb.db`, unused, while `prisma migrate deploy` quietly
+   creates a fresh *empty* `mediavault.db` next to it, which looks like a
+   successful boot with a silently empty library:
    ```bash
    docker volume create mediavault_data
    docker run --rm -v filmdb_data:/from -v mediavault_data:/to alpine \
      sh -c "cp -a /from/. /to/"
+   docker run --rm -v mediavault_data:/v alpine mv /v/filmdb.db /v/mediavault.db
    ```
    Leave `filmdb_data` in place as a rollback copy until the new deployment
    is verified (step 8), then remove it.
