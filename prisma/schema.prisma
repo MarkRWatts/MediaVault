@@ -257,6 +257,7 @@ model Track {
   bitDepth     Int?
   durationSecs Float?
   sizeBytes    BigInt?
+  tagYear      Int?      // year from the file's own date tag — Album.year fallback when MusicBrainz has no match
   mtimeMs      Float?    // probe cache key, same convention as Version
   probedAt     DateTime?
 

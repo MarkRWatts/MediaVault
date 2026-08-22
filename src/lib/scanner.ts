@@ -503,6 +503,7 @@ async function processTrack(file: MusicCandidateFile, albumId: number, log: stri
       bitDepth: audio?.bitDepth ?? null,
       durationSecs: result.durationSecs,
       sizeBytes,
+      tagYear: result.tagYear,
       mtimeMs,
       probedAt: new Date(),
     };
@@ -825,6 +826,33 @@ async function doScan(runId: number, force: boolean): Promise<void> {
     for (const ar of emptyArtists) {
       await prisma.artist.delete({ where: { id: ar.id } });
       log.push(`Deleted artist "${ar.name}" — no albums left`);
+    }
+
+    // Fallback release year from the files' own date tags for albums
+    // MusicBrainz can't match (all of Compilations by design, plus title
+    // mismatches): the modal tagYear across the album's tracks. MB-matched
+    // albums always take MusicBrainz's date instead (enrichment overwrites).
+    const yearless = await prisma.album.findMany({
+      where: { owned: true, year: null, mbid: null, tracks: { some: { tagYear: { not: null } } } },
+      select: { id: true, title: true, tracks: { select: { tagYear: true } } },
+    });
+    for (const a of yearless) {
+      const counts = new Map<number, number>();
+      for (const t of a.tracks) {
+        if (t.tagYear != null) counts.set(t.tagYear, (counts.get(t.tagYear) ?? 0) + 1);
+      }
+      let best: number | null = null;
+      let bestN = 0;
+      for (const [y, n] of counts) {
+        if (n > bestN) {
+          best = y;
+          bestN = n;
+        }
+      }
+      if (best != null) {
+        await prisma.album.update({ where: { id: a.id }, data: { year: best } });
+        log.push(`Set year ${best} for "${a.title}" from the files' own date tags`);
+      }
     }
   }
 

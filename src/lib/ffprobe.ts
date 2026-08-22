@@ -31,6 +31,9 @@ export interface ProbeResult {
   hasDolbyVision: boolean;
   durationSecs: number | null;
   sizeBytes: number | null;
+  /** Year from the container's date/year tag (iTunes rips carry one) — the
+   *  music scanner's fallback for Album.year when MusicBrainz has no match. */
+  tagYear: number | null;
   audioTracks: ProbedAudioTrack[];
 }
 
@@ -48,7 +51,7 @@ export interface ProbeResult {
 // on .m4a files can carry their own bits_per_raw_sample (e.g. "8" for the
 // cover image), which is ignored by only reading audioTracks[0].
 const SHOW_ENTRIES =
-  "format=duration,size:stream=index,codec_type,codec_name,profile,width,height,channels,channel_layout,color_transfer,side_data_list,sample_rate,bits_per_raw_sample:stream_tags=language,title";
+  "format=duration,size:format_tags=date,year:stream=index,codec_type,codec_name,profile,width,height,channels,channel_layout,color_transfer,side_data_list,sample_rate,bits_per_raw_sample:stream_tags=language,title";
 
 const FFPROBE_ARGS = ["-hide_banner", "-loglevel", "error", "-show_entries", SHOW_ENTRIES, "-of", "json"];
 
@@ -85,7 +88,7 @@ interface FfprobeStream {
 }
 
 interface FfprobeJson {
-  format?: { duration?: string; size?: string };
+  format?: { duration?: string; size?: string; tags?: { date?: string; year?: string } };
   streams?: FfprobeStream[];
 }
 
@@ -118,6 +121,10 @@ function parseFfprobeJson(stdout: string): ProbeResult {
 
   const durationSecs = data.format?.duration ? Number(data.format.duration) : null;
   const sizeBytes = data.format?.size ? Number(data.format.size) : null;
+  // "2016", "2016-05-30", occasionally junk — keep just a plausible year.
+  const tagDate = data.format?.tags?.date ?? data.format?.tags?.year ?? "";
+  const tagYearMatch = /^(\d{4})/.exec(tagDate);
+  const tagYear = tagYearMatch ? Number(tagYearMatch[1]) : null;
 
   return {
     width: videoStream?.width ?? null,
@@ -127,6 +134,7 @@ function parseFfprobeJson(stdout: string): ProbeResult {
     hasDolbyVision: hasDoviSideData(videoStream),
     durationSecs: Number.isFinite(durationSecs) ? durationSecs : null,
     sizeBytes: Number.isFinite(sizeBytes) ? sizeBytes : null,
+    tagYear: tagYear && tagYear >= 1900 && tagYear <= 2100 ? tagYear : null,
     audioTracks,
   };
 }
