@@ -114,23 +114,27 @@ export async function getLatestRuns(): Promise<{
   latestScan: RunSummary | null;
   latestEnrich: RunSummary | null;
   latestJellyfin: RunSummary | null;
+  latestMusicEnrich: RunSummary | null;
   running: boolean;
 }> {
-  const [latestScanRun, latestEnrichRun, latestJellyfinRun] = await Promise.all([
+  const [latestScanRun, latestEnrichRun, latestJellyfinRun, latestMusicEnrichRun] = await Promise.all([
     prisma.scanRun.findFirst({ where: { kind: "SCAN" }, orderBy: { startedAt: "desc" } }),
     prisma.scanRun.findFirst({ where: { kind: "ENRICH" }, orderBy: { startedAt: "desc" } }),
     prisma.scanRun.findFirst({ where: { kind: "JELLYFIN" }, orderBy: { startedAt: "desc" } }),
+    prisma.scanRun.findFirst({ where: { kind: "ENRICH_MUSIC" }, orderBy: { startedAt: "desc" } }),
   ]);
 
   const running =
     latestScanRun?.status === "RUNNING" ||
     latestEnrichRun?.status === "RUNNING" ||
-    latestJellyfinRun?.status === "RUNNING";
+    latestJellyfinRun?.status === "RUNNING" ||
+    latestMusicEnrichRun?.status === "RUNNING";
 
   return {
     latestScan: toSummary(latestScanRun),
     latestEnrich: toSummary(latestEnrichRun),
     latestJellyfin: toSummary(latestJellyfinRun),
+    latestMusicEnrich: toSummary(latestMusicEnrichRun),
     running,
   };
 }
