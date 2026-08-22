@@ -4,6 +4,7 @@ export const dynamic = "force-dynamic";
 
 import Link from "next/link";
 import CoverImage from "@/components/CoverImage";
+import VinylAddForm from "@/components/VinylAddForm";
 import { getMusicIndex, getArtistDetail } from "@/lib/queries-music";
 
 export default async function MusicPage() {
@@ -23,6 +24,7 @@ export default async function MusicPage() {
     { label: "Albums owned", value: totals.albumsOwned },
     { label: "Tracks", value: totals.tracks },
     { label: "Lossless", value: `${totals.losslessPct}%` },
+    { label: "On vinyl", value: totals.vinylOwned },
   ];
 
   return (
@@ -39,18 +41,9 @@ export default async function MusicPage() {
         {artists.length === 0 && <div className="pb-6" />}
       </div>
 
-      {artists.length === 0 ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 py-24 text-center">
-          <p className="font-display text-2xl tracking-wide text-text-muted">
-            No music yet — run a scan
-          </p>
-          <p className="max-w-sm text-sm text-text-faint">
-            Artists appear here once MUSIC_PATH has been scanned and matched.
-          </p>
-        </div>
-      ) : (
-        <div className="flex flex-1 flex-col gap-8 px-4 py-6 sm:px-6">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="flex flex-1 flex-col gap-8 px-4 py-6 sm:px-6">
+        {artists.length > 0 && (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
             {tiles.map((t) => (
               <div
                 key={t.label}
@@ -63,7 +56,23 @@ export default async function MusicPage() {
               </div>
             ))}
           </div>
+        )}
 
+        {/* Vinyl-only albums have nothing to do with the scanned digital
+            library, so this stays reachable even before a scan has ever
+            run — an empty artist list must not hide it. */}
+        <VinylAddForm />
+
+        {artists.length === 0 ? (
+          <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 py-24 text-center">
+            <p className="font-display text-2xl tracking-wide text-text-muted">
+              No music yet — run a scan
+            </p>
+            <p className="max-w-sm text-sm text-text-faint">
+              Artists appear here once MUSIC_PATH has been scanned and matched.
+            </p>
+          </div>
+        ) : (
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
             {artists.map((a) => (
               <Link
@@ -90,8 +99,8 @@ export default async function MusicPage() {
               </Link>
             ))}
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

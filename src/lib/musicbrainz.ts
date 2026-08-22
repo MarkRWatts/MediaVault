@@ -532,7 +532,11 @@ async function reconcileArtistAlbums(artistId: number, artistName: string, artis
     // placeholders created by a prior run (before this gate existed, or from
     // when the artist briefly qualified) are cleaned up. Owned-album
     // backfill above and owned-album cover fetch below still happen.
-    const removed = await prisma.album.deleteMany({ where: { artistId, owned: false } });
+    // vinylCopy: null excludes vinyl-only albums — those are owned=false
+    // (no digital rip) by construction but represent a physical LP you
+    // actually have, not a gap-tracking guess, so gap tracking must never
+    // sweep them up regardless of whether the artist qualifies.
+    const removed = await prisma.album.deleteMany({ where: { artistId, owned: false, vinylCopy: null } });
     if (removed.count > 0) {
       log.push(`Removed ${removed.count} back-catalogue placeholder(s) for "${artistName}" — gap tracking off`);
     }
@@ -575,13 +579,18 @@ async function reconcileArtistAlbums(artistId: number, artistName: string, artis
 
   // Pass 3: delete owned=false placeholders whose release group vanished
   // from this run's STUDIO listing (deleted upstream, or reclassified away
-  // from album/ep/studio).
+  // from album/ep/studio). vinylCopy: null excludes vinyl-only albums —
+  // e.g. a vinyl-only live album or compilation would never appear in
+  // seenStudioMbids (which is STUDIO-only) and would otherwise get deleted
+  // on the very next enrich run despite being a real, owned physical copy.
   const seenStudioMbids = new Set(
     releaseGroups
       .filter((rg) => classifyAlbumKind(rg["primary-type"], rg["secondary-types"]) === "STUDIO")
       .map((rg) => rg.id as string),
   );
-  const stalePlaceholders = await prisma.album.findMany({ where: { artistId, owned: false, mbid: { not: null } } });
+  const stalePlaceholders = await prisma.album.findMany({
+    where: { artistId, owned: false, mbid: { not: null }, vinylCopy: null },
+  });
   for (const stale of stalePlaceholders) {
     if (stale.mbid && !seenStudioMbids.has(stale.mbid)) {
       await prisma.album.delete({ where: { id: stale.id } });
@@ -759,4 +768,155 @@ export async function applyManualAlbumMatch(
   });
 
   return { ok: true, album: { id: updated.id, title: updated.title, kind: updated.kind, year: updated.year, mbid: rg.id } };
+}
+
+// --- Vinyl ---
+
+export interface VinylFields {
+  format?: string;
+  catalogNo?: string;
+  label?: string;
+  pressYear?: number;
+  condition?: string;
+  notes?: string;
+}
+
+export function vinylCopyData(v: VinylFields) {
+  return {
+    format: v.format || "LP",
+    catalogNo: v.catalogNo || null,
+    label: v.label || null,
+    pressYear: v.pressYear ?? null,
+    condition: v.condition || null,
+    notes: v.notes || null,
+  };
+}
+
+/**
+ * Add a vinyl-only album from a MusicBrainz release/release-group URL — for
+ * LPs with no digital rip at all, so there's no existing Album row (and
+ * possibly no existing Artist row) to attach to the way applyManualAlbumMatch
+ * does. Creates whatever's missing (Artist folder=null, Album owned=false,
+ * same shape as a gap-tracking placeholder) and attaches the VinylCopy.
+ * If the release group turns out to already have an Album row (owned
+ * digitally, or an existing back-catalogue placeholder), the vinyl copy is
+ * just attached to it instead of creating a duplicate.
+ */
+export async function createVinylOnlyAlbum(
+  mb: string,
+  vinyl: VinylFields,
+): Promise<
+  | { ok: true; album: { id: number; title: string; artistName: string; kind: string; year: number | null } }
+  | { ok: false; status: number; error: string }
+> {
+  const urlMatch = MB_URL_RE.exec(mb);
+  let entity: "release" | "release-group";
+  let mbId: string;
+  if (urlMatch) {
+    entity = urlMatch[1].toLowerCase() as "release" | "release-group";
+    mbId = urlMatch[2].toLowerCase();
+  } else if (MB_UUID_RE.test(mb.trim())) {
+    entity = "release-group";
+    mbId = mb.trim().toLowerCase();
+  } else {
+    return { ok: false, status: 400, error: "expected a musicbrainz.org release/release-group URL or a release-group UUID" };
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let rg: any;
+  try {
+    if (entity === "release") {
+      const release = await mbFetch(`/release/${mbId}`, { inc: "release-groups" });
+      const rgId = release["release-group"]?.id;
+      if (!rgId) return { ok: false, status: 502, error: "release has no release-group" };
+      rg = await mbFetch(`/release-group/${rgId}`, { inc: "artist-credits" });
+    } else {
+      rg = await mbFetch(`/release-group/${mbId}`, { inc: "artist-credits" });
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, status: 502, error: `MusicBrainz lookup failed: ${message}` };
+  }
+
+  const credit = rg["artist-credit"]?.[0]?.artist;
+  if (!credit?.id || !credit?.name) {
+    return { ok: false, status: 502, error: "release group has no artist credit" };
+  }
+
+  const existingAlbum = await prisma.album.findUnique({ where: { mbid: rg.id } });
+  if (existingAlbum) {
+    await prisma.vinylCopy.upsert({
+      where: { albumId: existingAlbum.id },
+      create: { albumId: existingAlbum.id, ...vinylCopyData(vinyl) },
+      update: vinylCopyData(vinyl),
+    });
+    const artist = await prisma.artist.findUnique({ where: { id: existingAlbum.artistId } });
+    return {
+      ok: true,
+      album: {
+        id: existingAlbum.id,
+        title: existingAlbum.title,
+        artistName: artist?.name ?? credit.name,
+        kind: existingAlbum.kind,
+        year: existingAlbum.year,
+      },
+    };
+  }
+
+  let artist = await prisma.artist.findUnique({ where: { mbid: credit.id } });
+  if (!artist) {
+    artist = await prisma.artist.create({
+      data: {
+        name: credit.name,
+        sortName: sortTitle(credit.name),
+        folder: null,
+        mbid: credit.id,
+        disambiguation: credit.disambiguation || null,
+        matchConfidence: "EXACT",
+      },
+    });
+  }
+
+  const kind = classifyAlbumKind(rg["primary-type"], rg["secondary-types"]);
+  const { year, releaseDate } = parseReleaseDate(rg["first-release-date"]);
+  const album = await prisma.album.create({
+    data: {
+      artistId: artist.id,
+      title: rg.title,
+      sortTitle: sortTitle(rg.title),
+      year,
+      releaseDate,
+      mbid: rg.id,
+      kind,
+      owned: false,
+      folder: null,
+    },
+  });
+  await prisma.vinylCopy.create({ data: { albumId: album.id, ...vinylCopyData(vinyl) } });
+
+  // Best-effort cover fetch, same shape as fetchMissingCoversForArtist's
+  // per-album try/catch — must never fail the add.
+  try {
+    const result = await fetchCover({
+      id: album.id,
+      mbid: album.mbid,
+      title: album.title,
+      artistName: artist.name,
+      owned: false,
+      coverSource: null,
+    });
+    if (result) {
+      await prisma.album.update({
+        where: { id: album.id },
+        data: { coverPath: result.fileName, coverSource: result.source },
+      });
+    }
+  } catch {
+    // best-effort; a missing cover is fine, a failed add is not
+  }
+
+  return {
+    ok: true,
+    album: { id: album.id, title: album.title, artistName: artist.name, kind: album.kind, year: album.year },
+  };
 }

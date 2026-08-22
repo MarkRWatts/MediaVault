@@ -206,7 +206,7 @@ model Artist {
   id              Int      @id @default(autoincrement())
   name            String
   sortName        String
-  folder          String   @unique // top-level folder under MUSIC_PATH
+  folder          String?  @unique // top-level folder under MUSIC_PATH; null for vinyl-only artists with no digital rips
   mbid            String?  @unique // MusicBrainz artist id
   disambiguation  String?
   various         Boolean  @default(false) // Compilations pseudo-artist
@@ -235,11 +235,30 @@ model Album {
   folder      String?   // album folder name under the artist folder (null when owned=false)
   trackTotal  Int?      // canonical track count from MusicBrainz, if known
   tracks      Track[]
+  vinylCopy   VinylCopy?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
   @@unique([artistId, folder])
   @@index([artistId])
+}
+
+// A vinyl LP you physically own for this album — independent of digital
+// ownership (Album.owned). Presence of this row means "own on vinyl", full
+// stop; the album may or may not also have digital Tracks. One row per
+// Album: owning two different pressings of the same release is an edge case
+// handled with a note, not a second row.
+model VinylCopy {
+  id        Int      @id @default(autoincrement())
+  albumId   Int      @unique
+  album     Album    @relation(fields: [albumId], references: [id], onDelete: Cascade)
+  format    String   @default("LP") // LP | 2xLP | 7" | 10" | BOX...
+  catalogNo String?
+  label     String? // pressing label/imprint, can differ from the original
+  pressYear Int? // pressing year — often later than Album.year for reissues
+  condition String? // free text ("VG+", "Sealed", ...)
+  notes     String?
+  addedAt   DateTime @default(now())
 }
 
 model Track {

@@ -61,12 +61,12 @@ export interface MusicIndexArtist {
 }
 
 export interface MusicIndexData {
-  totals: { artists: number; albumsOwned: number; tracks: number; losslessPct: number };
+  totals: { artists: number; albumsOwned: number; tracks: number; losslessPct: number; vinylOwned: number };
   artists: MusicIndexArtist[]; // sorted by sortName, various=true last
 }
 
 export async function getMusicIndex(): Promise<MusicIndexData> {
-  const [artists, albumsOwned, tracksTotal, tracksLossless] = await Promise.all([
+  const [artists, albumsOwned, tracksTotal, tracksLossless, vinylOwned] = await Promise.all([
     prisma.artist.findMany({
       select: {
         id: true,
@@ -80,6 +80,7 @@ export async function getMusicIndex(): Promise<MusicIndexData> {
     prisma.album.count({ where: { owned: true } }),
     prisma.track.count(),
     prisma.track.count({ where: { lossless: true } }),
+    prisma.vinylCopy.count(),
   ]);
 
   const shaped: MusicIndexArtist[] = artists
@@ -110,6 +111,7 @@ export async function getMusicIndex(): Promise<MusicIndexData> {
       albumsOwned,
       tracks: tracksTotal,
       losslessPct: losslessPct(tracksTotal, tracksLossless),
+      vinylOwned,
     },
     artists: shaped,
   };
@@ -124,6 +126,10 @@ export interface ArtistCatalogueAlbum {
   title: string;
   year: number | null;
   owned: boolean;
+  /** A physical LP you own for this album — independent of `owned` (digital).
+   *  An album with owned=false and vinylOwned=true is NOT a gap: you have
+   *  it, just not digitally. UI must not render it as "Missing". */
+  vinylOwned: boolean;
   hasCover: boolean;
   /** See MusicIndexArtist.coverVersion. Null when hasCover is false. */
   coverVersion: number | null;
@@ -153,7 +159,7 @@ export async function getArtistDetail(id: number): Promise<ArtistDetail | null> 
   const artist = await prisma.artist.findUnique({
     where: { id },
     include: {
-      albums: { include: { _count: { select: { tracks: true } } } },
+      albums: { include: { _count: { select: { tracks: true } }, vinylCopy: { select: { id: true } } } },
     },
   });
   if (!artist) return null;
@@ -163,6 +169,7 @@ export async function getArtistDetail(id: number): Promise<ArtistDetail | null> 
     title: a.title,
     year: a.year,
     owned: a.owned,
+    vinylOwned: a.vinylCopy != null,
     hasCover: a.coverPath != null,
     coverVersion: a.coverPath != null ? a.updatedAt.getTime() : null,
     trackCount: a._count.tracks,
@@ -228,12 +235,23 @@ export interface AlbumDiscView {
   tracks: AlbumTrackView[];
 }
 
+export interface VinylView {
+  format: string;
+  catalogNo: string | null;
+  label: string | null;
+  pressYear: number | null;
+  condition: string | null;
+  notes: string | null;
+}
+
 export interface AlbumDetail {
   id: number;
   title: string;
   year: number | null;
   kind: string;
   owned: boolean;
+  /** See ArtistCatalogueAlbum.vinylOwned. Null when you don't own this on vinyl. */
+  vinyl: VinylView | null;
   hasCover: boolean;
   /** See MusicIndexArtist.coverVersion. Null when hasCover is false. */
   coverVersion: number | null;
@@ -248,6 +266,7 @@ export async function getAlbumDetail(id: number): Promise<AlbumDetail | null> {
     include: {
       artist: { select: { id: true, name: true, various: true } },
       tracks: true,
+      vinylCopy: true,
     },
   });
   if (!album) return null;
@@ -290,6 +309,16 @@ export async function getAlbumDetail(id: number): Promise<AlbumDetail | null> {
     year: album.year,
     kind: album.kind,
     owned: album.owned,
+    vinyl: album.vinylCopy
+      ? {
+          format: album.vinylCopy.format,
+          catalogNo: album.vinylCopy.catalogNo,
+          label: album.vinylCopy.label,
+          pressYear: album.vinylCopy.pressYear,
+          condition: album.vinylCopy.condition,
+          notes: album.vinylCopy.notes,
+        }
+      : null,
     hasCover: album.coverPath != null,
     coverVersion: album.coverPath != null ? album.updatedAt.getTime() : null,
     trackTotal: album.trackTotal,
@@ -330,7 +359,18 @@ export async function getMusicReportData(): Promise<MusicReportData> {
         name: true,
         sortName: true,
         various: true,
-        albums: { select: { id: true, title: true, year: true, kind: true, owned: true, coverPath: true, updatedAt: true } },
+        albums: {
+          select: {
+            id: true,
+            title: true,
+            year: true,
+            kind: true,
+            owned: true,
+            coverPath: true,
+            updatedAt: true,
+            vinylCopy: { select: { id: true } },
+          },
+        },
       },
     }),
     prisma.album.count({ where: { owned: true } }),
@@ -361,7 +401,9 @@ export async function getMusicReportData(): Promise<MusicReportData> {
         ownedStudio / totalStudio >= MUSIC_GAP_MIN_PCT;
       if (!qualifies) return null;
 
-      const missingAlbums = studioAlbums.filter((al) => !al.owned);
+      // Owned=false but with a VinylCopy isn't a gap — you have it, just not
+      // digitally — so it's excluded from the missing-albums report entirely.
+      const missingAlbums = studioAlbums.filter((al) => !al.owned && al.vinylCopy == null);
       if (missingAlbums.length === 0) return null;
 
       return {

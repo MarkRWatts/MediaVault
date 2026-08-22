@@ -7,6 +7,7 @@ import { notFound } from "next/navigation";
 import CoverImage from "@/components/CoverImage";
 import AudioCodecBadge from "@/components/AudioCodecBadge";
 import AlbumPlayer from "@/components/AlbumPlayer";
+import VinylForm from "@/components/VinylForm";
 import { getAlbumDetail } from "@/lib/queries-music";
 import type { AlbumTrackView } from "@/lib/queries-music";
 import { qualityLabel } from "@/lib/audio-quality";
@@ -132,8 +133,27 @@ export default async function AlbumPage({
             <span className="rounded border border-dvd-border bg-dvd-bg px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-widest leading-none text-dvd">
               {KIND_LABELS[album.kind] ?? album.kind}
             </span>
+            {album.vinyl && (
+              <span className="rounded border border-good-border bg-good-bg px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-widest leading-none text-good">
+                Vinyl
+              </span>
+            )}
             <AudioCodecBadge codec={codec} quality={quality} />
           </div>
+          {album.vinyl && (
+            <div className="mt-2 text-xs text-text-faint">
+              {[
+                album.vinyl.format,
+                album.vinyl.catalogNo && `Cat# ${album.vinyl.catalogNo}`,
+                album.vinyl.label,
+                album.vinyl.pressYear,
+                album.vinyl.condition,
+                album.vinyl.notes,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </div>
+          )}
         </div>
       </div>
 
@@ -143,6 +163,8 @@ export default async function AlbumPage({
       {drmOnly && (
         <p className="text-xs text-text-faint">Playback unavailable — FairPlay-protected files.</p>
       )}
+
+      <VinylForm albumId={album.id} initial={album.vinyl} />
 
       <div className="flex flex-col gap-6">
         {album.discs.length === 0 ? (

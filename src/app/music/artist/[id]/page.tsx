@@ -34,35 +34,44 @@ function Chip({ tone, children }: { tone: keyof typeof CHIP_TONE; children: Reac
   );
 }
 
-// Studio back-catalogue tile: cover, Owned/Missing chip, title, year. Missing
-// entries are non-links (nothing to view — no local files, no album page)
-// and get the same grayscale/dashed treatment as owned=false films.
+// Studio back-catalogue tile: cover, Owned/Vinyl/Missing chip, title, year. Truly-missing
+// entries (owned=false, vinylOwned=false) are non-links (nothing to view) and get the
+// grayscale/dashed treatment. Vinyl-only (owned=false, vinylOwned=true) render in full
+// color as links since they have metadata to view on the album page.
 function StudioAlbumCard({ album }: { album: ArtistCatalogueAlbum }) {
+  const isFullyOwned = album.owned === true;
+  const isVinylOnly = album.owned === false && album.vinylOwned === true;
+  const isTrulyMissing = album.owned === false && album.vinylOwned === false;
+
   const body = (
     <div
       className={`flex flex-col overflow-hidden rounded-lg border ${
-        album.owned
-          ? "border-border bg-bg-elevated"
-          : "border-dashed border-border/60 bg-bg-elevated/40"
+        isTrulyMissing
+          ? "border-dashed border-border/60 bg-bg-elevated/40"
+          : "border-border bg-bg-elevated"
       }`}
     >
       <CoverImage
         albumId={album.hasCover ? album.id : null}
         version={album.coverVersion}
         title={album.title}
-        className={album.owned ? "w-full" : "w-full grayscale opacity-45"}
+        className={isTrulyMissing ? "w-full grayscale opacity-45" : "w-full"}
       />
       <div className="flex flex-col gap-0.5 p-2.5">
         <h3 className="line-clamp-2 text-xs font-semibold leading-snug text-text">{album.title}</h3>
         <span className="flex items-center justify-between gap-2">
           <span className="font-mono text-[11px] text-text-faint">{album.year ?? "—"}</span>
-          <Chip tone={album.owned ? "good" : "missing"}>{album.owned ? "Owned" : "Missing"}</Chip>
+          <Chip
+            tone={isFullyOwned ? "good" : isVinylOnly ? "dvd" : "missing"}
+          >
+            {isFullyOwned ? "Owned" : isVinylOnly ? "Vinyl" : "Missing"}
+          </Chip>
         </span>
       </div>
     </div>
   );
 
-  return album.owned ? (
+  return isFullyOwned || isVinylOnly ? (
     <Link href={`/music/album/${album.id}`} className="hover-lift block">
       {body}
     </Link>
