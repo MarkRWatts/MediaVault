@@ -285,6 +285,63 @@ async function reconcileArtistAlbums(artistId: number, artistName: string, artis
   // Pass 1: attach mbid/year/releaseDate/kind to owned albums, matched either
   // by an mbid already recorded from a prior run (idempotent) or by
   // normalized title (extends normalizeTitle-style matching, see
+  // Pre-pass — ordinal disambiguation for identically-titled release groups.
+  // Some artists have several albums with the SAME title (Peter Gabriel's
+  // first four are all "Peter Gabriel"); the owner's folders disambiguate
+  // with a numeric tag — "Peter Gabriel (3)" — which normalizeAlbumTitle
+  // strips, making the bare title-match pairing arbitrary. When an owned
+  // album carries a trailing "(N)"/"[N]" and 2+ release groups share its
+  // normalized title, treat N as a 1-based index into that group's
+  // best-kind subset sorted by first release date: (1)=1977 Car,
+  // (3)=1980 Melt, (4)=1982 Security.
+  const rgsByNormTitle = new Map<string, typeof releaseGroups>();
+  for (const rg of releaseGroups) {
+    const t = normalizeAlbumTitle(rg.title ?? "");
+    const arr = rgsByNormTitle.get(t);
+    if (arr) arr.push(rg);
+    else rgsByNormTitle.set(t, [rg]);
+  }
+  for (const a of ownedAlbums) {
+    if (claimedOwnedIds.has(a.id)) continue;
+    const ordMatch = /[([](\d{1,2})[)\]]\s*$/.exec(a.title);
+    if (!ordMatch) continue;
+    const ordinal = Number(ordMatch[1]);
+    const group = rgsByNormTitle.get(normalizeAlbumTitle(a.title));
+    if (!group || group.length < 2) continue;
+    const bestRank = Math.min(...group.map(rgKindRank));
+    const candidates = group
+      .filter((rg) => rgKindRank(rg) === bestRank)
+      .slice()
+      .sort((x, y) => (x["first-release-date"] ?? "9999").localeCompare(y["first-release-date"] ?? "9999"));
+    const rg = candidates[ordinal - 1];
+    if (!rg || claimedRgIds.has(rg.id)) continue;
+
+    const kind = classifyAlbumKind(rg["primary-type"], rg["secondary-types"]);
+    const { year, releaseDate } = parseReleaseDate(rg["first-release-date"]);
+    const mbidChanged = a.mbid !== rg.id;
+    const holder = await prisma.album.findUnique({ where: { mbid: rg.id } });
+    if (holder && holder.id !== a.id) {
+      if (!holder.owned) {
+        await prisma.album.delete({ where: { id: holder.id } });
+      } else {
+        continue; // two owned albums claiming one release group — leave for review
+      }
+    }
+    const invalidateCover = mbidChanged && a.mbid != null && a.coverSource !== "embedded" && a.coverSource !== "manual";
+    await prisma.album.update({
+      where: { id: a.id },
+      data: { mbid: rg.id, year, releaseDate, kind, ...(invalidateCover ? { coverPath: null, coverSource: null } : {}) },
+    });
+    claimedRgIds.add(rg.id);
+    claimedOwnedIds.add(a.id);
+    a.mbid = rg.id;
+    a.kind = kind;
+    log.push(`Ordinal-matched "${a.title}" (${artistName}) to release-group ${rg.id} (${rg["first-release-date"] ?? "?"})`);
+  }
+
+  // Pass 1: attach mbid/year/releaseDate/kind to owned albums, matched either
+  // by an mbid already recorded from a prior run (idempotent) or by
+  // normalized title (extends normalizeTitle-style matching, see
   // normalizeAlbumTitle above).
   for (const rg of releaseGroups) {
     const kind = classifyAlbumKind(rg["primary-type"], rg["secondary-types"]);
@@ -380,7 +437,7 @@ async function reconcileArtistAlbums(artistId: number, artistName: string, artis
     if (/\blive\b/i.test(a.title)) {
       await prisma.album.update({ where: { id: a.id }, data: { kind: "LIVE" } });
       log.push(`Reclassified unmatched "${a.title}" (${artistName}) as LIVE by title heuristic`);
-    } else if (/\b(best of|greatest hits|the hits|singles|collection|anthology)\b/i.test(a.title)) {
+    } else if (/\b(best of|greatest hits|golden greats|the hits|singles|collection|anthology)\b/i.test(a.title)) {
       await prisma.album.update({ where: { id: a.id }, data: { kind: "COMPILATION" } });
       log.push(`Reclassified unmatched "${a.title}" (${artistName}) as COMPILATION by title heuristic`);
     }
