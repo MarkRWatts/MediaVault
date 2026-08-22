@@ -62,6 +62,9 @@ async function fetchCaaCover(mbid: string): Promise<Buffer | null> {
     const res = await fetch(`${CAA_BASE}/release-group/${mbid}/front-250`, {
       headers: { "User-Agent": USER_AGENT },
       redirect: "follow",
+      // No default fetch timeout in Node — a hung CAA socket can freeze the
+      // whole enrichment run (same failure class as mbFetch; see there).
+      signal: AbortSignal.timeout(60_000),
     });
     if (!res.ok) return null;
     const buf = Buffer.from(await res.arrayBuffer());
@@ -150,7 +153,10 @@ async function fetchItunesCover(artistName: string, title: string): Promise<Buff
     url.searchParams.set("entity", "album");
     url.searchParams.set("limit", "10");
 
-    const res = await fetch(url.toString(), { headers: { "User-Agent": USER_AGENT } });
+    const res = await fetch(url.toString(), {
+      headers: { "User-Agent": USER_AGENT },
+      signal: AbortSignal.timeout(30_000),
+    });
     if (!res.ok) return null;
     const data = await res.json();
     const results = (data.results ?? []) as ItunesHit[];
@@ -159,7 +165,10 @@ async function fetchItunesCover(artistName: string, title: string): Promise<Buff
     if (!best?.artworkUrl100) return null;
 
     const artUrl = best.artworkUrl100.replace("100x100bb", "300x300bb");
-    const imgRes = await fetch(artUrl, { headers: { "User-Agent": USER_AGENT } });
+    const imgRes = await fetch(artUrl, {
+      headers: { "User-Agent": USER_AGENT },
+      signal: AbortSignal.timeout(30_000),
+    });
     if (!imgRes.ok) return null;
     const buf = Buffer.from(await imgRes.arrayBuffer());
     if (buf.byteLength < MIN_COVER_BYTES) return null;

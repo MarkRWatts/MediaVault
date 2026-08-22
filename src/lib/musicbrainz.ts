@@ -57,7 +57,22 @@ async function mbFetch(pathname: string, params: Record<string, string>): Promis
 
   for (let attempt = 0; ; attempt++) {
     await throttle();
-    const res = await fetch(url.toString(), { headers: { "User-Agent": USER_AGENT } });
+    // Node fetch has NO default timeout — a hung socket froze a whole
+    // enrichment run for 30+ minutes mid-artist on a real run. Abort and
+    // treat it like any transient failure (one retry, then throw).
+    let res: Response;
+    try {
+      res = await fetch(url.toString(), {
+        headers: { "User-Agent": USER_AGENT },
+        signal: AbortSignal.timeout(30_000),
+      });
+    } catch (err) {
+      if (attempt === 0) {
+        await sleep(RETRY_BACKOFF_MS);
+        continue;
+      }
+      throw new Error(`MusicBrainz ${pathname} -> ${err instanceof Error ? err.message : String(err)}`);
+    }
     if (res.ok) return res.json();
     if (attempt === 0 && isTransientStatus(res.status)) {
       await sleep(RETRY_BACKOFF_MS);
