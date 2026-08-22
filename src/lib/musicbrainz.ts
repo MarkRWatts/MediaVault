@@ -605,7 +605,14 @@ async function enrichOneArtist(artist: Artist, log: string[]): Promise<void> {
     }
   }
 
-  if (!mbid) return; // stays UNMATCHED — nothing to reconcile against
+  if (!mbid) {
+    // Stays UNMATCHED — no release-group listing to reconcile against. The
+    // cover pass still runs: embedded art needs no MusicBrainz id at all,
+    // and a manually-matched album (POST /api/album-match) has its own
+    // release-group mbid for CAA despite the artist being unmatched.
+    await fetchMissingCoversForArtist(artist.id, artist.name, log);
+    return;
+  }
 
   await reconcileArtistAlbums(artist.id, artist.name, mbid, log);
 }
@@ -658,4 +665,83 @@ export async function runMusicEnrich(): Promise<{ runId: number; started: boolea
   });
 
   return { runId: run.id, started: true };
+}
+
+// --- Manual matching (POST /api/album-match) ---
+
+const MB_URL_RE = /musicbrainz\.org\/(release|release-group)\/([0-9a-f-]{36})/i;
+const MB_UUID_RE = /^[0-9a-f-]{36}$/i;
+
+/**
+ * Accepts a musicbrainz.org release or release-group URL (or a bare UUID,
+ * treated as a release-group id) and resolves it to a release-group. iTunes
+ * rips from before MusicBrainz-accurate tagging often can't be auto-matched
+ * — this is the owner's escape hatch.
+ */
+export async function applyManualAlbumMatch(
+  albumId: number,
+  mb: string,
+): Promise<{ ok: true; album: { id: number; title: string; kind: string; year: number | null; mbid: string } } | { ok: false; status: number; error: string }> {
+  const album = await prisma.album.findUnique({ where: { id: albumId } });
+  if (!album) return { ok: false, status: 404, error: "unknown album id" };
+  if (!album.owned) return { ok: false, status: 400, error: "cannot manually match a missing-album placeholder" };
+
+  const urlMatch = MB_URL_RE.exec(mb);
+  let entity: "release" | "release-group";
+  let mbId: string;
+  if (urlMatch) {
+    entity = urlMatch[1].toLowerCase() as "release" | "release-group";
+    mbId = urlMatch[2].toLowerCase();
+  } else if (MB_UUID_RE.test(mb.trim())) {
+    entity = "release-group";
+    mbId = mb.trim().toLowerCase();
+  } else {
+    return { ok: false, status: 400, error: "expected a musicbrainz.org release/release-group URL or a release-group UUID" };
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let rg: any;
+  try {
+    if (entity === "release") {
+      const release = await mbFetch(`/release/${mbId}`, { inc: "release-groups" });
+      rg = release["release-group"];
+      if (!rg?.id) return { ok: false, status: 502, error: "release has no release-group" };
+      // The release payload's embedded group omits first-release-date in some
+      // responses — fetch the group itself for authoritative fields.
+      rg = await mbFetch(`/release-group/${rg.id}`, {});
+    } else {
+      rg = await mbFetch(`/release-group/${mbId}`, {});
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, status: 502, error: `MusicBrainz lookup failed: ${message}` };
+  }
+
+  const holder = await prisma.album.findUnique({ where: { mbid: rg.id } });
+  if (holder && holder.id !== album.id) {
+    if (!holder.owned) {
+      await prisma.album.delete({ where: { id: holder.id } });
+    } else {
+      return { ok: false, status: 409, error: `release-group already matched to owned album "${holder.title}"` };
+    }
+  }
+
+  const kind = classifyAlbumKind(rg["primary-type"], rg["secondary-types"]);
+  const { year, releaseDate } = parseReleaseDate(rg["first-release-date"]);
+  // Identity changed: a previously fetched online cover may belong to the
+  // old (wrong) match. Embedded/manual covers are correct regardless.
+  const invalidateCover =
+    album.mbid !== rg.id && album.coverPath != null && album.coverSource !== "embedded" && album.coverSource !== "manual";
+  const updated = await prisma.album.update({
+    where: { id: album.id },
+    data: {
+      mbid: rg.id,
+      kind,
+      year: year ?? album.year,
+      releaseDate: releaseDate ?? album.releaseDate,
+      ...(invalidateCover ? { coverPath: null, coverSource: null } : {}),
+    },
+  });
+
+  return { ok: true, album: { id: updated.id, title: updated.title, kind: updated.kind, year: updated.year, mbid: rg.id } };
 }
