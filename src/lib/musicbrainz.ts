@@ -282,9 +282,6 @@ async function reconcileArtistAlbums(artistId: number, artistName: string, artis
   const claimedRgIds = new Set<string>();
   const claimedOwnedIds = new Set<number>();
 
-  // Pass 1: attach mbid/year/releaseDate/kind to owned albums, matched either
-  // by an mbid already recorded from a prior run (idempotent) or by
-  // normalized title (extends normalizeTitle-style matching, see
   // Pre-pass — ordinal disambiguation for identically-titled release groups.
   // Some artists have several albums with the SAME title (Peter Gabriel's
   // first four are all "Peter Gabriel"); the owner's folders disambiguate
@@ -292,8 +289,17 @@ async function reconcileArtistAlbums(artistId: number, artistName: string, artis
   // strips, making the bare title-match pairing arbitrary. When an owned
   // album carries a trailing "(N)"/"[N]" and 2+ release groups share its
   // normalized title, treat N as a 1-based index into that group's
-  // best-kind subset sorted by first release date: (1)=1977 Car,
-  // (3)=1980 Melt, (4)=1982 Security.
+  // best-kind subset, date-sorted and deduped to ONE entry per release year
+  // (MusicBrainz holds more same-titled groups than the canonical run —
+  // e.g. the German-language 1980 album — and without the year dedupe the
+  // index drifts): (1)=1977 Car, (3)=1980 Melt, (4)=1982 Security.
+  //
+  // Assignments are computed for the whole artist first and applied in two
+  // phases (null every batch member's mbid, then set the new ones) because
+  // members can swap release groups with each other — updating in place
+  // trips the mbid unique constraint mid-swap, which on a real run aborted
+  // the whole artist ("Peter Gabriel (4)" had just claimed the group that
+  // "(3)" was being moved to).
   const rgsByNormTitle = new Map<string, typeof releaseGroups>();
   for (const rg of releaseGroups) {
     const t = normalizeAlbumTitle(rg.title ?? "");
@@ -301,42 +307,80 @@ async function reconcileArtistAlbums(artistId: number, artistName: string, artis
     if (arr) arr.push(rg);
     else rgsByNormTitle.set(t, [rg]);
   }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const ordinalBatch: { album: (typeof ownedAlbums)[number]; rg: any }[] = [];
+  const batchTargetIds = new Set<string>();
   for (const a of ownedAlbums) {
-    if (claimedOwnedIds.has(a.id)) continue;
     const ordMatch = /[([](\d{1,2})[)\]]\s*$/.exec(a.title);
     if (!ordMatch) continue;
     const ordinal = Number(ordMatch[1]);
     const group = rgsByNormTitle.get(normalizeAlbumTitle(a.title));
     if (!group || group.length < 2) continue;
     const bestRank = Math.min(...group.map(rgKindRank));
-    const candidates = group
+    const seenYears = new Set<string>();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const candidates: any[] = [];
+    for (const rg of group
       .filter((rg) => rgKindRank(rg) === bestRank)
       .slice()
-      .sort((x, y) => (x["first-release-date"] ?? "9999").localeCompare(y["first-release-date"] ?? "9999"));
+      .sort((x, y) => (x["first-release-date"] ?? "9999").localeCompare(y["first-release-date"] ?? "9999"))) {
+      const yr = (rg["first-release-date"] ?? "").slice(0, 4) || "?";
+      if (seenYears.has(yr)) continue;
+      seenYears.add(yr);
+      candidates.push(rg);
+    }
     const rg = candidates[ordinal - 1];
-    if (!rg || claimedRgIds.has(rg.id)) continue;
-
-    const kind = classifyAlbumKind(rg["primary-type"], rg["secondary-types"]);
-    const { year, releaseDate } = parseReleaseDate(rg["first-release-date"]);
-    const mbidChanged = a.mbid !== rg.id;
-    const holder = await prisma.album.findUnique({ where: { mbid: rg.id } });
-    if (holder && holder.id !== a.id) {
-      if (!holder.owned) {
-        await prisma.album.delete({ where: { id: holder.id } });
-      } else {
-        continue; // two owned albums claiming one release group — leave for review
+    if (!rg || batchTargetIds.has(rg.id)) continue;
+    ordinalBatch.push({ album: a, rg });
+    batchTargetIds.add(rg.id);
+  }
+  if (ordinalBatch.length > 0) {
+    const batchAlbumIds = new Set(ordinalBatch.map((b) => b.album.id));
+    // Phase 0: resolve outside holders of our target groups — reclaim
+    // placeholders, and skip any member whose target is held by an owned
+    // album that isn't itself being reassigned (left for review).
+    const applicable: typeof ordinalBatch = [];
+    for (const b of ordinalBatch) {
+      const holder = await prisma.album.findUnique({ where: { mbid: b.rg.id } });
+      if (holder && holder.id !== b.album.id && !batchAlbumIds.has(holder.id)) {
+        if (!holder.owned) {
+          await prisma.album.delete({ where: { id: holder.id } });
+        } else {
+          log.push(
+            `Ordinal match for "${b.album.title}" (${artistName}) skipped — release-group ${b.rg.id} is held by owned "${holder.title}"`,
+          );
+          continue;
+        }
+      }
+      applicable.push(b);
+    }
+    // Phase 1: free the unique constraint across the whole batch.
+    for (const b of applicable) {
+      if (b.album.mbid && b.album.mbid !== b.rg.id) {
+        await prisma.album.update({ where: { id: b.album.id }, data: { mbid: null } });
       }
     }
-    const invalidateCover = mbidChanged && a.mbid != null && a.coverSource !== "embedded" && a.coverSource !== "manual";
-    await prisma.album.update({
-      where: { id: a.id },
-      data: { mbid: rg.id, year, releaseDate, kind, ...(invalidateCover ? { coverPath: null, coverSource: null } : {}) },
-    });
-    claimedRgIds.add(rg.id);
-    claimedOwnedIds.add(a.id);
-    a.mbid = rg.id;
-    a.kind = kind;
-    log.push(`Ordinal-matched "${a.title}" (${artistName}) to release-group ${rg.id} (${rg["first-release-date"] ?? "?"})`);
+    // Phase 2: apply the assignments.
+    for (const b of applicable) {
+      const kind = classifyAlbumKind(b.rg["primary-type"], b.rg["secondary-types"]);
+      const { year, releaseDate } = parseReleaseDate(b.rg["first-release-date"]);
+      const invalidateCover =
+        b.album.mbid != null &&
+        b.album.mbid !== b.rg.id &&
+        b.album.coverSource !== "embedded" &&
+        b.album.coverSource !== "manual";
+      await prisma.album.update({
+        where: { id: b.album.id },
+        data: { mbid: b.rg.id, year, releaseDate, kind, ...(invalidateCover ? { coverPath: null, coverSource: null } : {}) },
+      });
+      claimedRgIds.add(b.rg.id);
+      claimedOwnedIds.add(b.album.id);
+      b.album.mbid = b.rg.id;
+      b.album.kind = kind;
+      log.push(
+        `Ordinal-matched "${b.album.title}" (${artistName}) to release-group ${b.rg.id} (${b.rg["first-release-date"] ?? "?"})`,
+      );
+    }
   }
 
   // Pass 1: attach mbid/year/releaseDate/kind to owned albums, matched either
@@ -344,6 +388,10 @@ async function reconcileArtistAlbums(artistId: number, artistName: string, artis
   // normalized title (extends normalizeTitle-style matching, see
   // normalizeAlbumTitle above).
   for (const rg of releaseGroups) {
+    // A group claimed by the ordinal pre-pass (or earlier in this loop) is
+    // settled — without this guard the worse-kind re-claim below could try
+    // to move a second album onto it and trip the mbid unique constraint.
+    if (claimedRgIds.has(rg.id)) continue;
     const kind = classifyAlbumKind(rg["primary-type"], rg["secondary-types"]);
     const { year, releaseDate } = parseReleaseDate(rg["first-release-date"]);
     const wantTitle = normalizeAlbumTitle(rg.title ?? "");
