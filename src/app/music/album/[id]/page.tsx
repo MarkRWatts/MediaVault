@@ -8,6 +8,8 @@ import CoverImage from "@/components/CoverImage";
 import AudioCodecBadge from "@/components/AudioCodecBadge";
 import AlbumPlayer from "@/components/AlbumPlayer";
 import PhysicalCopyForm from "@/components/PhysicalCopyForm";
+import DigitalSourceForm from "@/components/DigitalSourceForm";
+import { digitalSourceLabel } from "@/lib/digital-source";
 import { getAlbumDetail } from "@/lib/queries-music";
 import type { AlbumTrackView } from "@/lib/queries-music";
 import { qualityLabel } from "@/lib/audio-quality";
@@ -160,6 +162,11 @@ export default async function AlbumPage({
                 .join(" · ")}
             </div>
           ))}
+          {album.owned && album.digitalSource && (
+            <div className="mt-1 text-xs text-text-faint">
+              Files: {digitalSourceLabel(album.digitalSource)}
+            </div>
+          )}
         </div>
       </div>
 
@@ -170,7 +177,7 @@ export default async function AlbumPage({
         <p className="text-xs text-text-faint">Playback unavailable — FairPlay-protected files.</p>
       )}
 
-      <div className="flex flex-wrap gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <PhysicalCopyForm
           albumId={album.id}
           medium="VINYL"
@@ -181,6 +188,7 @@ export default async function AlbumPage({
           medium="CD"
           initial={album.copies.find((c) => c.medium === "CD") ?? null}
         />
+        {album.owned && <DigitalSourceForm albumId={album.id} initial={album.digitalSource} />}
       </div>
 
       <div className="flex flex-col gap-6">

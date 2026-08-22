@@ -233,6 +233,7 @@ model Album {
   coverSource String?   // embedded | caa | itunes | manual — provenance of coverPath; "manual" is never overwritten
   owned       Boolean   @default(true)
   folder      String?   // album folder name under the artist folder (null when owned=false)
+  digitalSource String? // provenance of the digital files: cd | itunes | download | vinyl-code (bundled with the LP); null = unconfirmed
   trackTotal  Int?      // canonical track count from MusicBrainz, if known
   tracks      Track[]
   physicalCopies PhysicalCopy[]

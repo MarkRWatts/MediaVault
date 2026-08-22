@@ -10,9 +10,10 @@ export const dynamic = "force-dynamic";
 import Link from "next/link";
 import CoverImage from "@/components/CoverImage";
 import { getFormatsReport } from "@/lib/queries-music";
+import { digitalSourceLabel } from "@/lib/digital-source";
 
 export default async function MusicFormatsPage() {
-  const { totals, vinylByFormat, crate, unconfirmed } = await getFormatsReport();
+  const { totals, vinylByFormat, digitalSources, crate, unconfirmed } = await getFormatsReport();
 
   const tiles: { label: string; value: number }[] = [
     { label: "On CD", value: totals.cdAlbums },
@@ -99,13 +100,31 @@ export default async function MusicFormatsPage() {
           )}
         </section>
 
+        {digitalSources.length > 0 && (
+          <section className="flex flex-col gap-3">
+            <h2 className="font-display text-xl tracking-wide">Digital sources</h2>
+            <div className="flex flex-wrap gap-3">
+              {digitalSources.map((s) => (
+                <div
+                  key={s.source}
+                  className="flex items-baseline gap-2 rounded-lg border border-border bg-bg-elevated px-3.5 py-2.5"
+                >
+                  <span className="font-display text-xl leading-none text-text">{s.count}</span>
+                  <span className="text-[10px] uppercase leading-tight tracking-widest text-text-faint">
+                    {digitalSourceLabel(s.source)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
         {unconfirmed.length > 0 && (
           <section className="flex flex-col gap-3">
             <h2 className="font-display text-xl tracking-wide">Unconfirmed sources</h2>
             <p className="max-w-2xl text-xs text-text-faint">
-              Digital albums with non-ALAC tracks — an iTunes purchase or a download rather than a
-              CD rip, until you say otherwise. Tag the ones you own physically from their album
-              pages.
+              Digital albums whose files haven&apos;t been traced to a source yet — set it from the
+              album page (CD rip, iTunes, download, or a download code that came with an LP).
             </p>
             <ul className="flex flex-col divide-y divide-border overflow-hidden rounded-lg border border-border bg-bg-elevated">
               {unconfirmed.map((a) => (

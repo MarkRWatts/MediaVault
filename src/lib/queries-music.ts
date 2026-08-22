@@ -265,6 +265,8 @@ export interface AlbumDetail {
   owned: boolean;
   /** See ArtistCatalogueAlbum.physicalMedia. Empty when you own no physical copy. */
   copies: PhysicalCopyView[];
+  /** Provenance of the digital files (cd | itunes | download | vinyl-code), null = unconfirmed. */
+  digitalSource: string | null;
   hasCover: boolean;
   /** See MusicIndexArtist.coverVersion. Null when hasCover is false. */
   coverVersion: number | null;
@@ -336,6 +338,7 @@ export async function getAlbumDetail(id: number): Promise<AlbumDetail | null> {
         condition: c.condition,
         notes: c.notes,
       })),
+    digitalSource: album.digitalSource,
     hasCover: album.coverPath != null,
     coverVersion: album.coverPath != null ? album.updatedAt.getTime() : null,
     trackTotal: album.trackTotal,
@@ -492,8 +495,10 @@ export interface FormatsReportData {
     vinylDiscs: number;
   };
   vinylByFormat: { format: string; count: number }[];
+  /** Owned digital albums by Album.digitalSource (nulls excluded — those are `unconfirmed`). */
+  digitalSources: { source: string; count: number }[];
   crate: FormatsCrateAlbum[]; // vinyl albums, artist order then year
-  unconfirmed: UnconfirmedSourceAlbum[]; // digital albums with non-ALAC tracks and no CD row
+  unconfirmed: UnconfirmedSourceAlbum[]; // digital albums whose digitalSource is still null
 }
 
 /** "2xLP" -> 2, "LP"/"7\"" -> 1; explicit discs field wins. */
@@ -521,14 +526,15 @@ export async function getFormatsReport(): Promise<FormatsReportData> {
       },
     }),
     prisma.album.count({ where: { owned: true, physicalCopies: { none: {} } } }),
-    // Digital albums whose source can't be assumed to be a CD (per Mark:
-    // every all-ALAC album IS a CD rip; anything else — AAC/MP3/FLAC/DRM —
-    // is an iTunes purchase or download until confirmed by hand).
+    // Digital albums whose file provenance is still unconfirmed. The CD/source
+    // backfill (POST /api/backfill-cds) stamps digitalSource for the safely
+    // inferable cases (all-ALAC => cd, DRM => itunes); what's left is a
+    // purchase or download only Mark can classify, via /api/digital-source.
     prisma.album.findMany({
       where: {
         owned: true,
-        physicalCopies: { none: { medium: "CD" } },
-        tracks: { some: { codec: { not: "alac" } } },
+        digitalSource: null,
+        tracks: { some: {} },
       },
       select: {
         id: true,
@@ -538,6 +544,12 @@ export async function getFormatsReport(): Promise<FormatsReportData> {
       },
     }),
   ]);
+
+  const sourceCounts = await prisma.album.groupBy({
+    by: ["digitalSource"],
+    where: { owned: true, digitalSource: { not: null } },
+    _count: { _all: true },
+  });
 
   const vinyl = copies.filter((c) => c.medium === "VINYL");
   const cds = copies.filter((c) => c.medium === "CD");
@@ -594,6 +606,9 @@ export async function getFormatsReport(): Promise<FormatsReportData> {
     vinylByFormat: Array.from(byFormat.entries())
       .map(([format, count]) => ({ format, count }))
       .sort((a, b) => b.count - a.count || a.format.localeCompare(b.format)),
+    digitalSources: sourceCounts
+      .map((s) => ({ source: s.digitalSource as string, count: s._count._all }))
+      .sort((a, b) => b.count - a.count || a.source.localeCompare(b.source)),
     crate,
     unconfirmed,
   };
