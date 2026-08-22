@@ -19,6 +19,10 @@ jobs:
 
       - run: npm ci
       - run: npx prisma generate
+      # tsc relies on the LayoutProps/PageProps helper types that Next.js
+      # writes to .next/types — `next dev`/`next build` generate them as a
+      # side effect, but CI never runs those, so typecheck needs this first.
+      - run: npx next typegen
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
