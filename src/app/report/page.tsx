@@ -7,7 +7,7 @@ import PosterImage from "@/components/PosterImage";
 import FormatBadge from "@/components/FormatBadge";
 import CoverImage from "@/components/CoverImage";
 import { getReportData, getTvReportData } from "@/lib/queries";
-import type { IssueFilm } from "@/lib/queries";
+import type { IssueFilm, FormatStat } from "@/lib/queries";
 import { getMusicReportData } from "@/lib/queries-music";
 
 function issueTags(f: IssueFilm): string[] {
@@ -21,6 +21,38 @@ function issueTags(f: IssueFilm): string[] {
 
 function SectionEmpty({ children }: { children: React.ReactNode }) {
   return <p className="py-8 text-center text-sm text-text-faint">{children}</p>;
+}
+
+// Small horizontal bar list — count per codec/format, widest bar first.
+function FormatBreakdown({ title, rows }: { title: string; rows: FormatStat[] }) {
+  const max = Math.max(1, ...rows.map((r) => r.count));
+  return (
+    <div>
+      <h3 className="mb-2 text-[10px] uppercase tracking-widest text-text-faint">{title}</h3>
+      {rows.length === 0 ? (
+        <p className="text-xs text-text-faint">No data.</p>
+      ) : (
+        <ul className="flex flex-col gap-1.5">
+          {rows.map((r) => (
+            <li key={r.key} className="flex items-center gap-2.5">
+              <span className="w-28 shrink-0 truncate font-mono text-xs text-text-muted">
+                {r.label}
+              </span>
+              <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-bg-hover">
+                <div
+                  className="h-full rounded-full bg-accent"
+                  style={{ width: `${(r.count / max) * 100}%` }}
+                />
+              </div>
+              <span className="w-8 shrink-0 text-right font-mono text-xs text-text-faint">
+                {r.count}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 // Native <details> keeps the page server-rendered with zero client JS; the
@@ -62,7 +94,7 @@ export default async function ReportPage({
 }: {
   searchParams: Promise<{ open?: string }>;
 }) {
-  const [{ totals, missingByCollection, upgradeCandidates, issues }, tv, music, params] = await Promise.all([
+  const [{ totals, missingByCollection, upgradeCandidates, issues, formatStats }, tv, music, params] = await Promise.all([
     getReportData(),
     getTvReportData(),
     getMusicReportData(),
@@ -252,6 +284,18 @@ export default async function ReportPage({
             ))}
           </ul>
         )}
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        title="Audio & video formats"
+        defaultOpen={open.has("formats")}
+        subtitle="Codecs across every owned disc and audio track — the same breakdown the Movies page filters on."
+        count={`${totals.discs} disc${totals.discs === 1 ? "" : "s"}`}
+      >
+        <div className="grid gap-x-8 gap-y-6 sm:grid-cols-2">
+          <FormatBreakdown title="Video codec" rows={formatStats.video} />
+          <FormatBreakdown title="Audio format" rows={formatStats.audio} />
+        </div>
       </CollapsibleSection>
 
       <CollapsibleSection

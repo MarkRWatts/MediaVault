@@ -33,6 +33,24 @@ export function formatLabel(format: string): string {
   return FORMAT_LABELS[format] ?? format;
 }
 
+// ffprobe codec_name -> friendly label, for the video-codec filter/report
+// (mirrors the audio equivalent in @/lib/audio). Anything unrecognised falls
+// back to the raw name, uppercased.
+const VIDEO_CODEC_LABELS: Record<string, string> = {
+  h264: "H.264",
+  hevc: "HEVC",
+  h265: "HEVC",
+  mpeg2video: "MPEG-2",
+  mpeg4: "MPEG-4",
+  vc1: "VC-1",
+  vp9: "VP9",
+  av1: "AV1",
+};
+
+export function videoCodecLabel(codec: string): string {
+  return VIDEO_CODEC_LABELS[codec.toLowerCase()] ?? codec.toUpperCase();
+}
+
 // Friendly resolution tier for badges: "4K", "1080p", "720p", "576p"…
 // Tier from width (stable under letterbox cropping); the SD sub-label uses
 // height only when it matches a real PAL/NTSC line count, else plain "SD".

@@ -2,10 +2,12 @@
 
 import { useMemo, useState } from "react";
 import FilmCard from "@/components/FilmCard";
+import { videoCodecLabel } from "@/lib/constants";
 import type { LibraryFilm } from "@/lib/queries";
 
 type FilterKey = "all" | "4k" | "bluray" | "dvd" | "collection" | "noposter";
 type SortKey = "title" | "year" | "added";
+const ALL_CODECS = "all";
 
 const FILTERS: { key: FilterKey; label: string }[] = [
   { key: "all", label: "All" },
@@ -19,7 +21,21 @@ const FILTERS: { key: FilterKey; label: string }[] = [
 export default function LibraryBrowser({ films }: { films: LibraryFilm[] }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<FilterKey>("all");
+  const [videoCodec, setVideoCodec] = useState(ALL_CODECS);
+  const [audioFormat, setAudioFormat] = useState(ALL_CODECS);
   const [sort, setSort] = useState<SortKey>("title");
+
+  const videoCodecOptions = useMemo(() => {
+    const set = new Set<string>();
+    films.forEach((f) => f.videoCodecs.forEach((c) => set.add(c)));
+    return Array.from(set).sort((a, b) => videoCodecLabel(a).localeCompare(videoCodecLabel(b)));
+  }, [films]);
+
+  const audioFormatOptions = useMemo(() => {
+    const set = new Set<string>();
+    films.forEach((f) => f.audioFormats.forEach((a) => set.add(a)));
+    return Array.from(set).sort();
+  }, [films]);
 
   const filtered = useMemo(() => {
     let list = films;
@@ -31,6 +47,10 @@ export default function LibraryBrowser({ films }: { films: LibraryFilm[] }) {
     else if (filter === "collection") list = list.filter((f) => f.collectionId !== null);
     else if (filter === "noposter") list = list.filter((f) => !f.posterPath);
 
+    if (videoCodec !== ALL_CODECS) list = list.filter((f) => f.videoCodecs.includes(videoCodec));
+    if (audioFormat !== ALL_CODECS)
+      list = list.filter((f) => f.audioFormats.includes(audioFormat));
+
     const q = query.trim().toLowerCase();
     if (q) list = list.filter((f) => f.title.toLowerCase().includes(q));
 
@@ -40,7 +60,7 @@ export default function LibraryBrowser({ films }: { films: LibraryFilm[] }) {
     else sorted.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
     return sorted;
-  }, [films, filter, query, sort]);
+  }, [films, filter, videoCodec, audioFormat, query, sort]);
 
   if (films.length === 0) {
     return (
@@ -100,7 +120,39 @@ export default function LibraryBrowser({ films }: { films: LibraryFilm[] }) {
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-1.5 text-xs text-text-muted">
+            Video
+            <select
+              value={videoCodec}
+              onChange={(e) => setVideoCodec(e.target.value)}
+              className="rounded-md border border-border bg-bg-elevated px-2 py-1 text-xs text-text focus-visible:outline-none"
+            >
+              <option value={ALL_CODECS}>All</option>
+              {videoCodecOptions.map((c) => (
+                <option key={c} value={c}>
+                  {videoCodecLabel(c)}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="flex items-center gap-1.5 text-xs text-text-muted">
+            Audio
+            <select
+              value={audioFormat}
+              onChange={(e) => setAudioFormat(e.target.value)}
+              className="rounded-md border border-border bg-bg-elevated px-2 py-1 text-xs text-text focus-visible:outline-none"
+            >
+              <option value={ALL_CODECS}>All</option>
+              {audioFormatOptions.map((a) => (
+                <option key={a} value={a}>
+                  {a}
+                </option>
+              ))}
+            </select>
+          </label>
+
           <label className="flex items-center gap-1.5 text-xs text-text-muted">
             Sort
             <select

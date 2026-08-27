@@ -4,7 +4,8 @@
 // here, Dates are ISO strings, so nothing needs re-shaping downstream.
 
 import { prisma } from "@/lib/db";
-import { resolutionTier, type Format, type ResolutionTier } from "@/lib/constants";
+import { resolutionTier, videoCodecLabel, type Format, type ResolutionTier } from "@/lib/constants";
+import { audioBadge } from "@/lib/audio";
 
 // ---------------------------------------------------------------------------
 // Formatting helpers
@@ -67,6 +68,8 @@ export interface LibraryFilm {
   formats: Format[];
   discCount: number;
   bestTier: ResolutionTier;
+  videoCodecs: string[]; // raw codec_name values ("h264", "vc1"…) — filter matches on these
+  audioFormats: string[]; // friendly audioBadge labels ("DTS-HD MA", "Dolby Digital"…)
 }
 
 export interface LibraryData {
@@ -87,7 +90,15 @@ export async function getLibraryFilms(): Promise<LibraryData> {
       posterPath: true,
       collectionId: true,
       createdAt: true,
-      versions: { select: { format: true, width: true, height: true } },
+      versions: {
+        select: {
+          format: true,
+          width: true,
+          height: true,
+          videoCodec: true,
+          audioTracks: { select: { codec: true, profile: true } },
+        },
+      },
     },
   });
 
@@ -102,6 +113,16 @@ export async function getLibraryFilms(): Promise<LibraryData> {
     formats: Array.from(new Set(f.versions.map((v) => v.format as Format))),
     discCount: f.versions.length,
     bestTier: bestResolutionTier(f.versions),
+    videoCodecs: Array.from(
+      new Set(f.versions.map((v) => v.videoCodec).filter((c): c is string => !!c)),
+    ),
+    audioFormats: Array.from(
+      new Set(
+        f.versions.flatMap((v) =>
+          v.audioTracks.map((a) => audioBadge(a.codec, a.profile, null, null).label),
+        ),
+      ),
+    ),
   }));
 
   return {
@@ -535,6 +556,12 @@ export interface IssueFilm {
   missingYear: boolean;
 }
 
+export interface FormatStat {
+  key: string;
+  label: string;
+  count: number;
+}
+
 export interface ReportData {
   totals: {
     filmsOwned: number;
@@ -549,6 +576,10 @@ export interface ReportData {
   missingByCollection: MissingGroup[];
   upgradeCandidates: UpgradeCandidate[];
   issues: IssueFilm[];
+  formatStats: {
+    video: FormatStat[];
+    audio: FormatStat[];
+  };
 }
 
 export async function getReportData(): Promise<ReportData> {
@@ -556,7 +587,7 @@ export async function getReportData(): Promise<ReportData> {
     prisma.film.findMany({
       where: { owned: true },
       orderBy: { sortTitle: "asc" },
-      include: { versions: true },
+      include: { versions: { include: { audioTracks: true } } },
     }),
     prisma.film.findMany({
       where: { owned: false },
@@ -630,6 +661,26 @@ export async function getReportData(): Promise<ReportData> {
       missingYear: f.year === null,
     }));
 
+  const videoCodecCounts = new Map<string, number>();
+  for (const v of discs) {
+    if (!v.videoCodec) continue;
+    videoCodecCounts.set(v.videoCodec, (videoCodecCounts.get(v.videoCodec) ?? 0) + 1);
+  }
+  const videoStats: FormatStat[] = Array.from(videoCodecCounts.entries())
+    .map(([codec, count]) => ({ key: codec, label: videoCodecLabel(codec), count }))
+    .sort((a, b) => b.count - a.count);
+
+  const audioCounts = new Map<string, number>();
+  for (const v of discs) {
+    for (const a of v.audioTracks) {
+      const { label } = audioBadge(a.codec, a.profile, null, null);
+      audioCounts.set(label, (audioCounts.get(label) ?? 0) + 1);
+    }
+  }
+  const audioStats: FormatStat[] = Array.from(audioCounts.entries())
+    .map(([label, count]) => ({ key: label, label, count }))
+    .sort((a, b) => b.count - a.count);
+
   return {
     totals: {
       filmsOwned: ownedFilms.length,
@@ -644,6 +695,7 @@ export async function getReportData(): Promise<ReportData> {
     missingByCollection: Array.from(missingByCollectionMap.values()),
     upgradeCandidates,
     issues,
+    formatStats: { video: videoStats, audio: audioStats },
   };
 }
 
