@@ -27,11 +27,13 @@ things to add.
   household's library access is the point, never silently removable.
 - **Auth method: email OTP only** (see "Access codes & the web of trust"
   below) — no password, no OAuth. This means **email-sending is a required
-  prerequisite, not deferred work**: an email provider (Resend, SMTP relay,
-  whatever's already in reach) has to be picked and wired up before sign-in
-  works at all, since the OTP *is* the credential. This is new infra
-  MediaVault hasn't needed before — flagged explicitly so it doesn't get
-  missed as a silent blocker on Phase 3.
+  prerequisite, not deferred work**, since the OTP *is* the credential.
+  Resolved: **Resend**, already domain-verified for `markrwatts.com` (the
+  same provider jinglejotter.com uses) — no SDK, just a plain `fetch` to
+  `https://api.resend.com/emails` with `RESEND_API_KEY` (see
+  `jinglejotter.com/app/lib/email.ts`'s `sendEmail()`, ported as-is). From
+  address: `MediaVault <noreply@markrwatts.com>` (adjust the local part if
+  you'd rather something else — any address on the verified domain works).
 
 ## Data model changes
 
@@ -200,7 +202,7 @@ field anywhere in the current schema or code).
 | Phase | Work | Est. |
 |---|---|---|
 | 1 | Install BetterAuth + Prisma adapter, generate schema, migrate — **done**, `worktree-agent-acdb77a6360ccdd03` | 0.5 day |
-| 1.5 | Pick + wire an email provider (Resend/SMTP/etc.) — new prerequisite, blocks Phase 3 | 0.5 day |
+| 1.5 | Wire Resend (`RESEND_API_KEY`, `sendEmail()` ported from jinglejotter.com) — provider already decided, just plumbing | 0.25 day |
 | 2 | Auth API route + client hooks (`lib/auth.ts`, `lib/auth-client.ts`) | 0.5 day |
 | 3 | `organization` plugin (→ Household/Member/Invitation), `emailOTP` plugin, the
 web-of-trust `databaseHooks` gate, `AccessCode` model + admin mint script | 1.5–2 days |
