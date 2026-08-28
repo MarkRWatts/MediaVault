@@ -289,6 +289,12 @@ sort preserves the updatedAt-desc tiebreak), deduped across multiple Versions
 of the same film. Most-watched genres weighted by the same per-row watch-time
 contribution, split evenly across `Film.genres`' comma-separated tags — reuses
 one justified number instead of a second, differently-weighted metric.
+Deployed to production and verified live.
+
+**All 9 phases now shipped and deployed.** The households/accounts plan
+(auth, web of trust, roles, `isAppOwner`, `/account`, `/admin`) and the
+watch-history plan (resume playback, "Continue watching", `/stats`) are
+both complete on `main` and live on `mediavault.markrwatts.com`.
 Recently-watched capped at 30 rows. Nav gained a "Stats" link (any signed-in
 member, unlike the owner-only links). Verified against a real dev server with
 seeded WatchProgress rows (fresh worktree has no real watch history) — total
