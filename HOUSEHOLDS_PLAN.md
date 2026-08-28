@@ -274,7 +274,7 @@ reuses the existing `FilmCard`/`FilmShelf` shape; renders as its own shelf on th
 page, only for a signed-in user with at least one in-progress title, ahead of "New
 releases"/"Recently added". Verified live: appears once a film crosses the 30s/in-progress
 bar, disappears once it's watched to completion, and re-watching a completed film
-correctly resets `completed` instead of resuming from the end | 1 day |
+correctly resets `completed` instead of resuming from the end. Deployed to production and verified live | 1 day |
 | 9 | Stats v1 (watch time, most-watched, recent history) | 1 day |
 
 **Total: ~1.5–2 weeks of focused work** — up from the earlier estimate now
