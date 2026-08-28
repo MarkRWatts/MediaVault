@@ -17,13 +17,21 @@ things to add.
   `Verification` models to `prisma/schema.prisma` directly — no hand-written
   migration for the auth core itself.
 - **`organization` plugin** for households: gives us `Organization`/`Member`/
-  `Invitation` models out of the box. A household = one Organization; a
-  family member = a Member of it. This is the right fit now that there's
-  more than one household, rather than a flat owner/viewer role.
-- No email-sending infra yet. With a small, known set of family members,
-  the pragmatic v1 is: the owner provisions each account directly (or sends
-  a BetterAuth invite link by hand), not a public sign-up flow or automated
-  email delivery. Add real email invites later if the household count grows.
+  `Invitation` models out of the box, renamed via the plugin's own
+  `schema.modelName`/`fields` remapping to `Household`/`Member`/`Invitation`
+  so the domain language matches the app instead of staying generic (this
+  is exactly what jinglejotter.com does — see `auth.ts` there). One
+  household per user, enforced via the plugin's `organizationLimit` hook
+  (checks for an existing `Member` row) rather than the plugin's native
+  multi-org default; `disableOrganizationDeletion: true` since a
+  household's library access is the point, never silently removable.
+- **Auth method: email OTP only** (see "Access codes & the web of trust"
+  below) — no password, no OAuth. This means **email-sending is a required
+  prerequisite, not deferred work**: an email provider (Resend, SMTP relay,
+  whatever's already in reach) has to be picked and wired up before sign-in
+  works at all, since the OTP *is* the credential. This is new infra
+  MediaVault hasn't needed before — flagged explicitly so it doesn't get
+  missed as a silent blocker on Phase 3.
 
 ## Data model changes
 
@@ -57,11 +65,104 @@ fully shared. Two additions:
    (Enforcing "exactly one FK set" is an app-level invariant, same as SQLite's
    general lack of CHECK-constraint support elsewhere in this schema.)
 
+## Access codes & the web of trust
+
+Ported from jinglejotter.com's real, shipped implementation
+(`/Users/mark/claude-code/jinglejotter.com/app`: `auth.ts`, `lib/access.ts`,
+`lib/allowed-email.ts`, `lib/otp-email.ts`, `app/actions/auth-flow.ts`,
+`app/actions/household.ts`) — not a fresh design, a port. Read those files
+before touching this phase; the summary below is deliberately compressed.
+
+**The gate.** Nobody signs in on identity alone — an email must be *vouched
+for* by one of:
+
+1. A root anchor env list (`ALLOWED_EMAILS` — Mark's own address(es)). The
+   one thing no database state can lock out.
+2. Membership: an existing `Member` row for that email — **not** any `User`
+   row. BetterAuth creates the `User` row before a session-create hook can
+   refuse it, so an orphaned `User` from a refused sign-in must never vouch
+   for itself.
+3. A pending, unexpired household `Invitation` for that email.
+4. A live, unredeemed `AccessCode` minted for that email.
+
+Checked in two places: before sending an OTP at all (silently no-ops for a
+stranger — the send path never confirms or denies an email is known, so
+nobody can probe which addresses this app recognizes), and authoritatively
+in a `databaseHooks.session.create.before` hook that re-checks on *every*
+sign-in, not just account creation.
+
+**Credential: email OTP only.** No password, no OAuth — a 6-digit code,
+10-minute expiry, 3 attempts, via BetterAuth's `emailOTP` plugin. (JingleJotter
+arrived here after retiring Google OAuth and magic links, partly because a
+magic link tapped in Mail opens the wrong cookie jar for an installed
+PWA/home-screen app — worth keeping in mind if MediaVault ever goes that
+route too, but not a reason to revisit for a plain browser tab today.)
+
+**Two ways in:**
+
+- **Brand-new household** — needs an `AccessCode` (the trust boundary for
+  admitting a household MediaVault doesn't already know). `/signup`
+  collects name + email + code; the code must be email-bound *and* match
+  the typed email (a forwarded code is useless to anyone else). OTP is sent
+  and verified, then `createHousehold` claims the code atomically and
+  creates the org.
+- **Invited into an existing household** — no code needed; a pending
+  `Invitation` itself is the vouch, so the invitee just uses plain
+  `/signin`. Invite acceptance is by bearer token (the invitation row's own
+  id, not matched to the invitee's email — deliberately bypasses
+  BetterAuth's own email-matched `acceptInvitation`, modelled on how
+  Tailscale invite links work: whoever holds the link can redeem it).
+
+**`AccessCode` model** (simplified from jinglejotter.com's version — that
+one carries a `kind`/`accessExpiresAt` pair for its trial-vs-lifetime
+monetization split, which doesn't apply here and is deliberately dropped):
+
+```prisma
+model AccessCode {
+  id              String    @id @default(cuid())
+  code            String    @unique // canonical form: MV + 8 chars, no 0/O/1/I/L
+  email           String?   // null = claimable by anyone signed in; set = bound to one address
+  maxRedemptions  Int       @default(1)
+  redeemedCount   Int       @default(0)
+  redeemableUntil DateTime?
+  createdAt       DateTime  @default(now())
+}
+```
+
+Minted by a small admin script (mirrors `scripts/gen-access-code.ts`), not a
+UI — same reasoning as the plugin config itself: this is owner-run
+tooling, not a self-serve growth surface. Claimed via a conditional
+`updateMany` (`redeemedCount: { lt: <maxRedemptions> }`, not-yet-expired) so
+two racing claims on the last slot of a shared code can't both win — only
+the update whose `WHERE` still matches succeeds. One user-facing error
+message covers every failure mode (unknown code, expired, exhausted, wrong
+email) — distinguishing them would tell a guesser which codes/emails exist.
+
+**Two things to verify, not assume, when this phase is actually built** —
+jinglejotter.com runs Postgres; MediaVault runs SQLite via
+`better-sqlite3`, and two of the mechanisms above lean on
+provider-specific behaviour:
+
+- The conditional-`updateMany` claim compares one column to another
+  (`redeemedCount` against `maxRedemptions`) inside a `where` — Prisma's
+  field-to-field filter comparison. Confirm this generates correct SQL
+  against the SQLite provider before relying on it for concurrency safety.
+- Invite-token acceptance in jinglejotter.com wraps its race check in a
+  `{ isolationLevel: "Serializable" }` transaction. Prisma's SQLite
+  connector may not support explicit isolation levels the same way Postgres
+  does (SQLite's own locking model is single-writer regardless) — needs a
+  real check, and if it doesn't apply cleanly, the one-household-per-user
+  race guard needs an equivalent SQLite-native path (e.g. a unique
+  constraint doing the work instead of transaction isolation).
+
 ## Auth & gating
 
 - `middleware.ts` (new file) gates every route except `/api/auth/*` — redirect
   to sign-in on no session. One central file, not 38 per-route edits.
-- Sign-in page + sign-out control in the nav.
+- Sign-in page (email → OTP, two steps, no code needed) + a separate
+  sign-up page (name + email + access code, for a brand-new household) +
+  sign-out control in the nav — see "Access codes & the web of trust" above
+  for the actual flow.
 - Role check (Organization member role: owner vs member) on anything that
   updates the library or reports on its state — owner (product owner) only:
   `scan`, `enrich`, `enrich-music`, `backfill-cds`, `physical-add`,
@@ -98,20 +199,24 @@ field anywhere in the current schema or code).
 
 | Phase | Work | Est. |
 |---|---|---|
-| 1 | Install BetterAuth + Prisma adapter, generate schema, migrate | 0.5 day |
+| 1 | Install BetterAuth + Prisma adapter, generate schema, migrate — **done**, `worktree-agent-acdb77a6360ccdd03` | 0.5 day |
+| 1.5 | Pick + wire an email provider (Resend/SMTP/etc.) — new prerequisite, blocks Phase 3 | 0.5 day |
 | 2 | Auth API route + client hooks (`lib/auth.ts`, `lib/auth-client.ts`) | 0.5 day |
-| 3 | `organization` plugin wired up, household = org, manual member provisioning | 0.5–1 day |
-| 4 | `middleware.ts` gating + sign-in page + sign-out control | 0.5–1 day |
+| 3 | `organization` plugin (→ Household/Member/Invitation), `emailOTP` plugin, the
+web-of-trust `databaseHooks` gate, `AccessCode` model + admin mint script | 1.5–2 days |
+| 4 | `middleware.ts` gating + `/signin` (OTP) + `/signup` (code) pages + sign-out | 1–1.5 days |
 | 5 | Role gate on the owner-only management routes (list above) | 1 day |
-| 6 | End-to-end auth verification (login, redirect, sign-out, role checks) | 0.5 day |
+| 6 | End-to-end auth verification (both join paths, redirect, sign-out, role checks,
+the two SQLite compatibility items above) | 1 day |
 | 7 | `WatchProgress` schema + progress-reporting endpoint + player wiring | 1 day |
 | 8 | "Continue watching" UI + resume-from-position playback | 1 day |
 | 9 | Stats v1 (watch time, most-watched, recent history) | 1 day |
 
-**Total: ~a week to a week and a half of focused work.** Bounded because
-there's no existing auth or tracking to untangle — the auth/household half
-(~3–4 days) and the watch-history half (~3.5 days) are genuinely separate
-pieces of work and could ship as two separate rounds if useful.
+**Total: ~1.5–2 weeks of focused work** — up from the earlier estimate now
+that the real access-code/OTP/web-of-trust design is ported in rather than
+a flat role + manual provisioning. Auth/households (~5–6.5 days) and
+watch-history (~3 days) are still genuinely separate and shippable as two
+rounds.
 
 ## Explicitly deferred (not in this plan)
 
@@ -119,7 +224,9 @@ pieces of work and could ship as two separate rounds if useful.
   so household members skip a separate Jellyfin login) — depends on
   BetterAuth existing first, so it's a natural follow-on once this plan
   ships, not part of it.
-- Email-based invitations / public sign-up.
+- Public, code-free self-serve sign-up — every new household still needs an
+  owner-minted access code, same posture as jinglejotter.com. Only the
+  *invite-into-an-existing-household* path skips the code.
 - Per-household content restrictions or library partitioning — the library
   stays one shared catalogue.
 - Audio (`AlbumPlayer`) progress tracking, unless requested.
