@@ -5,7 +5,7 @@ library accessible by multiple households (family members), each with their
 own login and their own watch history/stats. The library itself stays a
 single shared catalogue — this is **not** per-household data partitioning.
 
-Today there is zero auth anywhere: no `User` model, no middleware, no session
+Today there is zero auth anywhere: no `User` model, no gating, no session
 handling. That's good news — there's nothing to migrate away from, only
 things to add.
 
@@ -159,8 +159,15 @@ provider-specific behaviour:
 
 ## Auth & gating
 
-- `middleware.ts` (new file) gates every route except `/api/auth/*` — redirect
-  to sign-in on no session. One central file, not 38 per-route edits.
+- `proxy.ts` (new file — **not** `middleware.ts`: this Next.js version
+  deprecated and renamed that convention, confirmed in
+  `node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/proxy.md`;
+  jinglejotter.com's own equivalent file is correctly named `proxy.ts` too)
+  gates every route except `/api/auth/*`, `/signin`, `/signup`, and the
+  `/invite/` prefix — redirect to sign-in on no session. One central file,
+  not 38 per-route edits. Optimistic cookie-presence check only (no DB hit,
+  since this runs on every request) — real authorization still happens via
+  `auth.api.getSession()` in the actual page/route.
 - Sign-in page (email → OTP, two steps, no code needed) + a separate
   sign-up page (name + email + access code, for a brand-new household) +
   sign-out control in the nav — see "Access codes & the web of trust" above
@@ -206,7 +213,8 @@ field anywhere in the current schema or code).
 | 2 | Auth API route + client hooks (`src/app/api/auth/[...all]/route.ts`, `src/lib/auth-client.ts`) — **done**, merged | 0.5 day |
 | 3 | `organization` plugin (→ Household/Member/Invitation), `emailOTP` plugin, the
 web-of-trust `databaseHooks` gate, `AccessCode` model + admin mint script — **done**, merged, real SQLite concurrency tests added | 1.5–2 days |
-| 4 | `middleware.ts` gating + `/signin` (OTP) + `/signup` (code) pages + sign-out | 1–1.5 days |
+| 4 | `proxy.ts` gating + `/signin` (OTP) + `/signup` (code) + `/onboarding` +
+`/invite/[token]` pages + sign-out + minimal invite-a-member action | 1.5–2 days |
 | 5 | Role gate on the owner-only management routes (list above) | 1 day |
 | 6 | End-to-end auth verification (both join paths, redirect, sign-out, role checks,
 the two SQLite compatibility items above) | 1 day |
