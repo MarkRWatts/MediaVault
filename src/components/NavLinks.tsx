@@ -23,16 +23,14 @@ const OWNER_LINKS = [
 
 export default function NavLinks({ signedIn = false, isOwner = false }: { signedIn?: boolean; isOwner?: boolean }) {
   const pathname = usePathname();
-  // /household is only reachable (and useful) once signed in — proxy.ts
+  // /account is only reachable (and useful) once signed in — proxy.ts
   // would bounce a signed-out visit to /signin anyway, so there's no point
-  // showing a dead link. Labelled "Profile" to match the convention other
-  // apps use for "your account" — the page itself is still household
-  // settings today (members/invites), not a distinct per-user profile; a
-  // real split is a bigger design question for later, not this label.
+  // showing a dead link. Unified account/household settings page (see
+  // HOUSEHOLDS_PLAN.md) — identity + household management in one place.
   const links = [
     ...LINKS,
     ...(isOwner ? OWNER_LINKS : []),
-    ...(signedIn ? [{ href: "/household", label: "Profile" }] : []),
+    ...(signedIn ? [{ href: "/account", label: "Account" }] : []),
   ];
 
   return (

@@ -1,7 +1,8 @@
 "use server";
 
 // Server actions for households: onboarding (create one, or jump to an
-// invite), membership (inviting people in, cancelling pending invites), and
+// invite), membership (inviting people in, cancelling pending invites,
+// promoting/demoting/removing members, renaming the household), and
 // redeeming an invite. Ported from jinglejotter.com's app/actions/household.ts,
 // simplified for MediaVault (see HOUSEHOLDS_PLAN.md Phase 4):
 //   - createHousehold has no per-household seed data to create (no
@@ -12,10 +13,16 @@
 //   - createInvitation only has the household-invite branch; jinglejotter's
 //     "appOnly" (no-household, come-try-the-app) branch is a growth-marketing
 //     concept that doesn't apply here.
-//   - updateHouseholdName/updateHouseholdCurrency/promoteToOwner/
-//     demoteToMember/removeMember are out of scope for this phase.
-//   - No logAudit — this codebase has no audit-log concept yet (see
-//     HOUSEHOLDS_PLAN.md); not invented here.
+//   - updateHouseholdCurrency is out of scope — MediaVault has no
+//     per-household currency concept.
+//   - updateHouseholdName/promoteToOwner/demoteToMember/removeMember were
+//     deferred in Phase 4 (per HOUSEHOLDS_PLAN.md's own note) and are added
+//     here as part of the /account rebuild, ported from the template app's
+//     app/actions/household.ts. All four stay gated by Member.role ===
+//     "owner" (via requireMember()'s returned `role`) — deliberately NOT
+//     User.isAppOwner, which is a separate, app-wide concept (see
+//     src/lib/require-member.ts's Owner type doc comment). A household's
+//     own manager doesn't need to be the product owner.
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
@@ -27,6 +34,8 @@ import { requireMember } from "@/lib/require-member";
 import { slugify } from "@/lib/slug";
 import { isTooLong } from "@/lib/validation";
 import { claimAccessCode, releaseClaim } from "@/lib/access";
+import { logAudit } from "@/lib/audit";
+import { MAX_ROWS, rowCapMessage } from "@/lib/limits";
 
 // `sent` is unused today (the app-only invite branch that produced it isn't
 // ported), kept only so the shared ActionState shape stays a superset of
@@ -55,8 +64,9 @@ export async function createHousehold(
   const claim = await claimAccessCode(String(formData.get("code") ?? ""), session.user.email);
   if (!claim.ok) return { error: claim.error };
 
+  let household: { id: string };
   try {
-    await auth.api.createOrganization({
+    household = await auth.api.createOrganization({
       headers: await headers(),
       body: { name, slug: slugify(name) },
     });
@@ -64,6 +74,7 @@ export async function createHousehold(
     await releaseClaim(claim.codeId);
     return { error: err instanceof Error ? err.message : "Couldn't create that household." };
   }
+  await logAudit({ userId: session.user.id, householdId: household.id, action: "household.create" });
 
   // The /signup flow's carried code (pre-filled above the fold on
   // /onboarding) is spent now — drop it so it can't leak into a later
@@ -102,11 +113,17 @@ export async function createInvitation(
   _prevState: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  const { householdId } = await requireMember();
+  const { userId, householdId } = await requireMember();
 
   const email = String(formData.get("email") ?? "").trim();
   if (!email) return { error: "Enter an email address." };
   if (isTooLong(email)) return { error: "That email address is too long." };
+
+  // Every Invitation ever sent counts, regardless of status — cancelled and
+  // accepted ones still occupy a row, and the point is bounding the table,
+  // not the number of currently-pending invites.
+  const invitationCount = await prisma.invitation.count({ where: { householdId } });
+  if (invitationCount >= MAX_ROWS) return { error: rowCapMessage("invites") };
 
   try {
     await auth.api.createInvitation({
@@ -116,8 +133,9 @@ export async function createInvitation(
   } catch (err) {
     return { error: err instanceof Error ? err.message : "Couldn't send that invite." };
   }
+  await logAudit({ userId, householdId, action: "invite.create" });
 
-  revalidatePath("/household");
+  revalidatePath("/account");
   return null;
 }
 
@@ -126,7 +144,7 @@ export async function cancelInvitation(
   _prevState: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  await requireMember();
+  const { userId, householdId } = await requireMember();
 
   const invitationId = String(formData.get("invitationId") ?? "").trim();
   if (!invitationId) return { error: "Missing invite." };
@@ -139,8 +157,9 @@ export async function cancelInvitation(
   } catch (err) {
     return { error: err instanceof Error ? err.message : "Couldn't cancel that invite." };
   }
+  await logAudit({ userId, householdId, action: "invite.cancel", entityId: invitationId });
 
-  revalidatePath("/household");
+  revalidatePath("/account");
   return null;
 }
 
@@ -223,9 +242,122 @@ export async function acceptInvitation(formData: FormData): Promise<void> {
   } catch {
     redirect(`/invite/${token}?error=already-in-household`);
   }
+  await logAudit({ userId, householdId: invitation.householdId, action: "household.member-join" });
 
   // See the matching comment in createHousehold — same stale-nav problem,
   // same fix.
   revalidatePath("/", "layout");
   redirect("/");
+}
+
+/** Rename the household — owner-only. Delegates to BetterAuth's own
+ *  update-organization endpoint, which checks the caller holds
+ *  organization:update permission (owner-only by default — see auth.ts;
+ *  the "member" role has no organization permissions at all). */
+export async function updateHouseholdName(
+  _prevState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const { userId, householdId } = await requireMember();
+
+  const name = String(formData.get("name") ?? "").trim();
+  if (!name) return { error: "Give your household a name." };
+  if (isTooLong(name, 60)) return { error: "That name is a bit long." };
+
+  try {
+    await auth.api.updateOrganization({
+      headers: await headers(),
+      body: { organizationId: householdId, data: { name } },
+    });
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Couldn't rename your household." };
+  }
+  await logAudit({ userId, householdId, action: "household.rename" });
+
+  revalidatePath("/account");
+  return null;
+}
+
+/** Promote a plain member to a second owner. Delegates to BetterAuth's own
+ *  update-member-role endpoint, which checks the caller holds
+ *  member:update permission (owner-only by default — see auth.ts) and
+ *  refuses to touch a member outside the caller's own household, and
+ *  refuses to leave the household without any owner at all. */
+export async function promoteToOwner(
+  _prevState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const { userId, householdId } = await requireMember();
+
+  const memberId = String(formData.get("memberId") ?? "").trim();
+  if (!memberId) return { error: "Missing member." };
+
+  try {
+    await auth.api.updateMemberRole({
+      headers: await headers(),
+      body: { organizationId: householdId, memberId, role: "owner" },
+    });
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Couldn't promote that member." };
+  }
+  await logAudit({ userId, householdId, action: "member.promote", entityId: memberId });
+
+  revalidatePath("/account");
+  return null;
+}
+
+/** Demote an owner back to a plain member. Same endpoint as
+ *  promoteToOwner, opposite direction — BetterAuth already refuses to
+ *  leave a household without any owner at all. */
+export async function demoteToMember(
+  _prevState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const { userId, householdId } = await requireMember();
+
+  const memberId = String(formData.get("memberId") ?? "").trim();
+  if (!memberId) return { error: "Missing member." };
+
+  try {
+    await auth.api.updateMemberRole({
+      headers: await headers(),
+      body: { organizationId: householdId, memberId, role: "member" },
+    });
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Couldn't demote that member." };
+  }
+  await logAudit({ userId, householdId, action: "member.demote", entityId: memberId });
+
+  revalidatePath("/account");
+  return null;
+}
+
+/** Remove someone from the household — revokes access only. Delegates the
+ *  actual removal to BetterAuth's own remove-member endpoint (owner-only
+ *  by permission, and it already refuses to remove the household's last
+ *  remaining owner). */
+export async function removeMember(
+  _prevState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const { userId, householdId } = await requireMember();
+
+  const memberId = String(formData.get("memberId") ?? "").trim();
+  if (!memberId) return { error: "Missing member." };
+
+  const target = await prisma.member.findFirst({ where: { id: memberId, householdId } });
+  if (!target) return { error: "That member wasn't found." };
+
+  try {
+    await auth.api.removeMember({
+      headers: await headers(),
+      body: { organizationId: householdId, memberIdOrEmail: memberId },
+    });
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Couldn't remove that member." };
+  }
+  await logAudit({ userId, householdId, action: "member.remove", entityId: memberId });
+
+  revalidatePath("/account");
+  return null;
 }

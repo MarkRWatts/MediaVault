@@ -35,3 +35,37 @@ export async function sendEmail({
     throw new Error(`Resend send failed: ${res.status} ${await res.text()}`);
   }
 }
+
+/** Entity-escape a user-sourced string before it's interpolated into an
+ *  email's HTML body — without this, an admin display name (a free-text
+ *  User.name) would be attacker-authored HTML in mail sent from our
+ *  domain. */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/** The /admin page's "email the code" action: lets the app owner hand a
+ *  brand-new household its access code by mail instead of copy/pasting it
+ *  themselves. Deliberately plain-text-first like sendSignInOTP (Phase 3) —
+ *  the template app's branded HTML-email template system (logo asset,
+ *  cream/berry chrome) is cosmetic and specific to that app, not ported. */
+export async function sendAccessCodeEmail({
+  to,
+  inviterName,
+  code,
+}: {
+  to: string;
+  inviterName: string;
+  code: string;
+}) {
+  const baseUrl = (process.env.BETTER_AUTH_URL ?? "").replace(/\/$/, "");
+  const subject = `${inviterName} invited you to MediaVault`;
+  const text = `${inviterName} invited you to MediaVault.\n\nSign in using this address (${to}), then enter your access code to set up your household.\n\nYour access code: ${code}\n\n${baseUrl}/signin\n\nIf you weren't expecting this, you can safely ignore this email.`;
+  const html = `<p>${escapeHtml(inviterName)} invited you to MediaVault.</p><p>Sign in using this address, then enter your access code to set up your household.</p><p style="font-size:20px;font-weight:700;letter-spacing:2px;">${escapeHtml(code)}</p><p><a href="${escapeHtml(`${baseUrl}/signin`)}">${escapeHtml(`${baseUrl}/signin`)}</a></p><p style="color:#888;font-size:12px;">If you weren't expecting this, you can safely ignore this email.</p>`;
+  await sendEmail({ to, subject, html, text });
+}

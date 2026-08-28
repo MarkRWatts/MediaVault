@@ -363,6 +363,12 @@ model User {
   members     Member[]
   invitations Invitation[]
 
+  // Runs the app (sees /admin, mints access codes, reads the audit log).
+  // Deliberately separate from Member.role's "owner"/"member" — that's
+  // per-household, this is app-wide and normally true for exactly one user.
+  // See src/lib/require-member.ts.
+  isAppOwner Boolean @default(false)
+
   @@unique([email])
   @@map("user")
 }
@@ -428,10 +434,30 @@ model AccessCode {
   id              String    @id @default(cuid())
   code            String    @unique // canonical form: MV + 8 chars, no 0/O/1/I/L
   email           String? // null = claimable by anyone signed in; set = bound to one address
+  note            String? // admin-only: who/what this code was minted for
+  // When the invite email carrying this code was last sent (admin page's
+  // "send"/"resend"). Null = minted but never emailed.
+  sentAt          DateTime?
   maxRedemptions  Int       @default(1)
   redeemedCount   Int       @default(0)
   redeemableUntil DateTime?
   createdAt       DateTime  @default(now())
+}
+
+// Who-did-what metadata for the admin page — deliberately CONTENT-FREE:
+// action names and ids only, never titles/names/amounts, so the app owner
+// can see how households use the app without seeing what's actually stored
+// in it. No FK relations: audit rows must survive their user/household being
+// deleted (the admin page renders "(deleted)" instead).
+model AuditLog {
+  id          String   @id @default(cuid())
+  createdAt   DateTime @default(now())
+  userId      String?
+  householdId String?
+  action      String // "<entity>.<verb>", e.g. "household.create"
+  entityId    String?
+
+  @@index([createdAt])
 }
 
 model Household {
