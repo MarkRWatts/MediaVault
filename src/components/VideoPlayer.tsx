@@ -124,9 +124,17 @@ export default function VideoPlayer({ versionId, title, onClose }: { versionId: 
                 onWaiting={() => setBuffering(true)}
                 onPlaying={() => setBuffering(false)}
                 onCanPlay={() => setBuffering(false)}
-                onError={() => {
+                onError={(e) => {
+                  const mediaError = e.currentTarget.error;
+                  // The element's own error event doesn't show up in the console
+                  // on its own -- log it ourselves so there's something to see.
+                  console.error("Video playback failed", mediaError?.code, mediaError?.message);
                   setUiState("error");
-                  setMessage("Playback failed — see the browser console for details.");
+                  setMessage(
+                    mediaError
+                      ? `Playback failed (code ${mediaError.code}): ${mediaError.message || "no further detail from the browser"}`
+                      : "Playback failed — no error detail available.",
+                  );
                 }}
               />
               {buffering && (
