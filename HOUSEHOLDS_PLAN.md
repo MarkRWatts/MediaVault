@@ -257,8 +257,24 @@ bug caught in the process — the local dev SQLite db was missing the two newest
 migrations (agents only ever tested against isolated fresh temp DBs), fixed with
 `prisma migrate deploy`, which also surfaced and let us fix an actual page crash
 (`/invite/<bad-token>` 500'd instead of showing the graceful invalid-invite view) | 1 day |
-| 7 | `WatchProgress` schema + progress-reporting endpoint + player wiring | 1 day |
-| 8 | "Continue watching" UI + resume-from-position playback | 1 day |
+| 7 | `WatchProgress` schema + progress-reporting endpoint + player wiring — **done**. Scope
+corrected versus this table's original wording: in-app playback only exists for films
+(`Version`/`VideoPlayer.tsx`) today, so only that path is wired up —
+`episodeFileId` stays in the schema unwired (TV playback doesn't exist to report progress
+for), and the MediaVaultTV native-handoff path is untouched (out of scope, a future
+MediaVaultTV-side integration). `POST`/`GET /api/video/[versionId]/progress`: 95% of
+runtime counts as completed (mirrors mainstream resume-prompt conventions), 30s counts as
+"actually started" (skip resuming/listing below that), playCount increments once per play
+session (a client-sent `isNewPlay` flag on the first post-`playing` report) rather than
+once per progress tick. `timeupdate` reporting is throttled to once per 15s of playback
+plus a flush on pause/close. Live-tested against a real dev server (seeded film, real
+sign-in) — resume-seek, throttled reporting, and completion all confirmed working | 1 day |
+| 8 | "Continue watching" UI + resume-from-position playback — **done**. `getContinueWatchingFilms()`
+reuses the existing `FilmCard`/`FilmShelf` shape; renders as its own shelf on the library
+page, only for a signed-in user with at least one in-progress title, ahead of "New
+releases"/"Recently added". Verified live: appears once a film crosses the 30s/in-progress
+bar, disappears once it's watched to completion, and re-watching a completed film
+correctly resets `completed` instead of resuming from the end | 1 day |
 | 9 | Stats v1 (watch time, most-watched, recent history) | 1 day |
 
 **Total: ~1.5–2 weeks of focused work** — up from the earlier estimate now
