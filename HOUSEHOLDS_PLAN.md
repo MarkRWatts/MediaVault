@@ -248,8 +248,15 @@ web-of-trust `databaseHooks` gate, `AccessCode` model + admin mint script — **
 | 4 | `proxy.ts` gating + `/signin` (OTP) + `/signup` (code) + `/onboarding` +
 `/invite/[token]` pages + sign-out + minimal invite-a-member action — **done**, verified end-to-end (both join paths, sign-out, invite/cancel/accept) against a real SQLite db; invites deliver via a copy-link button, no `sendInvitationEmail` wired yet | 1.5–2 days |
 | 5 | Role gate on the owner-only management routes (list above) — **done**, `requireOwnerOrResponse()` added and applied to all 18 owner-only API routes plus `/report` and `/scan`; nav links + AdminStrip hidden from non-owners | 1 day |
-| 6 | End-to-end auth verification (both join paths, redirect, sign-out, role checks,
-the two SQLite compatibility items above) | 1 day |
+| 6 | End-to-end auth verification — **done**. Both SQLite compatibility items
+resolved (Phase 3's field-comparison claim query; Phase 4's Serializable-isolation
+race guard, verified directly against `@prisma/adapter-better-sqlite3`'s
+`startTransaction()`). Live-tested on `main` post-merge: public pages (signin/signup/
+invite), protected-page redirect, owner-only 401s, browsing-route 401s, and a real
+bug caught in the process — the local dev SQLite db was missing the two newest
+migrations (agents only ever tested against isolated fresh temp DBs), fixed with
+`prisma migrate deploy`, which also surfaced and let us fix an actual page crash
+(`/invite/<bad-token>` 500'd instead of showing the graceful invalid-invite view) | 1 day |
 | 7 | `WatchProgress` schema + progress-reporting endpoint + player wiring | 1 day |
 | 8 | "Continue watching" UI + resume-from-position playback | 1 day |
 | 9 | Stats v1 (watch time, most-watched, recent history) | 1 day |
