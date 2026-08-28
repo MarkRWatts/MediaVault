@@ -187,6 +187,13 @@ export function buildFfmpegArgs(
   // whatever's been written so far -- what makes streaming while the file is
   // still being generated possible at all (see video-cache.ts's tailing
   // reader).
-  args.push("-movflags", "frag_keyframe+empty_moov+default_base_moof", "-f", "mp4", output);
+  //
+  // delay_moov is required, not optional, whenever an audio track is
+  // stream-copied: the mp4 muxer needs to know each stream's frame size to
+  // write even an empty moov, and a copied (not re-encoded) AC-3 track
+  // doesn't expose that until its first packet arrives -- without this flag,
+  // copying AC-3 audio fails outright ("Cannot write moov atom before AC3
+  // packets"), confirmed against a real file. Harmless to always include.
+  args.push("-movflags", "frag_keyframe+empty_moov+delay_moov+default_base_moof", "-f", "mp4", output);
   return args;
 }

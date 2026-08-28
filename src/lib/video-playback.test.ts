@@ -120,7 +120,7 @@ describe("buildFfmpegArgs", () => {
       "-c:a",
       "copy",
       "-movflags",
-      "frag_keyframe+empty_moov+default_base_moof",
+      "frag_keyframe+empty_moov+delay_moov+default_base_moof",
       "-f",
       "mp4",
       "/out.mp4",
@@ -146,5 +146,22 @@ describe("buildFfmpegArgs", () => {
     })!;
     const args = buildFfmpegArgs("/in.vob", "/out.mp4", plan);
     expect(args).toEqual(expect.arrayContaining(["-c:v", "libx264", "-preset", "veryfast", "-crf", "18"]));
+  });
+
+  // Regression: copying an AC-3 track (the common case -- AC-3 is already
+  // "compatible", so it's copied rather than transcoded) into an empty_moov
+  // fragmented MP4 fails outright without delay_moov -- ffmpeg can't write
+  // even an empty moov before it's seen an AC-3 packet to learn the frame
+  // size from. Confirmed against a real file: "Cannot write moov atom before
+  // AC3 packets" without this flag, clean output with it.
+  it("always includes delay_moov, required for a copied AC-3 track to mux at all", () => {
+    const plan = planVideoPlayback({
+      videoCodec: "h264",
+      container: "mkv",
+      audioTracks: [{ streamIdx: 1, codec: "ac3", profile: null, channels: 6 }],
+    })!;
+    const args = buildFfmpegArgs("/in.mkv", "/out.mp4", plan);
+    const movflags = args[args.indexOf("-movflags") + 1];
+    expect(movflags.split("+")).toContain("delay_moov");
   });
 });
