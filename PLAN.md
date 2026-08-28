@@ -112,3 +112,31 @@ a DVD and a BluRay rip of the same film = 1 film, 2 versions).
   keeps the Infuse-via-Jellyfin direct-play path. Optional later addition:
   a raw HTTP range-streaming endpoint plus "Open in IINA/VLC" links for
   desktop — direct playback without Jellyfin and without transcoding.
+
+## Future: households, per-user watch history & stats (planned — see HOUSEHOLDS_PLAN.md)
+
+Full auth/household rollout plan lives in `HOUSEHOLDS_PLAN.md`. The one
+schema addition worth tracking here alongside the rest of the data model:
+`WatchProgress`, for per-user resume position and stats. `Film`/`Version`
+and TV `Episode`/`EpisodeFile` don't share an id space, so exactly one of
+`versionId`/`episodeFileId` is set per row (app-level invariant, same as
+SQLite's general lack of CHECK-constraint support elsewhere in this schema):
+
+```prisma
+model WatchProgress {
+  id            Int       @id @default(autoincrement())
+  userId        String    // BetterAuth User.id
+  versionId     Int?
+  version       Version?     @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  episodeFileId Int?
+  episodeFile   EpisodeFile? @relation(fields: [episodeFileId], references: [id], onDelete: Cascade)
+  positionSecs  Float
+  completed     Boolean   @default(false)
+  playCount     Int       @default(0)
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([userId, versionId])
+  @@unique([userId, episodeFileId])
+  @@index([userId])
+}
+```
