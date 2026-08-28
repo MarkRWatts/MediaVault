@@ -2,6 +2,7 @@
 // (the Docker image is built with no database present).
 export const dynamic = "force-dynamic";
 
+import { redirect } from "next/navigation";
 import Link from "next/link";
 import PosterImage from "@/components/PosterImage";
 import FormatBadge from "@/components/FormatBadge";
@@ -9,6 +10,7 @@ import CoverImage from "@/components/CoverImage";
 import { getReportData, getTvReportData } from "@/lib/queries";
 import type { IssueFilm, FormatStat } from "@/lib/queries";
 import { getMusicReportData } from "@/lib/queries-music";
+import { requireMemberOrRedirect } from "@/lib/require-member";
 
 function issueTags(f: IssueFilm): string[] {
   const tags: string[] = [];
@@ -94,6 +96,12 @@ export default async function ReportPage({
 }: {
   searchParams: Promise<{ open?: string }>;
 }) {
+  // Collection bookkeeping for the household owner, not something other
+  // members need (HOUSEHOLDS_PLAN.md "Auth & gating") — bounce non-owners
+  // home rather than showing a blank/error page.
+  const { role } = await requireMemberOrRedirect();
+  if (role !== "owner") redirect("/");
+
   const [{ totals, missingByCollection, upgradeCandidates, issues, formatStats }, tv, music, params] = await Promise.all([
     getReportData(),
     getTvReportData(),

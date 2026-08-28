@@ -9,8 +9,12 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { resolveBarcode, shapeScanQueueItem } from "@/lib/scan-resolve";
+import { requireOwnerOrResponse } from "@/lib/require-member";
 
 export async function POST() {
+  const member = await requireOwnerOrResponse();
+  if (member instanceof NextResponse) return member;
+
   const pending = await prisma.scanQueueItem.findFirst({
     where: { status: "pending" },
     orderBy: { createdAt: "asc" },

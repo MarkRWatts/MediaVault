@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { runEnrich } from "@/lib/tmdb";
+import { requireOwnerOrResponse } from "@/lib/require-member";
 
 export async function POST() {
+  const member = await requireOwnerOrResponse();
+  if (member instanceof NextResponse) return member;
+
   try {
     const { runId, started } = await runEnrich();
     if (!started) {

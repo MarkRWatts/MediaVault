@@ -7,8 +7,12 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createPhysicalOnlyAlbum, type PhysicalFields, type PhysicalMedium } from "@/lib/musicbrainz";
+import { requireOwnerOrResponse } from "@/lib/require-member";
 
 export async function POST(req: NextRequest) {
+  const member = await requireOwnerOrResponse();
+  if (member instanceof NextResponse) return member;
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let body: any;
   try {

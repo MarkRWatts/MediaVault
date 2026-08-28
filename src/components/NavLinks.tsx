@@ -8,16 +8,29 @@ const LINKS = [
   { href: "/shows", label: "Shows" },
   { href: "/music", label: "Music" },
   { href: "/collections", label: "Collections" },
+] as const;
+
+// Owner-only per HOUSEHOLDS_PLAN.md's "Auth & gating" rule — scan/enrich
+// pipeline and the collection-bookkeeping report aren't things a non-owner
+// member can do anything with (every action behind them 403s for a
+// member), so there's no point showing the link. This is a UX nicety only:
+// the actual boundary is requireOwnerOrResponse() on the routes/pages
+// themselves.
+const OWNER_LINKS = [
   { href: "/scan", label: "Scan" },
   { href: "/report", label: "Report" },
 ] as const;
 
-export default function NavLinks({ signedIn = false }: { signedIn?: boolean }) {
+export default function NavLinks({ signedIn = false, isOwner = false }: { signedIn?: boolean; isOwner?: boolean }) {
   const pathname = usePathname();
   // /household is only reachable (and useful) once signed in — proxy.ts
   // would bounce a signed-out visit to /signin anyway, so there's no point
   // showing a dead link.
-  const links = signedIn ? [...LINKS, { href: "/household", label: "Household" }] : LINKS;
+  const links = [
+    ...LINKS,
+    ...(isOwner ? OWNER_LINKS : []),
+    ...(signedIn ? [{ href: "/household", label: "Household" }] : []),
+  ];
 
   return (
     // Six-plus links no longer fit a narrow phone's width alongside the

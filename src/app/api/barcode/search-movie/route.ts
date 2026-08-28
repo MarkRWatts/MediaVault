@@ -4,8 +4,12 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { searchMoviesByTitle } from "@/lib/tmdb";
+import { requireOwnerOrResponse } from "@/lib/require-member";
 
 export async function POST(req: NextRequest) {
+  const member = await requireOwnerOrResponse();
+  if (member instanceof NextResponse) return member;
+
   let body: Record<string, unknown>;
   try {
     body = await req.json();

@@ -7,15 +7,22 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { normalizeBarcode } from "@/lib/musicbrainz";
 import { shapeScanQueueItem } from "@/lib/scan-resolve";
+import { requireOwnerOrResponse } from "@/lib/require-member";
 
 const MEDIA_TYPES = new Set(["auto", "film", "album"]);
 
 export async function GET() {
+  const member = await requireOwnerOrResponse();
+  if (member instanceof NextResponse) return member;
+
   const items = await prisma.scanQueueItem.findMany({ orderBy: { createdAt: "asc" } });
   return NextResponse.json({ items: items.map(shapeScanQueueItem) });
 }
 
 export async function POST(req: NextRequest) {
+  const member = await requireOwnerOrResponse();
+  if (member instanceof NextResponse) return member;
+
   let body: Record<string, unknown>;
   try {
     body = await req.json();

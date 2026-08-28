@@ -5,8 +5,12 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { applyManualAlbumMatch } from "@/lib/musicbrainz";
+import { requireOwnerOrResponse } from "@/lib/require-member";
 
 export async function POST(req: NextRequest) {
+  const member = await requireOwnerOrResponse();
+  if (member instanceof NextResponse) return member;
+
   let body: { albumId?: unknown; mb?: unknown };
   try {
     body = await req.json();

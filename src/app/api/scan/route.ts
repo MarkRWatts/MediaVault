@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { runScan } from "@/lib/scanner";
+import { requireOwnerOrResponse } from "@/lib/require-member";
 
 // force=true/1 (query string ?force=1 or JSON body {"force":true}) ignores
 // the size+mtime probe cache and re-probes every file — e.g. after adding a
@@ -24,6 +25,9 @@ async function readForce(req: NextRequest): Promise<boolean> {
 }
 
 export async function POST(req: NextRequest) {
+  const member = await requireOwnerOrResponse();
+  if (member instanceof NextResponse) return member;
+
   try {
     const force = await readForce(req);
     const { runId, started } = await runScan({ force });

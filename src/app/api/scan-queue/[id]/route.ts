@@ -5,8 +5,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { shapeScanQueueItem } from "@/lib/scan-resolve";
+import { requireOwnerOrResponse } from "@/lib/require-member";
 
 export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const member = await requireOwnerOrResponse();
+  if (member instanceof NextResponse) return member;
+
   const { id } = await ctx.params;
   const idNum = Number(id);
   if (!Number.isInteger(idNum)) {
@@ -27,6 +31,9 @@ export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ id: str
 }
 
 export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const member = await requireOwnerOrResponse();
+  if (member instanceof NextResponse) return member;
+
   const { id } = await ctx.params;
   const idNum = Number(id);
   if (!Number.isInteger(idNum)) {

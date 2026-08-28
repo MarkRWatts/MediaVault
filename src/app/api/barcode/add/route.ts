@@ -9,10 +9,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { findOrCreateFilmByTmdbId } from "@/lib/tmdb";
 import { createPhysicalOnlyAlbum, type PhysicalMedium } from "@/lib/musicbrainz";
+import { requireOwnerOrResponse } from "@/lib/require-member";
 
 const FILM_MEDIA = new Set(["DVD", "BLURAY", "UHD"]);
 
 export async function POST(req: NextRequest) {
+  const member = await requireOwnerOrResponse();
+  if (member instanceof NextResponse) return member;
+
   let body: Record<string, unknown>;
   try {
     body = await req.json();

@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { PhysicalFields, PhysicalMedium, physicalCopyData } from "@/lib/musicbrainz";
+import { requireOwnerOrResponse } from "@/lib/require-member";
 
 function parseMedium(value: unknown): PhysicalMedium | null {
   const medium = typeof value === "string" ? value.toUpperCase() : "";
@@ -13,6 +14,9 @@ function parseMedium(value: unknown): PhysicalMedium | null {
 }
 
 export async function POST(req: NextRequest) {
+  const member = await requireOwnerOrResponse();
+  if (member instanceof NextResponse) return member;
+
   let body: Record<string, unknown>;
   try {
     body = await req.json();
@@ -52,6 +56,9 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  const member = await requireOwnerOrResponse();
+  if (member instanceof NextResponse) return member;
+
   const params = new URL(req.url).searchParams;
   const albumId = Number(params.get("albumId"));
   const medium = parseMedium(params.get("medium"));

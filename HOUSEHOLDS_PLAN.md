@@ -186,6 +186,35 @@ provider-specific behaviour:
   hidden mutation to gate) and the video `prepare` POST is a playback-support
   action (kicks off transcode/cache), not a library edit — it stays open.
 
+**Phase 5 audit note:** the list above (from the original plan) undercounted
+the actual route inventory. Re-derived from source, not from this list, the
+following also gate owner-only, alongside the named routes:
+`api/scan-queue` (+ `[id]`, `+process`) — the persistent barcode worklist
+feeding the same add/lookup pipeline as `barcode`, confirmed by its own
+schema comment; `api/physical` — the album-side twin of `film-physical`,
+same PhysicalCopy mutation shape; and `barcode`'s two title-search
+sub-routes (`search-album`, `search-movie`) — read-only against external
+metadata APIs (no DB write), but exist solely to feed the owner-only
+add/correction flow, so gated for consistency rather than left as an
+unauthenticated backdoor into the scan UI's helper endpoints. `api/audio`
+was checked and, like `api/video/*`, is GET-only playback support — stays
+open, ungated. The `/scan` page itself (not named in the plan text, which
+only calls out `/report`) was also gated: every action it drives goes
+through an owner-gated route, so a non-owner landing there would find
+nothing but buttons that 403.
+
+Also surfaced by the audit, out of scope for Phase 5 but worth flagging:
+`proxy.ts`'s matcher excludes `/api` entirely
+(`(?!api|_next/static|...)`), so **no** `/api/*` route — browsing/playback
+included — gets even the optimistic signed-in check proxy.ts gives every
+page. `requireOwnerOrResponse()` (`src/lib/require-member.ts`) covers this
+for the owner-only routes it's applied to (401 with no session, 403
+without ownership), but a browsing route like `api/video/.../stream` or
+`api/films` currently has no session check of its own — reachable by
+anyone with the URL, signed in or not. Left untouched per this phase's
+scope ("keep browsing/playback routes untouched"), but a real gap if
+MediaVault is ever exposed beyond a trusted LAN.
+
 ## Watch history & stats
 
 New subsystem — nothing like it exists today (confirmed: no progress/watched
@@ -215,7 +244,7 @@ field anywhere in the current schema or code).
 web-of-trust `databaseHooks` gate, `AccessCode` model + admin mint script — **done**, merged, real SQLite concurrency tests added | 1.5–2 days |
 | 4 | `proxy.ts` gating + `/signin` (OTP) + `/signup` (code) + `/onboarding` +
 `/invite/[token]` pages + sign-out + minimal invite-a-member action — **done**, verified end-to-end (both join paths, sign-out, invite/cancel/accept) against a real SQLite db; invites deliver via a copy-link button, no `sendInvitationEmail` wired yet | 1.5–2 days |
-| 5 | Role gate on the owner-only management routes (list above) | 1 day |
+| 5 | Role gate on the owner-only management routes (list above) — **done**, `requireOwnerOrResponse()` added and applied to all 18 owner-only API routes plus `/report` and `/scan`; nav links + AdminStrip hidden from non-owners | 1 day |
 | 6 | End-to-end auth verification (both join paths, redirect, sign-out, role checks,
 the two SQLite compatibility items above) | 1 day |
 | 7 | `WatchProgress` schema + progress-reporting endpoint + player wiring | 1 day |

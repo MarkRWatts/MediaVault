@@ -14,8 +14,12 @@
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { requireOwnerOrResponse } from "@/lib/require-member";
 
 export async function POST() {
+  const member = await requireOwnerOrResponse();
+  if (member instanceof NextResponse) return member;
+
   const albums = await prisma.album.findMany({
     where: { owned: true },
     select: {

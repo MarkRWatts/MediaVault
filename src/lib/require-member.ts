@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
+import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 
@@ -37,6 +38,32 @@ export async function requireMemberOrRedirect(): Promise<Member> {
 
   const member = await prisma.member.findFirst({ where: { userId } });
   if (!member) redirect("/onboarding");
+
+  return { userId, householdId: member.householdId, role: member.role };
+}
+
+/** Route-handler variant: gates an owner-only API route. Route handlers
+ *  can't throw-to-error-page or redirect the way a server action/page can —
+ *  the caller needs a Response it can `return` immediately — so this
+ *  returns either the resolved Member or a NextResponse the caller should
+ *  return as-is. Mirrors the { error } JSON shape every other route in this
+ *  app already uses (see e.g. api/video/[versionId]/stream/route.ts):
+ *  401 when there's no session at all, 403 when there's a session but no
+ *  household membership or the membership isn't "owner". */
+export async function requireOwnerOrResponse(): Promise<Member | NextResponse> {
+  const session = await auth.api.getSession({ headers: await headers() });
+  const userId = session?.user?.id;
+  if (!userId) {
+    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  }
+
+  const member = await prisma.member.findFirst({ where: { userId } });
+  if (!member) {
+    return NextResponse.json({ error: "You're not part of a household yet." }, { status: 403 });
+  }
+  if (member.role !== "owner") {
+    return NextResponse.json({ error: "Owner-only action" }, { status: 403 });
+  }
 
   return { userId, householdId: member.householdId, role: member.role };
 }

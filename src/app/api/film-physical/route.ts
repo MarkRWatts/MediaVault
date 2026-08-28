@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { requireOwnerOrResponse } from "@/lib/require-member";
 
 const MEDIA = new Set(["DVD", "BLURAY", "UHD"]);
 
@@ -14,6 +15,9 @@ function parseMedium(value: unknown): string | null {
 }
 
 export async function POST(req: NextRequest) {
+  const member = await requireOwnerOrResponse();
+  if (member instanceof NextResponse) return member;
+
   let body: Record<string, unknown>;
   try {
     body = await req.json();
@@ -45,6 +49,9 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  const member = await requireOwnerOrResponse();
+  if (member instanceof NextResponse) return member;
+
   const params = new URL(req.url).searchParams;
   const filmId = Number(params.get("filmId"));
   const medium = parseMedium(params.get("medium"));
