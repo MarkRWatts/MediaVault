@@ -214,7 +214,7 @@ field anywhere in the current schema or code).
 | 3 | `organization` plugin (→ Household/Member/Invitation), `emailOTP` plugin, the
 web-of-trust `databaseHooks` gate, `AccessCode` model + admin mint script — **done**, merged, real SQLite concurrency tests added | 1.5–2 days |
 | 4 | `proxy.ts` gating + `/signin` (OTP) + `/signup` (code) + `/onboarding` +
-`/invite/[token]` pages + sign-out + minimal invite-a-member action — **done**, verified end-to-end (both join paths, sign-out, invite/cancel/accept) against a real SQLite db | 1.5–2 days |
+`/invite/[token]` pages + sign-out + minimal invite-a-member action — **done**, verified end-to-end (both join paths, sign-out, invite/cancel/accept) against a real SQLite db; invites deliver via a copy-link button, no `sendInvitationEmail` wired yet | 1.5–2 days |
 | 5 | Role gate on the owner-only management routes (list above) | 1 day |
 | 6 | End-to-end auth verification (both join paths, redirect, sign-out, role checks,
 the two SQLite compatibility items above) | 1 day |
