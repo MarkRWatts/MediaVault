@@ -64,6 +64,8 @@ export interface LibraryFilm {
   year: number | null;
   posterPath: string | null;
   collectionId: number | null;
+  collectionName: string | null;
+  releaseDate: string | null;
   createdAt: string;
   formats: Format[];
   discCount: number;
@@ -89,6 +91,8 @@ export async function getLibraryFilms(): Promise<LibraryData> {
       year: true,
       posterPath: true,
       collectionId: true,
+      collection: { select: { name: true } },
+      releaseDate: true,
       createdAt: true,
       versions: {
         select: {
@@ -109,6 +113,8 @@ export async function getLibraryFilms(): Promise<LibraryData> {
     year: f.year,
     posterPath: f.posterPath,
     collectionId: f.collectionId,
+    collectionName: f.collection?.name ?? null,
+    releaseDate: f.releaseDate ? f.releaseDate.toISOString() : null,
     createdAt: f.createdAt.toISOString(),
     formats: Array.from(new Set(f.versions.map((v) => v.format as Format))),
     discCount: f.versions.length,

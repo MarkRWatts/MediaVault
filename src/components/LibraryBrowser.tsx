@@ -2,12 +2,75 @@
 
 import { useMemo, useState } from "react";
 import FilmCard from "@/components/FilmCard";
+import StackedFilmCard from "@/components/StackedFilmCard";
 import { videoCodecLabel } from "@/lib/constants";
 import type { LibraryFilm } from "@/lib/queries";
 
 type FilterKey = "all" | "4k" | "bluray" | "dvd" | "collection" | "noposter";
 type SortKey = "title" | "year" | "added";
 const ALL_CODECS = "all";
+
+type DisplayItem =
+  | { kind: "film"; film: LibraryFilm; sortTitle: string; year: number; addedAt: number }
+  | {
+      kind: "collection";
+      collectionId: number;
+      collectionName: string;
+      films: LibraryFilm[];
+      sortTitle: string;
+      year: number;
+      addedAt: number;
+    };
+
+// Chronological order within a collection: release date, falling back to year.
+function byRelease(a: LibraryFilm, b: LibraryFilm): number {
+  if (a.releaseDate && b.releaseDate) return a.releaseDate.localeCompare(b.releaseDate);
+  return (a.year ?? 0) - (b.year ?? 0);
+}
+
+// Groups films that share a collection into contiguous, chronologically
+// ordered blocks, so a franchise reads as a run rather than being scattered
+// by title/year/added-date sort. Each group carries representative sort keys
+// (its most notable member) so the group slots into the list naturally.
+function buildDisplayItems(films: LibraryFilm[]): DisplayItem[] {
+  const byCollection = new Map<number, LibraryFilm[]>();
+  for (const f of films) {
+    if (f.collectionId === null) continue;
+    const list = byCollection.get(f.collectionId) ?? [];
+    list.push(f);
+    byCollection.set(f.collectionId, list);
+  }
+
+  const items: DisplayItem[] = [];
+  const seenCollections = new Set<number>();
+
+  for (const f of films) {
+    if (f.collectionId !== null && (byCollection.get(f.collectionId)?.length ?? 0) > 1) {
+      if (seenCollections.has(f.collectionId)) continue;
+      seenCollections.add(f.collectionId);
+      const members = [...byCollection.get(f.collectionId)!].sort(byRelease);
+      items.push({
+        kind: "collection",
+        collectionId: f.collectionId,
+        collectionName: f.collectionName ?? "Collection",
+        films: members,
+        sortTitle: members.reduce((min, m) => (m.sortTitle < min ? m.sortTitle : min), members[0].sortTitle),
+        year: members.reduce((max, m) => Math.max(max, m.year ?? 0), 0),
+        addedAt: members.reduce((max, m) => Math.max(max, new Date(m.createdAt).getTime()), 0),
+      });
+    } else {
+      items.push({
+        kind: "film",
+        film: f,
+        sortTitle: f.sortTitle,
+        year: f.year ?? 0,
+        addedAt: new Date(f.createdAt).getTime(),
+      });
+    }
+  }
+
+  return items;
+}
 
 const FILTERS: { key: FilterKey; label: string }[] = [
   { key: "all", label: "All" },
@@ -24,6 +87,7 @@ export default function LibraryBrowser({ films }: { films: LibraryFilm[] }) {
   const [videoCodec, setVideoCodec] = useState(ALL_CODECS);
   const [audioFormat, setAudioFormat] = useState(ALL_CODECS);
   const [sort, setSort] = useState<SortKey>("title");
+  const [stack, setStack] = useState(true);
 
   const videoCodecOptions = useMemo(() => {
     const set = new Set<string>();
@@ -54,13 +118,17 @@ export default function LibraryBrowser({ films }: { films: LibraryFilm[] }) {
     const q = query.trim().toLowerCase();
     if (q) list = list.filter((f) => f.title.toLowerCase().includes(q));
 
-    const sorted = [...list];
-    if (sort === "title") sorted.sort((a, b) => a.sortTitle.localeCompare(b.sortTitle));
-    else if (sort === "year") sorted.sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
-    else sorted.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return list;
+  }, [films, filter, videoCodec, audioFormat, query]);
 
+  const displayItems = useMemo(() => {
+    const items = buildDisplayItems(filtered);
+    const sorted = [...items];
+    if (sort === "title") sorted.sort((a, b) => a.sortTitle.localeCompare(b.sortTitle));
+    else if (sort === "year") sorted.sort((a, b) => b.year - a.year);
+    else sorted.sort((a, b) => b.addedAt - a.addedAt);
     return sorted;
-  }, [films, filter, videoCodec, audioFormat, query, sort]);
+  }, [filtered, sort]);
 
   if (films.length === 0) {
     return (
@@ -165,6 +233,16 @@ export default function LibraryBrowser({ films }: { films: LibraryFilm[] }) {
               <option value="added">Recently added</option>
             </select>
           </label>
+
+          <label className="flex items-center gap-1.5 text-xs text-text-muted">
+            <input
+              type="checkbox"
+              checked={stack}
+              onChange={(e) => setStack(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-border accent-accent"
+            />
+            Stack collections
+          </label>
         </div>
       </div>
 
@@ -187,9 +265,20 @@ export default function LibraryBrowser({ films }: { films: LibraryFilm[] }) {
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
-          {filtered.map((film) => (
-            <FilmCard key={film.id} film={film} />
-          ))}
+          {displayItems.map((item) =>
+            item.kind === "film" ? (
+              <FilmCard key={item.film.id} film={item.film} />
+            ) : stack ? (
+              <StackedFilmCard
+                key={`c${item.collectionId}`}
+                collectionId={item.collectionId}
+                collectionName={item.collectionName}
+                films={item.films}
+              />
+            ) : (
+              item.films.map((film) => <FilmCard key={film.id} film={film} />)
+            ),
+          )}
         </div>
       )}
     </div>
