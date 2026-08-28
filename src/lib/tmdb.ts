@@ -212,6 +212,31 @@ export interface FilmRef {
 export async function findOrCreateFilmByTmdbId(tmdbId: number): Promise<FilmRef> {
   const existing = await prisma.film.findUnique({ where: { tmdbId } });
   if (existing) {
+    // Collection-placeholder rows (ensureCollection) are created with just
+    // title/year/tmdbId — no imdbId. Left unfilled, a later rip whose
+    // filename carries [imdbid-...] can never match this row by imdbId (see
+    // resolveFilm in scanner.ts) and ends up creating a disconnected
+    // duplicate Film instead of merging into this one.
+    if (!existing.imdbId) {
+      try {
+        const details = await tmdbFetch(`/movie/${tmdbId}`);
+        if (details.imdb_id) {
+          const updated = await prisma.film.update({
+            where: { id: existing.id },
+            data: { imdbId: details.imdb_id },
+          });
+          return {
+            id: updated.id,
+            title: updated.title,
+            year: updated.year,
+            posterPath: updated.posterPath,
+            owned: updated.owned,
+          };
+        }
+      } catch {
+        // Backfill is a bonus — fall through and return the row as-is.
+      }
+    }
     return {
       id: existing.id,
       title: existing.title,

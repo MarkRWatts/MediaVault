@@ -75,8 +75,17 @@ async function resolveFilm(representative: ParsedFile, log: string[]): Promise<n
   } else if (representative.tmdbId) {
     film = await prisma.film.findUnique({ where: { tmdbId: representative.tmdbId } });
   } else {
+    // Match owned films AND physical-only ones (owned:false but a
+    // FilmPhysicalCopy exists) — a rip whose filename carries no imdb/tmdb
+    // tag should still merge into a disc you already logged instead of
+    // creating a duplicate. Mirrors the same OR in getLibraryFilms.
     const normTitle = normalizeTitle(representative.title);
-    const candidates = await prisma.film.findMany({ where: { owned: true, year: representative.year } });
+    const candidates = await prisma.film.findMany({
+      where: {
+        year: representative.year,
+        OR: [{ owned: true }, { physicalCopies: { some: {} } }],
+      },
+    });
     film = candidates.find((f) => normalizeTitle(f.title) === normTitle) ?? null;
   }
 
