@@ -22,6 +22,7 @@ datasource db {
 
 // A TMDB collection (James Bond, Alien, …). Films order by releaseDate for the
 // timeline view; owned=false member Films are the "missing" entries.
+
 model Collection {
   id           Int     @id // TMDB collection id
   name         String
@@ -34,13 +35,14 @@ model Collection {
 // One movie identity. Rows also exist for films we DON'T own (owned=false),
 // created from TMDB collection membership — that's what the missing-films
 // report is built from.
+
 model Film {
-  id              Int         @id @default(autoincrement())
+  id              Int                @id @default(autoincrement())
   title           String
   sortTitle       String // normalised for sorting/grouping ("Matrix, The" style not needed — just lowercased, articles stripped)
   year            Int?
-  imdbId          String?     @unique
-  tmdbId          Int?        @unique
+  imdbId          String?            @unique
+  tmdbId          Int?               @unique
   overview        String?
   posterPath      String? // TMDB path; cached locally under /api/poster
   backdropPath    String?
@@ -48,14 +50,14 @@ model Film {
   runtimeMins     Int?
   rating          Float? // TMDB vote_average
   genres          String? // comma-separated
-  owned           Boolean     @default(true)
-  matchConfidence String      @default("UNMATCHED")
+  owned           Boolean            @default(true)
+  matchConfidence String             @default("UNMATCHED")
   collectionId    Int?
-  collection      Collection? @relation(fields: [collectionId], references: [id])
+  collection      Collection?        @relation(fields: [collectionId], references: [id])
   versions        Version[]
   physicalCopies  FilmPhysicalCopy[]
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
 
   @@index([collectionId])
   @@index([sortTitle])
@@ -65,14 +67,15 @@ model Film {
 // (Film.owned/versions). Presence of a row means "own on <medium>", full
 // stop; the film may or may not also have a ripped Version. Mirrors
 // PhysicalCopy below, one row per (film, medium).
+
 model FilmPhysicalCopy {
-  id        Int      @id @default(autoincrement())
-  filmId    Int
-  film      Film     @relation(fields: [filmId], references: [id], onDelete: Cascade)
-  medium    String // DVD | BLURAY | UHD (see Version.format vocabulary)
-  barcode   String?
-  notes     String?
-  addedAt   DateTime @default(now())
+  id      Int      @id @default(autoincrement())
+  filmId  Int
+  film    Film     @relation(fields: [filmId], references: [id], onDelete: Cascade)
+  medium  String // DVD | BLURAY | UHD (see Version.format vocabulary)
+  barcode String?
+  notes   String?
+  addedAt DateTime @default(now())
 
   @@unique([filmId, medium])
   @@index([filmId])
@@ -81,6 +84,7 @@ model FilmPhysicalCopy {
 
 // One file on disk. A film with a DVD rip and a BluRay rip (or theatrical +
 // director's cut) has multiple Versions.
+
 model Version {
   id           Int          @id @default(autoincrement())
   filmId       Int
@@ -180,6 +184,7 @@ model Episode {
 // One file on disk; a multi-episode file (S01E01-E02) links to each Episode
 // it covers via its own row per episode sharing the same filePath — so
 // filePath is NOT unique here, (filePath, episodeId) is.
+
 model EpisodeFile {
   id           Int       @id @default(autoincrement())
   episodeId    Int
@@ -205,6 +210,7 @@ model EpisodeFile {
 
 // Bookkeeping for scans and enrichment runs; log holds a JSON array of
 // human-readable notes (unparsed files, low-confidence matches, errors).
+
 model ScanRun {
   id         Int       @id @default(autoincrement())
   kind       String // SCAN | ENRICH | JELLYFIN | ENRICH_MUSIC
@@ -225,6 +231,7 @@ model ScanRun {
 // collection; it stays here while pending, unresolved ("unknown"), or
 // wrong, so the user can retry or correct it later. See
 // src/app/api/scan-queue for the CRUD + processing.
+
 model ScanQueueItem {
   id           Int      @id @default(autoincrement())
   barcode      String   @unique
@@ -260,25 +267,25 @@ model Artist {
 }
 
 model Album {
-  id          Int       @id @default(autoincrement())
-  artistId    Int
-  artist      Artist    @relation(fields: [artistId], references: [id], onDelete: Cascade)
-  title       String
-  sortTitle   String
-  year        Int?
-  releaseDate DateTime?
-  mbid        String?   @unique // MusicBrainz release-group id
-  kind        String    @default("STUDIO") // STUDIO | COMPILATION | EP | LIVE | SINGLE | REMIX | SOUNDTRACK | OTHER
-  coverPath   String?   // cached cover art file name under the cover cache dir
-  coverSource String?   // embedded | caa | itunes | manual — provenance of coverPath; "manual" is never overwritten
-  owned       Boolean   @default(true)
-  folder      String?   // album folder name under the artist folder (null when owned=false)
-  digitalSource String? // provenance of the digital files: cd | itunes | download | vinyl-code (bundled with the LP); null = unconfirmed
-  trackTotal  Int?      // canonical track count from MusicBrainz, if known
-  tracks      Track[]
+  id             Int            @id @default(autoincrement())
+  artistId       Int
+  artist         Artist         @relation(fields: [artistId], references: [id], onDelete: Cascade)
+  title          String
+  sortTitle      String
+  year           Int?
+  releaseDate    DateTime?
+  mbid           String?        @unique // MusicBrainz release-group id
+  kind           String         @default("STUDIO") // STUDIO | COMPILATION | EP | LIVE | SINGLE | REMIX | SOUNDTRACK | OTHER
+  coverPath      String? // cached cover art file name under the cover cache dir
+  coverSource    String? // embedded | caa | itunes | manual — provenance of coverPath; "manual" is never overwritten
+  owned          Boolean        @default(true)
+  folder         String? // album folder name under the artist folder (null when owned=false)
+  digitalSource  String? // provenance of the digital files: cd | itunes | download | vinyl-code (bundled with the LP); null = unconfirmed
+  trackTotal     Int? // canonical track count from MusicBrainz, if known
+  tracks         Track[]
   physicalCopies PhysicalCopy[]
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
 
   @@unique([artistId, folder])
   @@index([artistId])
@@ -289,6 +296,7 @@ model Album {
 // album may or may not also have digital Tracks. One row per (album, medium):
 // owning two different pressings of the same release is an edge case handled
 // with a note, not a second row.
+
 model PhysicalCopy {
   id        Int      @id @default(autoincrement())
   albumId   Int
@@ -318,25 +326,28 @@ model Track {
   title        String
   filePath     String    @unique // relative to MUSIC_PATH
   fileName     String
-  codec        String?   // alac | aac | mp3 | flac | drm | unknown
+  codec        String? // alac | aac | mp3 | flac | drm | unknown
   lossless     Boolean   @default(false)
   sampleRate   Int?
   bitDepth     Int?
   durationSecs Float?
   sizeBytes    BigInt?
-  tagYear      Int?      // year from the file's own date tag — Album.year fallback when MusicBrainz has no match
-  mtimeMs      Float?    // probe cache key, same convention as Version
+  tagYear      Int? // year from the file's own date tag — Album.year fallback when MusicBrainz has no match
+  mtimeMs      Float? // probe cache key, same convention as Version
   probedAt     DateTime?
 
   @@index([albumId])
 }
 
 // --- Auth (BetterAuth) ---
-// Generated by `npx @better-auth/cli generate` against src/lib/auth.ts (core
-// config only — no plugins yet, see HOUSEHOLDS_PLAN.md Phase 1). Not yet
-// wired into any route or UI; that's Phase 2+. @@map keeps BetterAuth's own
-// lowercase table-name convention rather than this schema's PascalCase model
-// names leaking into the physical tables.
+// Generated by `npx @better-auth/cli generate` against src/lib/auth.ts.
+// User/Session/Account/Verification are the core models (Phase 1); the
+// organization plugin (Phase 3) added Household/Member/Invitation and
+// Session.activeHouseholdId, remapped from the plugin's generic
+// organization/member/invitation naming to match this app's own domain
+// language (see HOUSEHOLDS_PLAN.md). @@map keeps BetterAuth's own table-name
+// convention rather than this schema's model names leaking into the
+// physical tables.
 
 model User {
   id            String    @id
@@ -348,6 +359,9 @@ model User {
   updatedAt     DateTime  @updatedAt
   sessions      Session[]
   accounts      Account[]
+
+  members     Member[]
+  invitations Invitation[]
 
   @@unique([email])
   @@map("user")
@@ -363,6 +377,8 @@ model Session {
   userAgent String?
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  activeHouseholdId String?
 
   @@unique([token])
   @@index([userId])
@@ -399,4 +415,66 @@ model Verification {
 
   @@index([identifier])
   @@map("verification")
+}
+
+// Access codes — the growth/trust gate for brand-new households (see
+// HOUSEHOLDS_PLAN.md "Access codes & the web of trust"). Ported from
+// jinglejotter.com's AccessCode model, simplified: this app has no
+// monetization, so the `kind`/`accessExpiresAt` trial-vs-lifetime pair is
+// dropped entirely. Minted by scripts/gen-access-code.ts, redeemed inside
+// Phase 4's createHousehold action via src/lib/access.ts's claimAccessCode.
+
+model AccessCode {
+  id              String    @id @default(cuid())
+  code            String    @unique // canonical form: MV + 8 chars, no 0/O/1/I/L
+  email           String? // null = claimable by anyone signed in; set = bound to one address
+  maxRedemptions  Int       @default(1)
+  redeemedCount   Int       @default(0)
+  redeemableUntil DateTime?
+  createdAt       DateTime  @default(now())
+}
+
+model Household {
+  id          String       @id
+  name        String
+  slug        String
+  logo        String?
+  createdAt   DateTime
+  metadata    String?
+  members     Member[]
+  invitations Invitation[]
+
+  @@unique([slug])
+  @@map("Household")
+}
+
+model Member {
+  id          String    @id
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role        String    @default("member")
+  createdAt   DateTime
+
+  @@index([householdId])
+  @@index([userId])
+  @@map("Member")
+}
+
+model Invitation {
+  id          String    @id
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  email       String
+  role        String?
+  status      String    @default("pending")
+  expiresAt   DateTime
+  createdAt   DateTime  @default(now())
+  inviterId   String
+  user        User      @relation(fields: [inviterId], references: [id], onDelete: Cascade)
+
+  @@index([householdId])
+  @@index([email])
+  @@map("Invitation")
 }
