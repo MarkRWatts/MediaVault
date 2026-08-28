@@ -17,7 +17,11 @@ jobs:
           node-version: 22
           cache: npm
 
-      - run: npm ci
+      # --legacy-peer-deps: better-auth declares better-sqlite3@^12 as a peer
+      # for its own (unused here) native SQLite dialect — this project uses
+      # the Prisma adapter instead, on better-sqlite3@^13, so the conflict
+      # is harmless. Same fix as the Dockerfile's builder stage.
+      - run: npm ci --legacy-peer-deps
       - run: npx prisma generate
       # tsc relies on the LayoutProps/PageProps helper types that Next.js
       # writes to .next/types — `next dev`/`next build` generate them as a
