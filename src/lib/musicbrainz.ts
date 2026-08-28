@@ -259,6 +259,10 @@ export interface BarcodeReleaseMatch {
   /** MusicBrainz release media format, e.g. "CD", "12\" Vinyl" — used to
    *  pre-fill the medium picker on the scan page. */
   format: string | null;
+  /** Cover Art Archive URL for the release-group — constructed, not
+   *  verified (CAA 404s when no art exists; the client falls back to a
+   *  placeholder on image load error rather than us HEAD-checking here). */
+  coverArtUrl: string;
 }
 
 /**
@@ -288,6 +292,7 @@ export async function searchReleaseByBarcode(barcode: string): Promise<BarcodeRe
     artistName,
     year: Number.isFinite(year) ? year : null,
     format,
+    coverArtUrl: `https://coverartarchive.org/release-group/${hit["release-group"].id}/front-250`,
   };
 }
 

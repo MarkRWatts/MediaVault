@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { formatLabel } from "@/lib/constants";
+import NoPoster from "@/components/NoPoster";
 
 // --- API response shapes (mirror src/app/api/barcode/*) ---
 
@@ -28,6 +29,7 @@ interface AlbumCandidate {
   artistName: string;
   year: number | null;
   format: string | null;
+  coverArtUrl: string;
 }
 interface NotOwnedFilm {
   status: "not_owned";
@@ -49,6 +51,44 @@ const ALBUM_MEDIA = ["CD", "VINYL"] as const;
 
 function guessAlbumMedium(format: string | null): "CD" | "VINYL" {
   return format?.toLowerCase().includes("vinyl") ? "VINYL" : "CD";
+}
+
+// Small cover/poster thumbnail so the user can visually confirm a lookup
+// result is the right release before adding it — falls back to the same
+// typeset placeholder card the rest of the app uses (NoPoster) if there's
+// no image, or the image 404s (e.g. Cover Art Archive has no art for a
+// given release-group).
+function Thumb({
+  src,
+  title,
+  year,
+  aspect = "poster",
+}: {
+  src: string | null;
+  title: string;
+  year?: number | null;
+  aspect?: "poster" | "square";
+}) {
+  const [errored, setErrored] = useState(false);
+  return (
+    <div
+      className={`relative w-14 shrink-0 overflow-hidden rounded border border-border bg-bg-elevated ${
+        aspect === "poster" ? "aspect-2/3" : "aspect-square"
+      }`}
+    >
+      {!src || errored ? (
+        <NoPoster title={title} year={year} />
+      ) : (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={src}
+          alt={`${title} cover`}
+          className="h-full w-full object-cover"
+          onError={() => setErrored(true)}
+        />
+      )}
+    </div>
+  );
 }
 
 export default function ScanPage() {
@@ -274,11 +314,20 @@ export default function ScanPage() {
             </button>
           </div>
 
-          {lookingUp && <p className="text-sm text-text-muted">Looking up…</p>}
+          {lookingUp && (
+            <p className="text-sm text-text-muted">
+              Looking up… movie matches can take up to a minute on the free lookup tier.
+            </p>
+          )}
           {lookupError && <p className="text-sm text-missing">{lookupError}</p>}
 
           {result?.status === "owned" && result.type === "film" && (
             <div className="flex items-center gap-3">
+              <Thumb
+                src={result.film.posterPath ? `/api/poster/w154${result.film.posterPath}` : null}
+                title={result.film.title}
+                year={result.film.year}
+              />
               <div className="flex-1">
                 <p className="text-sm font-semibold text-text">Already in your collection</p>
                 <Link href={`/film/${result.film.id}`} className="text-sm text-accent hover:underline">
@@ -290,6 +339,11 @@ export default function ScanPage() {
 
           {result?.status === "owned" && result.type === "album" && (
             <div className="flex items-center gap-3">
+              <Thumb
+                src={result.album.coverPath ? `/api/cover/${result.album.id}` : null}
+                title={result.album.title}
+                aspect="square"
+              />
               <div className="flex-1">
                 <p className="text-sm font-semibold text-text">Already in your collection</p>
                 <Link href={`/music/album/${result.album.id}`} className="text-sm text-accent hover:underline">
@@ -300,61 +354,74 @@ export default function ScanPage() {
           )}
 
           {result?.status === "not_owned" && result.type === "film" && !added && (
-            <div className="flex flex-col gap-2">
-              <p className="text-sm text-text">
-                Not owned yet: <span className="font-semibold">{result.candidate.title}</span>{" "}
-                {result.candidate.year ? `(${result.candidate.year})` : ""}
-              </p>
-              <div className="flex items-center gap-2">
-                <select
-                  value={filmMedium}
-                  onChange={(e) => setFilmMedium(e.target.value as (typeof FILM_MEDIA)[number])}
-                  className="rounded-md border border-border bg-bg-elevated px-2 py-1.5 text-sm text-text"
-                >
-                  {FILM_MEDIA.map((m) => (
-                    <option key={m} value={m}>
-                      {formatLabel(m)}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  disabled={adding}
-                  onClick={() => addFilm(result.candidate)}
-                  className="inline-flex min-h-10 flex-1 items-center justify-center rounded-md border border-accent px-3 py-1 text-sm font-medium text-accent transition-colors hover:bg-accent/10 disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0"
-                >
-                  {adding ? "Adding…" : "Add to collection"}
-                </button>
+            <div className="flex items-start gap-3">
+              <Thumb
+                src={result.candidate.posterPath ? `/api/poster/w154${result.candidate.posterPath}` : null}
+                title={result.candidate.title}
+                year={result.candidate.year}
+              />
+              <div className="flex flex-1 flex-col gap-2">
+                <p className="text-sm text-text">
+                  Not owned yet: <span className="font-semibold">{result.candidate.title}</span>{" "}
+                  {result.candidate.year ? `(${result.candidate.year})` : ""}
+                </p>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={filmMedium}
+                    onChange={(e) => setFilmMedium(e.target.value as (typeof FILM_MEDIA)[number])}
+                    className="rounded-md border border-border bg-bg-elevated px-2 py-1.5 text-sm text-text"
+                  >
+                    {FILM_MEDIA.map((m) => (
+                      <option key={m} value={m}>
+                        {formatLabel(m)}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    disabled={adding}
+                    onClick={() => addFilm(result.candidate)}
+                    className="inline-flex min-h-10 flex-1 items-center justify-center rounded-md border border-accent px-3 py-1 text-sm font-medium text-accent transition-colors hover:bg-accent/10 disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0"
+                  >
+                    {adding ? "Adding…" : "Add to collection"}
+                  </button>
+                </div>
               </div>
             </div>
           )}
 
           {result?.status === "not_owned" && result.type === "album" && !added && (
-            <div className="flex flex-col gap-2">
-              <p className="text-sm text-text">
-                Not owned yet: <span className="font-semibold">{result.candidate.artistName} — {result.candidate.title}</span>{" "}
-                {result.candidate.year ? `(${result.candidate.year})` : ""}
-              </p>
-              <div className="flex items-center gap-2">
-                <select
-                  value={albumMedium}
-                  onChange={(e) => setAlbumMedium(e.target.value as (typeof ALBUM_MEDIA)[number])}
-                  className="rounded-md border border-border bg-bg-elevated px-2 py-1.5 text-sm text-text"
-                >
-                  {ALBUM_MEDIA.map((m) => (
-                    <option key={m} value={m}>
-                      {m === "VINYL" ? "Vinyl" : "CD"}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  disabled={adding}
-                  onClick={() => addAlbum(result.candidate)}
-                  className="inline-flex min-h-10 flex-1 items-center justify-center rounded-md border border-accent px-3 py-1 text-sm font-medium text-accent transition-colors hover:bg-accent/10 disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0"
-                >
-                  {adding ? "Adding…" : "Add to collection"}
-                </button>
+            <div className="flex items-start gap-3">
+              <Thumb src={result.candidate.coverArtUrl} title={result.candidate.title} aspect="square" />
+              <div className="flex flex-1 flex-col gap-2">
+                <p className="text-sm text-text">
+                  Not owned yet:{" "}
+                  <span className="font-semibold">
+                    {result.candidate.artistName} — {result.candidate.title}
+                  </span>{" "}
+                  {result.candidate.year ? `(${result.candidate.year})` : ""}
+                </p>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={albumMedium}
+                    onChange={(e) => setAlbumMedium(e.target.value as (typeof ALBUM_MEDIA)[number])}
+                    className="rounded-md border border-border bg-bg-elevated px-2 py-1.5 text-sm text-text"
+                  >
+                    {ALBUM_MEDIA.map((m) => (
+                      <option key={m} value={m}>
+                        {m === "VINYL" ? "Vinyl" : "CD"}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    disabled={adding}
+                    onClick={() => addAlbum(result.candidate)}
+                    className="inline-flex min-h-10 flex-1 items-center justify-center rounded-md border border-accent px-3 py-1 text-sm font-medium text-accent transition-colors hover:bg-accent/10 disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0"
+                  >
+                    {adding ? "Adding…" : "Add to collection"}
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -399,9 +466,12 @@ export default function ScanPage() {
                       key={c.tmdbId}
                       className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2"
                     >
-                      <span className="text-sm text-text">
-                        {c.title} {c.year ? `(${c.year})` : ""}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <Thumb src={c.posterPath ? `/api/poster/w154${c.posterPath}` : null} title={c.title} year={c.year} />
+                        <span className="text-sm text-text">
+                          {c.title} {c.year ? `(${c.year})` : ""}
+                        </span>
+                      </div>
                       <div className="flex items-center gap-2">
                         <select
                           value={filmMedium}

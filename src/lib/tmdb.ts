@@ -34,7 +34,11 @@ async function tmdbFetch(pathname: string, params: Record<string, string> = {}):
   if (authMode(key) === "bearer") headers.Authorization = `Bearer ${key}`;
   else url.searchParams.set("api_key", key);
 
-  const res = await fetch(url.toString(), { headers });
+  // Node fetch has NO default timeout — an already-documented hazard (see
+  // mbFetch in musicbrainz.ts, which hit this for real) that also applies
+  // here, and matters more now that the barcode scan page awaits this
+  // inline on a live request instead of a background enrichment run.
+  const res = await fetch(url.toString(), { headers, signal: AbortSignal.timeout(30_000) });
   await sleep(CALL_DELAY_MS);
   if (!res.ok) throw new Error(`TMDB ${pathname} -> HTTP ${res.status}`);
   return res.json();

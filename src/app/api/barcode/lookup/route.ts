@@ -1,16 +1,91 @@
 // Resolve a scanned/typed barcode to "already owned" or a not-owned
-// candidate to add. Order: local DB (instant re-scan), MusicBrainz barcode
-// search (free, authoritative, covers CD/vinyl), then a best-effort
+// candidate to add. Local DB first (instant re-scan), then the MusicBrainz
+// barcode search (free, authoritative, covers CD/vinyl) and the best-effort
 // UPCitemdb -> TMDB fuzzy match (covers DVD/Blu-ray/4K, no authoritative
-// free source exists for those). See PhysicalCopy / FilmPhysicalCopy in
-// prisma/schema.prisma for how "owned" is tracked independently of digital
-// ownership.
+// free source exists for those) run CONCURRENTLY rather than one-after-the-
+// other: a barcode is either a music release or a movie, essentially never
+// both, but MusicBrainz's own worst case (30s timeout + one retry, see
+// mbFetch in musicbrainz.ts) previously blocked every movie scan behind a
+// pointless up-to-a-minute wait before the movie lookup even started. See
+// PhysicalCopy / FilmPhysicalCopy in prisma/schema.prisma for how "owned" is
+// tracked independently of digital ownership.
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { normalizeBarcode, searchReleaseByBarcode } from "@/lib/musicbrainz";
 import { searchMovieByTitleYear } from "@/lib/tmdb";
 import { lookupMovieByBarcode } from "@/lib/barcode-lookup";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function resolveMusic(barcode: string): Promise<any | null> {
+  try {
+    const mbHit = await searchReleaseByBarcode(barcode);
+    if (!mbHit) return null;
+
+    const album = await prisma.album.findUnique({
+      where: { mbid: mbHit.releaseGroupMbid },
+      include: { physicalCopies: { select: { id: true } } },
+    });
+    if (album && (album.owned || album.physicalCopies.length > 0)) {
+      return {
+        status: "owned",
+        type: "album",
+        album: {
+          id: album.id,
+          title: album.title,
+          artistName: mbHit.artistName,
+          year: album.year,
+          coverPath: album.coverPath,
+        },
+      };
+    }
+    return {
+      status: "not_owned",
+      type: "album",
+      candidate: {
+        mbid: mbHit.releaseGroupMbid,
+        title: mbHit.title,
+        artistName: mbHit.artistName,
+        year: mbHit.year,
+        format: mbHit.format,
+        coverArtUrl: mbHit.coverArtUrl,
+      },
+    };
+  } catch {
+    // MusicBrainz lookup failed (rate limit, network, timeout) — never fail
+    // the whole request over it, the movie path may still resolve.
+    return null;
+  }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function resolveMovie(barcode: string): Promise<any | null> {
+  if (!process.env.TMDB_API_KEY) return null;
+
+  const upcHit = await lookupMovieByBarcode(barcode);
+  if (!upcHit) return null;
+
+  try {
+    const movieHit = await searchMovieByTitleYear(upcHit.title, upcHit.year);
+    if (!movieHit) return null;
+
+    const film = await prisma.film.findUnique({
+      where: { tmdbId: movieHit.tmdbId },
+      include: { physicalCopies: { select: { id: true } } },
+    });
+    if (film && (film.owned || film.physicalCopies.length > 0)) {
+      return {
+        status: "owned",
+        type: "film",
+        film: { id: film.id, title: film.title, year: film.year, posterPath: film.posterPath },
+      };
+    }
+    return { status: "not_owned", type: "film", candidate: movieHit };
+  } catch {
+    // TMDB lookup failed — fall through to unknown.
+    return null;
+  }
+}
 
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>;
@@ -52,73 +127,11 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // 2. MusicBrainz barcode search — free, no key, exact-match only.
-  try {
-    const mbHit = await searchReleaseByBarcode(barcode);
-    if (mbHit) {
-      const album = await prisma.album.findUnique({
-        where: { mbid: mbHit.releaseGroupMbid },
-        include: { physicalCopies: { select: { id: true } } },
-      });
-      if (album && (album.owned || album.physicalCopies.length > 0)) {
-        return NextResponse.json({
-          status: "owned",
-          type: "album",
-          album: {
-            id: album.id,
-            title: album.title,
-            artistName: mbHit.artistName,
-            year: album.year,
-            coverPath: album.coverPath,
-          },
-        });
-      }
-      return NextResponse.json({
-        status: "not_owned",
-        type: "album",
-        candidate: {
-          mbid: mbHit.releaseGroupMbid,
-          title: mbHit.title,
-          artistName: mbHit.artistName,
-          year: mbHit.year,
-          format: mbHit.format,
-        },
-      });
-    }
-  } catch {
-    // MusicBrainz lookup failed (rate limit, network) — fall through to the
-    // movie path rather than failing the whole request.
-  }
-
-  // 3. Best-effort UPCitemdb -> TMDB fuzzy match (movies).
-  if (process.env.TMDB_API_KEY) {
-    const upcHit = await lookupMovieByBarcode(barcode);
-    if (upcHit) {
-      try {
-        const movieHit = await searchMovieByTitleYear(upcHit.title, upcHit.year);
-        if (movieHit) {
-          const film = await prisma.film.findUnique({
-            where: { tmdbId: movieHit.tmdbId },
-            include: { physicalCopies: { select: { id: true } } },
-          });
-          if (film && (film.owned || film.physicalCopies.length > 0)) {
-            return NextResponse.json({
-              status: "owned",
-              type: "film",
-              film: { id: film.id, title: film.title, year: film.year, posterPath: film.posterPath },
-            });
-          }
-          return NextResponse.json({
-            status: "not_owned",
-            type: "film",
-            candidate: movieHit,
-          });
-        }
-      } catch {
-        // TMDB lookup failed — fall through to unknown.
-      }
-    }
-  }
+  // 2 & 3. Music (MusicBrainz) and movie (UPCitemdb -> TMDB) paths run
+  // concurrently — a real barcode only ever matches one of them.
+  const [musicResult, movieResult] = await Promise.all([resolveMusic(barcode), resolveMovie(barcode)]);
+  const result = musicResult ?? movieResult;
+  if (result) return NextResponse.json(result);
 
   return NextResponse.json({ status: "unknown" });
 }
