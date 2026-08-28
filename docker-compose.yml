@@ -37,6 +37,10 @@ services:
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-}
       # BetterAuth's own base URL, for building callback/redirect URLs.
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:-}
+      # Resend API key — sends the email-OTP sign-in codes (see
+      # HOUSEHOLDS_PLAN.md and src/lib/email.ts). Domain-verified for
+      # markrwatts.com. Leave blank to disable OTP email sending.
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
     volumes:
       # SQLite database and cached posters.
       - data:/app/data
