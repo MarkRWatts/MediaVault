@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filmKey, parseFileName, sortTitle } from "./parse";
+import { filmKey, normalizeTitle, parseFileName, sortTitle } from "./parse";
 
 // Every case here is a real path from the share (or a minimal reduction of one).
 describe("parseFileName", () => {
@@ -111,5 +111,12 @@ describe("sortTitle", () => {
   it("strips leading article and accents", () => {
     expect(sortTitle("The Matrix")).toBe("matrix");
     expect(sortTitle("Léon The Professional")).toBe("leon the professional");
+  });
+});
+
+describe("normalizeTitle", () => {
+  it("treats & as equivalent to 'and' — a barcode-derived title using one must still match TMDB's using the other", () => {
+    expect(normalizeTitle("Ant Man & The Wasp")).toBe(normalizeTitle("Ant-Man and the Wasp"));
+    expect(normalizeTitle("Fast & Furious 6")).toBe("fast and furious 6");
   });
 });

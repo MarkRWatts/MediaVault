@@ -109,6 +109,7 @@ export function normalizeTitle(title: string): string {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "") // accents: Léon → leon
+    .replace(/&/g, " and ") // "Ant Man & The Wasp" → matches "Ant-Man and the Wasp"
     .replace(/[^a-z0-9 ]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
