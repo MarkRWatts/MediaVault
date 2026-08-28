@@ -1,6 +1,7 @@
 import FormatBadge from "@/components/FormatBadge";
 import ResolutionBadge from "@/components/ResolutionBadge";
 import HdrBadge from "@/components/HdrBadge";
+import PlayButton from "@/components/PlayButton";
 import { audioBadge, audioFamily } from "@/lib/audio";
 import type { VersionView } from "@/lib/queries";
 
@@ -16,9 +17,11 @@ const AUDIO_FAMILY_STYLES: Record<"dolby" | "dts" | "neutral", string> = {
 
 export default function VersionCard({
   version,
+  filmTitle,
   jellyfinHref,
 }: {
   version: VersionView;
+  filmTitle: string;
   jellyfinHref?: string | null;
 }) {
   const specs: { label: string; value: string }[] = [
@@ -38,19 +41,22 @@ export default function VersionCard({
         {version.edition && (
           <span className="text-sm italic text-text-muted">{version.edition}</span>
         )}
-        {jellyfinHref && (
-          <a
-            href={jellyfinHref}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-[11px] font-medium tracking-wide text-text-muted transition-colors hover:border-accent-border hover:text-accent-bright"
-          >
-            <svg aria-hidden viewBox="0 0 12 12" className="h-2.5 w-2.5 fill-current">
-              <path d="M2.5 1.2c0-.55.6-.9 1.08-.62l6.2 3.8c.46.28.46.94 0 1.22l-6.2 3.8c-.48.28-1.08-.07-1.08-.62V1.2z" />
-            </svg>
-            Play in Jellyfin
-          </a>
-        )}
+        <div className="ml-auto flex items-center gap-2">
+          <PlayButton versionId={version.id} title={filmTitle} />
+          {jellyfinHref && (
+            <a
+              href={jellyfinHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-[11px] font-medium tracking-wide text-text-muted transition-colors hover:border-accent-border hover:text-accent-bright"
+            >
+              <svg aria-hidden viewBox="0 0 12 12" className="h-2.5 w-2.5 fill-current">
+                <path d="M2.5 1.2c0-.55.6-.9 1.08-.62l6.2 3.8c.46.28.46.94 0 1.22l-6.2 3.8c-.48.28-1.08-.07-1.08-.62V1.2z" />
+              </svg>
+              Play in Jellyfin
+            </a>
+          )}
+        </div>
       </div>
 
       <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-5">
