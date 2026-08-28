@@ -296,6 +296,41 @@ export async function searchReleaseByBarcode(barcode: string): Promise<BarcodeRe
   };
 }
 
+export interface TitleSearchAlbum {
+  mbid: string;
+  title: string;
+  artistName: string;
+  year: number | null;
+  coverArtUrl: string;
+}
+
+/**
+ * Free-text release-group search for the scan page's "Search by title"
+ * fallback — no barcode involved, so this is MusicBrainz's own relevance
+ * ranking rather than an exact match. Scoped to album/EP primary types, same
+ * as searchReleaseGroups's back-catalogue listing, so a bare single never
+ * shows up as an addable candidate.
+ */
+export async function searchReleaseGroupsByTitle(title: string, artist?: string): Promise<TitleSearchAlbum[]> {
+  let query = `releasegroup:"${escapeLucene(title)}" AND (primarytype:album OR primarytype:ep)`;
+  if (artist) query += ` AND artist:"${escapeLucene(artist)}"`;
+
+  const data = await mbFetch("/release-group", { query, limit: "5" });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const groups: any[] = data["release-groups"] ?? [];
+
+  return groups.map((rg) => {
+    const year = rg["first-release-date"] ? Number(rg["first-release-date"].slice(0, 4)) : null;
+    return {
+      mbid: rg.id,
+      title: rg.title,
+      artistName: rg["artist-credit"]?.[0]?.artist?.name ?? rg["artist-credit"]?.[0]?.name ?? "Unknown Artist",
+      year: Number.isFinite(year) ? year : null,
+      coverArtUrl: `https://coverartarchive.org/release-group/${rg.id}/front-250`,
+    };
+  });
+}
+
 // --- Cover art pass (shared by matched and various=true artists) ---
 
 async function fetchMissingCoversForArtist(artistId: number, artistName: string, log: string[]): Promise<void> {
