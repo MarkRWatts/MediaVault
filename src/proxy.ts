@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { getSessionCookie } from "better-auth/cookies";
+import { PUBLIC_PATHS, PUBLIC_PATH_PREFIXES as PAGE_PUBLIC_PATH_PREFIXES } from "@/lib/public-paths";
 
 // Ported from jinglejotter.com's proxy.ts (this Next.js version renamed
 // middleware.ts -> proxy.ts, exporting `proxy` instead of `middleware` — see
@@ -8,12 +9,19 @@ import { getSessionCookie } from "better-auth/cookies";
 // Verified working under both `next dev` (Turbopack, the default) and
 // `next build && next start` — an unauthenticated request to any
 // non-public path 307s to /signin?callbackURL=... in both.
-const PUBLIC_PATHS = ["/signin", "/signup"];
-// Prefix match: the invite landing page must be reachable while signed out
-// (it shows the household/inviter preview and a "sign in to accept" link —
-// see app/invite/[token]/page.tsx), not bounced before it can render.
+//
+// PUBLIC_PATHS/PAGE_PUBLIC_PATH_PREFIXES (signin/signup/invite) come from a
+// shared module also used by layout.tsx, so the two can't drift. The API
+// exceptions below are proxy-only — they're not pages, so layout.tsx has no
+// reason to know about them.
 // /api/auth/ is BetterAuth's own routes — needed to sign in at all.
-const PUBLIC_PATH_PREFIXES = ["/invite/", "/api/auth/"];
+// /api/poster/ and /api/cover/ are poster/cover art (not the actual video or
+// audio content) — deliberately excluded because next/image's built-in
+// optimizer fetches these SERVER-SIDE (via its own internal /_next/image
+// round-trip) and that internal fetch carries none of the original
+// browser's cookies, so gating them broke every optimized poster/cover
+// image app-wide the moment /api was brought into scope below.
+const PUBLIC_PATH_PREFIXES = [...PAGE_PUBLIC_PATH_PREFIXES, "/api/auth/", "/api/poster/", "/api/cover/"];
 
 // Optimistic only — checks cookie presence, never hits the DB (this runs on
 // every request, including prefetches, and must stay edge-safe — no Prisma
@@ -57,7 +65,16 @@ export function proxy(request: NextRequest) {
   // real getSession() call in the page, bouncing /signin -> / -> /signin
   // forever. The signed-in-already redirect lives in app/signin/page.tsx,
   // where auth.api.getSession() validates the session against the database.
-  return NextResponse.next();
+  //
+  // Forwarded as a request header (not a response header) so layout.tsx can
+  // read the current pathname via headers() — Server Components have no
+  // other way to know it in a shared root layout. Used to skip rendering
+  // <Nav /> on pre-auth pages (isPreAuthPath, src/lib/public-paths.ts):
+  // showing the full app nav on /signin before anyone's signed in makes no
+  // sense, and every link on it would just bounce back here anyway.
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("x-pathname", pathname);
+  return NextResponse.next({ request: { headers: requestHeaders } });
 }
 
 // Static assets and icons stay public; everything else (including /api,
