@@ -176,7 +176,11 @@ export function buildFfmpegArgs(
     args.push("-c:v", "copy");
     if (plan.hevcTag) args.push("-tag:v", "hvc1");
   } else {
-    args.push("-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p");
+    // Cap encoder threads rather than letting libx264 claim every core: this
+    // runs as a background job on a small always-on box that also has to
+    // keep serving the app and any other concurrent stream, so a full-width
+    // encode starving everything else is worse than a slightly slower one.
+    args.push("-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p", "-threads", "2");
   }
 
   if (plan.audioStreamIndex !== null) {
@@ -203,6 +207,20 @@ export function buildFfmpegArgs(
   // doesn't expose that until its first packet arrives -- without this flag,
   // copying AC-3 audio fails outright ("Cannot write moov atom before AC3
   // packets"), confirmed against a real file. Harmless to always include.
-  args.push("-movflags", "frag_keyframe+empty_moov+delay_moov+default_base_moof", "-f", "mp4", output);
+  //
+  // negative_cts_offsets matters whenever the video has B-frames (true for
+  // essentially every copied H.264/HEVC source): without it the muxer falls
+  // back to edit-list-based composition timing, which doesn't survive the
+  // empty_moov/delay_moov fragmented path. Diagnosed against a real file
+  // (copied H.264 with B-frames) that reproduced exactly this way: Safari
+  // read a valid duration but never rendered a single video frame, audio
+  // played fine.
+  args.push(
+    "-movflags",
+    "frag_keyframe+empty_moov+delay_moov+default_base_moof+negative_cts_offsets",
+    "-f",
+    "mp4",
+    output,
+  );
   return args;
 }

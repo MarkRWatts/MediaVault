@@ -122,7 +122,7 @@ describe("buildFfmpegArgs", () => {
       "-c:a",
       "copy",
       "-movflags",
-      "frag_keyframe+empty_moov+delay_moov+default_base_moof",
+      "frag_keyframe+empty_moov+delay_moov+default_base_moof+negative_cts_offsets",
       "-f",
       "mp4",
       "/out.mp4",
@@ -181,5 +181,33 @@ describe("buildFfmpegArgs", () => {
     })!;
     const args = buildFfmpegArgs("/in.mkv", "/out.mp4", plan);
     expect(args[args.indexOf("-map_chapters") + 1]).toBe("-1");
+  });
+
+  // Regression: a copied H.264 stream with B-frames (the common case) played
+  // audio but rendered no video at all in Safari, because the fragmented
+  // empty_moov/delay_moov path doesn't survive edit-list-based composition
+  // timing -- confirmed against a real file.
+  it("always includes negative_cts_offsets, required for B-frame video to render in the fragmented path", () => {
+    const plan = planVideoPlayback({
+      videoCodec: "h264",
+      container: "mkv",
+      audioTracks: [{ streamIdx: 1, codec: "ac3", profile: null, channels: 6 }],
+    })!;
+    const args = buildFfmpegArgs("/in.mkv", "/out.mp4", plan);
+    const movflags = args[args.indexOf("-movflags") + 1];
+    expect(movflags.split("+")).toContain("negative_cts_offsets");
+  });
+
+  // A real transcode is CPU-bound and this runs as a background job on a
+  // small box that also has to keep serving the app -- letting libx264 claim
+  // every core starves everything else.
+  it("caps libx264 to 2 threads so a transcode doesn't monopolize the host", () => {
+    const plan = planVideoPlayback({
+      videoCodec: "mpeg2video",
+      container: "mkv",
+      audioTracks: [{ streamIdx: 1, codec: "ac3", profile: null, channels: 2 }],
+    })!;
+    const args = buildFfmpegArgs("/in.mkv", "/out.mp4", plan);
+    expect(args[args.indexOf("-threads") + 1]).toBe("2");
   });
 });
