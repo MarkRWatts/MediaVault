@@ -179,6 +179,14 @@ export function buildFfmpegArgs(
     }
   }
 
-  args.push("-movflags", "+faststart", "-f", "mp4", output);
+  // Fragmented MP4, not +faststart: faststart writes the moov (index) only
+  // after the whole mdat exists, then seeks back to prepend it -- a partial
+  // file isn't valid to play until that second pass, right near the end.
+  // Fragmented output writes a minimal moov immediately, then a sequence of
+  // self-contained moof+mdat fragments, so a reader can start decoding from
+  // whatever's been written so far -- what makes streaming while the file is
+  // still being generated possible at all (see video-cache.ts's tailing
+  // reader).
+  args.push("-movflags", "frag_keyframe+empty_moov+default_base_moof", "-f", "mp4", output);
   return args;
 }

@@ -120,7 +120,7 @@ describe("buildFfmpegArgs", () => {
       "-c:a",
       "copy",
       "-movflags",
-      "+faststart",
+      "frag_keyframe+empty_moov+default_base_moof",
       "-f",
       "mp4",
       "/out.mp4",

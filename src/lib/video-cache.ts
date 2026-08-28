@@ -1,17 +1,21 @@
 // On-demand video preparation: resolves a Version to playable bytes, running
 // an ffmpeg pass (remux and/or audio/video transcode, per video-playback.ts)
-// exactly once per file and caching the result under VIDEO_CACHE_DIR. Every
-// subsequent request — including seeks — is served as a plain byte-range
-// file read, no ffmpeg involved. This is the same "prepare once, then direct
-// play" shape the research doc's batch pre-processing idea (§6a) describes,
-// just computed lazily on first access instead of eagerly for the library.
+// exactly once per file and caching the result under VIDEO_CACHE_DIR. A file
+// that's already been prepared (or never needed to be) is served as a plain
+// byte-range read, same as before.
 //
-// Same local-ffmpeg-vs-docker fallback as ffprobe.ts/audio-stream.ts. Unlike
-// audio-stream.ts, this runs ffmpeg to completion into a file rather than
-// streaming stdout — HLS-style live segmenting was considered (see the
-// research doc, §6) but a complete-then-serve MP4 sidesteps "ffmpeg's stdout
-// isn't seekable" entirely, since the finished file gets normal Range
-// support for free.
+// The first play of a file that *does* need preparing is different: rather
+// than waiting for the whole thing to finish (fine for a 3-second test clip,
+// a multi-minute wait for a real 40GB remux — nobody's pressing Play for
+// that), GET /stream starts serving the ffmpeg output file *while ffmpeg is
+// still writing it*, via the tailing reader in tailing-stream.ts. That only
+// works because the output is fragmented MP4 (see video-playback.ts) — a
+// valid prefix exists at every point during the write, not just at the end.
+// The written file doubles as the cache for every subsequent play, so this
+// is still "prepare once", just streamed live on the first pass instead of
+// blocking on it.
+//
+// Same local-ffmpeg-vs-docker fallback as ffprobe.ts/audio-stream.ts.
 //
 // Scope: Film Versions only for this first pass — TV episodes (EpisodeFile)
 // aren't wired up yet.
@@ -49,8 +53,10 @@ function cachePath(versionId: number): string {
   return path.join(cacheDir(), `${versionId}.mp4`);
 }
 
-function tmpPath(versionId: number): string {
-  return path.join(cacheDir(), `.tmp-${versionId}-${Math.random().toString(36).slice(2)}.mp4`);
+// Stable (not randomised) so a reader that shows up mid-prepare can find the
+// same in-progress file a concurrent/earlier request is already writing to.
+function partialPath(versionId: number): string {
+  return path.join(cacheDir(), `${versionId}.mp4.partial`);
 }
 
 async function fileExists(p: string): Promise<boolean> {
@@ -62,10 +68,16 @@ async function fileExists(p: string): Promise<boolean> {
   }
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 // In-flight prepare jobs (keyed by version id) and the last error for a
-// version that failed, so status polling can report it. Both are process-
-// local — fine for a single-instance deployment; a restart just means an
-// in-progress job is silently abandoned and retried on the next request.
+// version that failed, so status polling (and the tailing reader) can see
+// it. Both are process-local — fine for a single-instance deployment; a
+// restart just means an in-progress job is silently abandoned. A stale
+// .partial file left behind by a killed process is cleaned up the next time
+// that version is prepared (see prepare()), not on startup.
 const jobs = new Map<number, Promise<void>>();
 const jobErrors = new Map<number, string>();
 
@@ -152,23 +164,29 @@ async function prepare(versionId: number, version: ResolvedVersion, plan: VideoP
   await fs.access(sourceAbsPath); // throws if the file's missing on disk
 
   await fs.mkdir(cacheDir(), { recursive: true });
-  const tmp = tmpPath(versionId);
+  const partial = partialPath(versionId);
+  // Stable filename means a leftover from a killed/interrupted previous run
+  // could still be sitting here — start clean rather than have ffmpeg (or a
+  // tailing reader that showed up first) see a mix of old and new content.
+  await fs.rm(partial, { force: true }).catch(() => {});
+
   const sourceChannels =
     plan.audioStreamIndex !== null
       ? (version.audioTracks.find((t) => t.streamIdx === plan.audioStreamIndex)?.channels ?? null)
       : null;
 
   try {
-    await runFfmpeg(sourceAbsPath, tmp, plan, sourceChannels);
-    await fs.rename(tmp, cachePath(versionId));
+    await runFfmpeg(sourceAbsPath, partial, plan, sourceChannels);
+    await fs.rename(partial, cachePath(versionId));
   } catch (err) {
-    await fs.rm(tmp, { force: true }).catch(() => {});
+    await fs.rm(partial, { force: true }).catch(() => {});
     throw err;
   }
 }
 
 /** Kick off preparation if it isn't already cached, in flight, or previously
- * failed for this exact request. Fire-and-forget — callers poll getVideoStatus. */
+ * failed for this exact request. Fire-and-forget — callers poll getVideoStatus
+ * or (for actual playback) read via resolveVideoStream's tailing mode. */
 export function requestVideoPrepare(versionId: number, version: ResolvedVersion, plan: VideoPlaybackPlan): void {
   if (jobs.has(versionId)) return;
   jobErrors.delete(versionId);
@@ -202,14 +220,16 @@ export async function getVideoStatus(versionId: number): Promise<VideoStatus> {
   }
 
   if (await fileExists(cachePath(versionId))) return { state: "ready" };
-  if (jobs.has(versionId)) return { state: "preparing" };
+  if (jobs.has(versionId) || (await fileExists(partialPath(versionId)))) return { state: "preparing" };
   const error = jobErrors.get(versionId);
   if (error) return { state: "error", message: error };
   return { state: "idle" };
 }
 
 /** POST /prepare hits this: starts the job (if needed) and returns the
- * status the client should now poll on. */
+ * status the client should now poll on. Optional pre-warming (e.g. from the
+ * film detail page, before Play is even pressed) — GET /stream no longer
+ * needs this called first, see resolveVideoStream. */
 export async function triggerVideoPrepare(versionId: number): Promise<VideoStatus> {
   const loaded = await loadAndPlan(versionId);
   if (!loaded) return { state: "not-found" };
@@ -222,25 +242,68 @@ export async function triggerVideoPrepare(versionId: number): Promise<VideoStatu
   return { state: "preparing" };
 }
 
-export interface ResolvedVideoFile {
-  absPath: string;
-  contentType: string;
-}
+export type VideoStreamResolution =
+  | { kind: "not-found" }
+  | { kind: "error"; message: string }
+  | { kind: "not-started" }
+  | { kind: "complete"; absPath: string; contentType: string }
+  | {
+      kind: "tailing";
+      absPath: string;
+      contentType: string;
+      /** True once the file at absPath has stopped growing for good. */
+      isDone: () => Promise<boolean>;
+      /** Non-null once the write has failed. */
+      hasErrored: () => string | null;
+    };
 
-/** What GET /stream should actually serve — the original file for "direct",
- * the cached derivative once "ready". Returns null otherwise (caller 404s). */
-export async function resolveVideoFile(versionId: number): Promise<ResolvedVideoFile | null> {
+const START_POLL_INTERVAL_MS = 200;
+const START_POLL_MAX_ATTEMPTS = 50; // ~10s to see ffmpeg create its output file
+
+/**
+ * What GET /stream should actually serve. Self-starting: if nothing has
+ * been prepared or requested yet, this kicks off the job itself (same as
+ * triggerVideoPrepare) and waits briefly for ffmpeg to create its output
+ * file, then hands back a tailing resolution so the caller can start
+ * streaming immediately rather than waiting for the whole file.
+ */
+export async function resolveVideoStream(versionId: number): Promise<VideoStreamResolution> {
   const loaded = await loadAndPlan(versionId);
-  if (!loaded) return null;
+  if (!loaded) return { kind: "not-found" };
   const { version, plan } = loaded;
 
   if (plan.tier === "direct") {
     const sourceAbsPath = resolveSourcePath(version.filePath);
-    if (!sourceAbsPath || !(await fileExists(sourceAbsPath))) return null;
-    return { absPath: sourceAbsPath, contentType: "video/mp4" };
+    if (!sourceAbsPath || !(await fileExists(sourceAbsPath))) return { kind: "not-found" };
+    return { kind: "complete", absPath: sourceAbsPath, contentType: "video/mp4" };
   }
 
-  const cached = cachePath(versionId);
-  if (!(await fileExists(cached))) return null;
-  return { absPath: cached, contentType: "video/mp4" };
+  const finalPath = cachePath(versionId);
+  if (await fileExists(finalPath)) {
+    return { kind: "complete", absPath: finalPath, contentType: "video/mp4" };
+  }
+
+  const partial = partialPath(versionId);
+  const tailingResolution = (): VideoStreamResolution => ({
+    kind: "tailing",
+    absPath: partial,
+    contentType: "video/mp4",
+    isDone: () => fileExists(finalPath),
+    hasErrored: () => jobErrors.get(versionId) ?? null,
+  });
+
+  if (await fileExists(partial)) return tailingResolution();
+
+  // Nothing started yet — kick it off and give ffmpeg a moment to actually
+  // create its output file (near-instant in practice; the poll is just a
+  // safety margin for a slow-to-open source over a network share).
+  requestVideoPrepare(versionId, version, plan);
+  for (let attempt = 0; attempt < START_POLL_MAX_ATTEMPTS; attempt++) {
+    await sleep(START_POLL_INTERVAL_MS);
+    if (await fileExists(finalPath)) return { kind: "complete", absPath: finalPath, contentType: "video/mp4" };
+    if (await fileExists(partial)) return tailingResolution();
+    const error = jobErrors.get(versionId);
+    if (error) return { kind: "error", message: error };
+  }
+  return { kind: "not-started" };
 }
