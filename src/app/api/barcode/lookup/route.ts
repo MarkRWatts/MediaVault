@@ -1,12 +1,18 @@
 // Resolve a scanned/typed barcode to "already owned" or a not-owned
-// candidate to add. Local DB first (instant re-scan), then the MusicBrainz
-// barcode search (free, authoritative, covers CD/vinyl) and the best-effort
-// UPCitemdb -> TMDB fuzzy match (covers DVD/Blu-ray/4K, no authoritative
-// free source exists for those) run CONCURRENTLY rather than one-after-the-
-// other: a barcode is either a music release or a movie, essentially never
-// both, but MusicBrainz's own worst case (30s timeout + one retry, see
-// mbFetch in musicbrainz.ts) previously blocked every movie scan behind a
-// pointless up-to-a-minute wait before the movie lookup even started. See
+// candidate to add. Local DB first (instant re-scan, always checked
+// regardless of `type` — cheap, and protects against a mislabeled scan). By
+// default, the MusicBrainz barcode search (free, authoritative, covers
+// CD/vinyl) and the best-effort UPCitemdb -> TMDB fuzzy match (covers
+// DVD/Blu-ray/4K, no authoritative free source exists for those) run
+// CONCURRENTLY rather than one-after-the-other: a barcode is either a music
+// release or a movie, essentially never both, but MusicBrainz's own worst
+// case (30s timeout + one retry, see mbFetch in musicbrainz.ts) previously
+// blocked every movie scan behind a pointless up-to-a-minute wait before the
+// movie lookup even started. An optional `type: "film" | "album"` in the
+// request body skips the other path entirely — worth it when the user
+// already knows what they're scanning (e.g. working through a stack of
+// Blu-rays), since MusicBrainz's 1 req/s throttle otherwise queues every
+// single movie scan behind a lookup that was never going to match. See
 // PhysicalCopy / FilmPhysicalCopy in prisma/schema.prisma for how "owned" is
 // tracked independently of digital ownership.
 
@@ -127,9 +133,14 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // 2 & 3. Music (MusicBrainz) and movie (UPCitemdb -> TMDB) paths run
-  // concurrently — a real barcode only ever matches one of them.
-  const [musicResult, movieResult] = await Promise.all([resolveMusic(barcode), resolveMovie(barcode)]);
+  // 2 & 3. Music (MusicBrainz) and movie (UPCitemdb -> TMDB) — run whichever
+  // path(s) the caller didn't rule out via `type`, concurrently when both
+  // are in play (a real barcode only ever matches one of them anyway).
+  const type = body.type === "film" || body.type === "album" ? body.type : null;
+  const [musicResult, movieResult] = await Promise.all([
+    type === "film" ? null : resolveMusic(barcode),
+    type === "album" ? null : resolveMovie(barcode),
+  ]);
   const result = musicResult ?? movieResult;
   if (result) return NextResponse.json(result);
 

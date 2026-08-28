@@ -55,11 +55,18 @@ function guessAlbumMedium(format: string | null): "CD" | "VINYL" {
   return format?.toLowerCase().includes("vinyl") ? "VINYL" : "CD";
 }
 
+type MediaType = "auto" | "film" | "album";
+
 // --- Batch queue ---
 
 interface QueueItem {
   barcode: string;
   status: "pending" | "looking_up" | "resolved" | "error";
+  /** Media type selected when this barcode was scanned — captured per item
+   *  rather than read live from page state, so switching the selector mid-
+   *  session doesn't retroactively change what an already-queued item
+   *  resolves as. */
+  mediaType: MediaType;
   result?: LookupResult;
   error?: string;
   added?: { href: string; label: string };
@@ -146,6 +153,7 @@ export default function ScanPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const controlsRef = useRef<any>(null);
   const [mode, setMode] = useState<"single" | "batch">("single");
+  const [mediaType, setMediaType] = useState<MediaType>("auto");
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const [flash, setFlash] = useState(false);
@@ -175,6 +183,15 @@ export default function ScanPage() {
   const [queueLoaded, setQueueLoaded] = useState(false);
   const processingRef = useRef(false);
 
+  // The camera-decode callback closes over lookup/queueScan once when the
+  // scan loop starts (see the effect below) and doesn't re-capture them on
+  // every mediaType change — a ref keeps the type it reads current without
+  // needing to restart the camera just to pick up a mid-session switch.
+  const mediaTypeRef = useRef<MediaType>("auto");
+  useEffect(() => {
+    mediaTypeRef.current = mediaType;
+  }, [mediaType]);
+
   // Load the queue once on mount (client-only — localStorage isn't
   // available during SSR) and persist it on every change after that, so a
   // scanning session (a shelf of discs) survives a reload or closed tab.
@@ -200,10 +217,11 @@ export default function ScanPage() {
     setAdded(null);
     setLookingUp(true);
     try {
+      const type = mediaTypeRef.current === "auto" ? undefined : mediaTypeRef.current;
       const res = await fetch("/api/barcode/lookup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ barcode: code }),
+        body: JSON.stringify({ barcode: code, type }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
@@ -219,7 +237,11 @@ export default function ScanPage() {
   }, []);
 
   const queueScan = useCallback((code: string) => {
-    setQueue((prev) => (prev.some((q) => q.barcode === code) ? prev : [...prev, { barcode: code, status: "pending" }]));
+    setQueue((prev) =>
+      prev.some((q) => q.barcode === code)
+        ? prev
+        : [...prev, { barcode: code, status: "pending", mediaType: mediaTypeRef.current }],
+    );
     setFlash(true);
     setTimeout(() => setFlash(false), 400);
   }, []);
@@ -320,10 +342,11 @@ export default function ScanPage() {
 
     (async () => {
       try {
+        const type = next.mediaType === "auto" ? undefined : next.mediaType;
         const res = await fetch("/api/barcode/lookup", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ barcode: next.barcode }),
+          body: JSON.stringify({ barcode: next.barcode, type }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
@@ -429,7 +452,7 @@ export default function ScanPage() {
 
   const removeQueueItem = (code: string) => setQueue((prev) => prev.filter((q) => q.barcode !== code));
   const retryQueueItem = (code: string) =>
-    setQueue((prev) => prev.map((q) => (q.barcode === code ? { barcode: code, status: "pending" } : q)));
+    setQueue((prev) => prev.map((q) => (q.barcode === code ? { barcode: code, status: "pending", mediaType: q.mediaType } : q)));
   const clearResolvedQueueItems = () =>
     setQueue((prev) => prev.filter((q) => q.status === "pending" || q.status === "looking_up"));
 
@@ -535,6 +558,36 @@ export default function ScanPage() {
         ))}
         {mode === "batch" && (
           <span className="ml-1 text-xs text-text-faint">Scanning queues discs — lookups run in the background.</span>
+        )}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="What are you adding?">
+        <span className="text-xs text-text-faint">Adding:</span>
+        {(
+          [
+            { key: "auto", label: "Either" },
+            { key: "film", label: "Films" },
+            { key: "album", label: "Music" },
+          ] as const
+        ).map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setMediaType(t.key)}
+            aria-pressed={mediaType === t.key}
+            className={`inline-flex min-h-10 items-center justify-center rounded-full border px-3 py-1 text-xs font-medium tracking-wide transition-colors sm:min-h-0 ${
+              mediaType === t.key
+                ? "border-accent-border bg-accent-dim text-accent"
+                : "border-border text-text-muted hover:border-border-strong hover:text-text"
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+        {mediaType !== "auto" && (
+          <span className="text-xs text-text-faint">
+            Skips the {mediaType === "film" ? "music" : "movie"} lookup — faster for a stack of the same type.
+          </span>
         )}
       </div>
 
