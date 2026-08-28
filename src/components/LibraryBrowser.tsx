@@ -147,7 +147,17 @@ const FILTERS: { key: FilterKey; label: string }[] = [
 
 const COLLECTIONS_SECTION = "Collections";
 
-export default function LibraryBrowser({ films }: { films: LibraryFilm[] }) {
+export default function LibraryBrowser({
+  films,
+  continueWatching = [],
+}: {
+  films: LibraryFilm[];
+  /** Signed-in user's in-progress films (see getContinueWatchingFilms) —
+   *  rendered as its own shelf ahead of "New releases"/"Recently added".
+   *  Empty for a signed-out request or a user with nothing in progress;
+   *  FilmShelf itself renders nothing when its list is empty. */
+  continueWatching?: LibraryFilm[];
+}) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<FilterKey>("all");
   const [videoCodec, setVideoCodec] = useState(ALL_CODECS);
@@ -369,6 +379,7 @@ export default function LibraryBrowser({ films }: { films: LibraryFilm[] }) {
         )}
       </p>
 
+      <FilmShelf title="Continue watching" films={continueWatching} />
       <FilmShelf title="New releases" films={newReleases} />
       <FilmShelf title="Recently added" films={recentlyAdded} />
 

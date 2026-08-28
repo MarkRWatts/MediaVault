@@ -104,6 +104,7 @@ model Version {
   probedAt     DateTime?
   jellyfinId   String? // Jellyfin library item id (32-hex); set by the Jellyfin sync job
   audioTracks  AudioTrack[]
+  watchProgress WatchProgress[]
 
   @@index([filmId])
 }
@@ -203,6 +204,7 @@ model EpisodeFile {
   mtimeMs      Float?
   probedAt     DateTime?
   jellyfinId   String?
+  watchProgress WatchProgress[]
 
   @@unique([filePath, episodeId])
   @@index([episodeId])
@@ -458,6 +460,35 @@ model AuditLog {
   entityId    String?
 
   @@index([createdAt])
+}
+
+// Per-user resume position + basic play stats (HOUSEHOLDS_PLAN.md's "Watch
+// history & stats", Phase 7). Films and TV episodes don't share an id space
+// (Version vs EpisodeFile are separate tables), so exactly one of
+// versionId/episodeFileId is set per row — enforced at the app level, same
+// as SQLite's general lack of CHECK-constraint support elsewhere in this
+// schema.
+//
+// Scope note (see HOUSEHOLDS_PLAN.md): in-app playback only exists for
+// films today (VideoPlayer.tsx / the Version path) — TV episode playback
+// isn't built anywhere in this app. episodeFileId stays here, unwired,
+// purely as schema future-proofing for when TV playback exists; nothing in
+// this phase reads or writes it.
+model WatchProgress {
+  id            Int          @id @default(autoincrement())
+  userId        String // BetterAuth User.id
+  versionId     Int?
+  version       Version?     @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  episodeFileId Int?
+  episodeFile   EpisodeFile? @relation(fields: [episodeFileId], references: [id], onDelete: Cascade)
+  positionSecs  Float
+  completed     Boolean      @default(false)
+  playCount     Int          @default(0)
+  updatedAt     DateTime     @updatedAt
+
+  @@unique([userId, versionId])
+  @@unique([userId, episodeFileId])
+  @@index([userId])
 }
 
 model Household {

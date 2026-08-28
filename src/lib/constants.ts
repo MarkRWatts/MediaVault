@@ -1,3 +1,32 @@
+// Watch-progress thresholds (HOUSEHOLDS_PLAN.md "Watch history & stats",
+// Phases 7-8) — shared by the progress API route, the continue-watching
+// query, and VideoPlayer.tsx so resume/seek/list-membership logic can't
+// drift out of sync between server and client.
+
+// Below this many seconds in, a saved position isn't a real "resume
+// point" — it's the same as never having started (someone previewed a
+// title for a few seconds and closed it). Applies both to VideoPlayer.tsx
+// deciding whether to seek on load and to the continue-watching query
+// deciding whether a row counts as "in progress" at all.
+export const WATCH_PROGRESS_MIN_SECS = 30;
+
+// Fraction of the runtime at which a play counts as "watched to
+// completion". 95% mirrors the resume-prompt convention mainstream
+// streaming apps use (Netflix/Plex-style): a viewer who reaches this point
+// is treated as done even without sitting through trailing credits, so a
+// title doesn't linger in "Continue watching" forever just because nobody
+// watches the literal last few percent of a film.
+export const WATCH_COMPLETED_RATIO = 0.95;
+
+// How often VideoPlayer.tsx reports playback position while playing, in
+// seconds. The <video> element's `timeupdate` event fires several times a
+// second — reporting on every tick would be needless request volume for a
+// value nobody needs live (a resume position only has to be "close
+// enough"). 15s bounds data loss on an ungraceful exit (crash, tab kill) to
+// at most that long, while staying well clear of doing real work on every
+// frame.
+export const WATCH_PROGRESS_REPORT_INTERVAL_SECS = 15;
+
 // String "enums" — SQLite has no native enums (see prisma/schema.prisma).
 
 export const FORMATS = ["UHD", "BLURAY", "DVD", "HD", "SD", "UNKNOWN"] as const;

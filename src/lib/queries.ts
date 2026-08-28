@@ -4,7 +4,13 @@
 // here, Dates are ISO strings, so nothing needs re-shaping downstream.
 
 import { prisma } from "@/lib/db";
-import { resolutionTier, videoCodecLabel, type Format, type ResolutionTier } from "@/lib/constants";
+import {
+  resolutionTier,
+  videoCodecLabel,
+  WATCH_PROGRESS_MIN_SECS,
+  type Format,
+  type ResolutionTier,
+} from "@/lib/constants";
 import { audioBadge } from "@/lib/audio";
 
 // ---------------------------------------------------------------------------
@@ -85,38 +91,56 @@ export interface LibraryData {
   discCount: number;
 }
 
-export async function getLibraryFilms(): Promise<LibraryData> {
-  const films = await prisma.film.findMany({
-    // Digitally owned films, plus physical-only films (owned=false but a
-    // disc is logged) — otherwise a scanned-but-unripped disc is invisible
-    // everywhere in the browsing UI. See FilmCard.
-    where: { OR: [{ owned: true }, { physicalCopies: { some: {} } }] },
-    orderBy: { sortTitle: "asc" },
+// Shared shape between the main library listing and the continue-watching
+// query (below) — both end up rendering the same LibraryFilm/FilmCard, so
+// they select and shape identically rather than drifting into two subtly
+// different card shapes.
+const FILM_CARD_SELECT = {
+  id: true,
+  title: true,
+  sortTitle: true,
+  year: true,
+  posterPath: true,
+  collectionId: true,
+  collection: { select: { name: true } },
+  releaseDate: true,
+  createdAt: true,
+  owned: true,
+  physicalCopies: { select: { medium: true } },
+  versions: {
     select: {
-      id: true,
-      title: true,
-      sortTitle: true,
-      year: true,
-      posterPath: true,
-      collectionId: true,
-      collection: { select: { name: true } },
-      releaseDate: true,
-      createdAt: true,
-      owned: true,
-      physicalCopies: { select: { medium: true } },
-      versions: {
-        select: {
-          format: true,
-          width: true,
-          height: true,
-          videoCodec: true,
-          audioTracks: { select: { codec: true, profile: true } },
-        },
-      },
+      format: true,
+      width: true,
+      height: true,
+      videoCodec: true,
+      audioTracks: { select: { codec: true, profile: true } },
     },
-  });
+  },
+};
 
-  const shaped: LibraryFilm[] = films.map((f) => ({
+type FilmCardSource = {
+  id: number;
+  title: string;
+  sortTitle: string;
+  year: number | null;
+  posterPath: string | null;
+  collectionId: number | null;
+  collection: { name: string } | null;
+  releaseDate: Date | null;
+  createdAt: Date;
+  owned: boolean;
+  physicalCopies: { medium: string }[];
+  versions: {
+    format: string;
+    width: number | null;
+    height: number | null;
+    videoCodec: string | null;
+    audioTracks: { codec: string | null; profile: string | null }[];
+  }[];
+};
+
+function shapeLibraryFilm(f: FilmCardSource): LibraryFilm {
+  return {
     id: f.id,
     title: f.title,
     sortTitle: f.sortTitle,
@@ -141,13 +165,69 @@ export async function getLibraryFilms(): Promise<LibraryData> {
         ),
       ),
     ),
-  }));
+  };
+}
+
+export async function getLibraryFilms(): Promise<LibraryData> {
+  const films = await prisma.film.findMany({
+    // Digitally owned films, plus physical-only films (owned=false but a
+    // disc is logged) — otherwise a scanned-but-unripped disc is invisible
+    // everywhere in the browsing UI. See FilmCard.
+    where: { OR: [{ owned: true }, { physicalCopies: { some: {} } }] },
+    orderBy: { sortTitle: "asc" },
+    select: FILM_CARD_SELECT,
+  });
+
+  const shaped: LibraryFilm[] = films.map(shapeLibraryFilm);
 
   return {
     films: shaped,
     filmCount: shaped.length,
     discCount: shaped.reduce((sum, f) => sum + f.discCount, 0),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Continue watching ("/" — signed-in user's in-progress films)
+// ---------------------------------------------------------------------------
+
+// The signed-in user's own in-progress films (HOUSEHOLDS_PLAN.md's "Watch
+// history & stats", Phase 8): WatchProgress rows that aren't completed and
+// have actually gotten somewhere (see WATCH_PROGRESS_MIN_SECS — the same
+// "did they really start this" bar VideoPlayer.tsx uses for whether to seek
+// on load), most-recently-updated first. TV episode progress doesn't exist
+// yet (see WatchProgress.episodeFileId's doc comment in schema.prisma) —
+// this only ever looks at versionId rows.
+//
+// Per-user, not per-household: two members of the same household watching
+// the same shared-library film independently get their own row and their
+// own "continue watching" entry for it.
+export async function getContinueWatchingFilms(userId: string): Promise<LibraryFilm[]> {
+  const rows = await prisma.watchProgress.findMany({
+    where: {
+      userId,
+      versionId: { not: null },
+      completed: false,
+      positionSecs: { gte: WATCH_PROGRESS_MIN_SECS },
+    },
+    orderBy: { updatedAt: "desc" },
+    select: {
+      version: { select: { film: { select: FILM_CARD_SELECT } } },
+    },
+  });
+
+  // A film could in principle have progress on more than one Version (two
+  // rips of the same title) — dedupe to one card per film, keeping the
+  // most recently updated (rows already arrive in that order).
+  const seenFilmIds = new Set<number>();
+  const films: LibraryFilm[] = [];
+  for (const row of rows) {
+    const film = row.version?.film;
+    if (!film || seenFilmIds.has(film.id)) continue;
+    seenFilmIds.add(film.id);
+    films.push(shapeLibraryFilm(film));
+  }
+  return films;
 }
 
 // ---------------------------------------------------------------------------
