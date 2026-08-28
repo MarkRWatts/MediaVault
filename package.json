@@ -13,6 +13,8 @@
   "dependencies": {
     "@prisma/adapter-better-sqlite3": "^7.9.1",
     "@prisma/client": "^7.9.1",
+    "@zxing/browser": "^0.2.1",
+    "@zxing/library": "^0.23.0",
     "better-sqlite3": "^13.0.3",
     "dotenv": "^17.4.2",
     "next": "16.3.2",

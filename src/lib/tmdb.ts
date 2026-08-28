@@ -64,7 +64,7 @@ async function cachePoster(tmdbPath: string | null | undefined, size: "w300" | "
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function ensureCollection(collStub: any, collectionCache: Map<number, any>, log: string[]): Promise<void> {
+export async function ensureCollection(collStub: any, collectionCache: Map<number, any>, log: string[]): Promise<void> {
   await prisma.collection.upsert({
     where: { id: collStub.id },
     create: {
@@ -120,6 +120,137 @@ async function ensureCollection(collStub: any, collectionCache: Map<number, any>
     await cachePoster(part.backdrop_path, "w780");
     log.push(`Added missing collection film "${part.title}" (${releaseDate.getFullYear()}) from "${collStub.name}"`);
   }
+}
+
+// --- Barcode scan-to-collection ---
+
+export interface MovieSearchHit {
+  tmdbId: number;
+  title: string;
+  year: number | null;
+  posterPath: string | null;
+}
+
+/**
+ * Search TMDB for a movie by title (+ optional year), preferring an exact
+ * normalised-title match near the right year over TMDB's raw ranking — the
+ * same "pickHit" logic enrichOneFilm uses inline against an existing Film
+ * row, factored out here so the barcode scan flow (which starts from a bare
+ * title guess, no Film row yet) can reuse the same match quality.
+ */
+export async function searchMovieByTitleYear(title: string, year: number | null): Promise<MovieSearchHit | null> {
+  const want = normalizeTitle(title);
+  const yearOk = (r: { release_date?: string }) =>
+    !year || !r.release_date || Math.abs(Number(r.release_date.slice(0, 4)) - year) <= 1;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const pickHit = (results: any[] | undefined): any => {
+    if (!results?.length) return undefined;
+    return results.slice(0, 5).find((r) => normalizeTitle(r.title ?? "") === want && yearOk(r)) ?? results[0];
+  };
+
+  const yearParams: Record<string, string> = year ? { year: String(year) } : {};
+  let hit = pickHit((await tmdbFetch("/search/movie", { query: title, ...yearParams })).results);
+  if (!hit && year) {
+    hit = pickHit((await tmdbFetch("/search/movie", { query: title })).results);
+  }
+  if (!hit && normalizeTitle(title) !== title.toLowerCase()) {
+    hit = pickHit((await tmdbFetch("/search/movie", { query: normalizeTitle(title), ...yearParams })).results);
+  }
+  if (!hit) return null;
+
+  return {
+    tmdbId: hit.id,
+    title: hit.title,
+    year: hit.release_date ? Number(hit.release_date.slice(0, 4)) : null,
+    posterPath: hit.poster_path ?? null,
+  };
+}
+
+/**
+ * Top-N raw TMDB title search results, for the barcode scan page's manual
+ * fallback (an unresolved barcode → the user types a title and picks from a
+ * list, rather than the single best-guess searchMovieByTitleYear does).
+ */
+export async function searchMoviesByTitle(title: string, year?: number | null): Promise<MovieSearchHit[]> {
+  const yearParams: Record<string, string> = year ? { year: String(year) } : {};
+  const data = await tmdbFetch("/search/movie", { query: title, ...yearParams });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (data.results ?? []).slice(0, 5).map((r: any) => ({
+    tmdbId: r.id,
+    title: r.title,
+    year: r.release_date ? Number(r.release_date.slice(0, 4)) : null,
+    posterPath: r.poster_path ?? null,
+  }));
+}
+
+export interface FilmRef {
+  id: number;
+  title: string;
+  year: number | null;
+  posterPath: string | null;
+  owned: boolean;
+}
+
+/**
+ * Find the Film row for a TMDB movie id, creating an owned:false placeholder
+ * (same shape ensureCollection creates for missing collection members) if
+ * none exists yet. Used by the barcode-add flow, which may be registering a
+ * disc for a film that's never been scanned/ripped before.
+ */
+export async function findOrCreateFilmByTmdbId(tmdbId: number): Promise<FilmRef> {
+  const existing = await prisma.film.findUnique({ where: { tmdbId } });
+  if (existing) {
+    return {
+      id: existing.id,
+      title: existing.title,
+      year: existing.year,
+      posterPath: existing.posterPath,
+      owned: existing.owned,
+    };
+  }
+
+  const details = await tmdbFetch(`/movie/${tmdbId}`);
+  const releaseDate = details.release_date ? new Date(details.release_date) : null;
+  const year = releaseDate && !Number.isNaN(releaseDate.getTime()) ? releaseDate.getFullYear() : null;
+
+  const film = await prisma.film.create({
+    data: {
+      title: details.title,
+      sortTitle: sortTitle(details.title),
+      year,
+      tmdbId,
+      imdbId: details.imdb_id ?? null,
+      overview: details.overview ?? null,
+      posterPath: details.poster_path ?? null,
+      backdropPath: details.backdrop_path ?? null,
+      releaseDate,
+      runtimeMins: details.runtime ?? null,
+      rating: details.vote_average ?? null,
+      genres: details.genres?.length
+        ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          details.genres.map((g: any) => g.name).join(", ")
+        : null,
+      owned: false,
+      matchConfidence: "EXACT",
+    },
+  });
+  await cachePoster(details.poster_path, "w342");
+  await cachePoster(details.backdrop_path, "w780");
+
+  if (details.belongs_to_collection) {
+    try {
+      await ensureCollection(details.belongs_to_collection, new Map(), []);
+      await prisma.film.update({
+        where: { id: film.id },
+        data: { collectionId: details.belongs_to_collection.id },
+      });
+    } catch {
+      // Collection backfill is a bonus, not a requirement — the film row
+      // itself is already created above.
+    }
+  }
+
+  return { id: film.id, title: film.title, year: film.year, posterPath: film.posterPath, owned: false };
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

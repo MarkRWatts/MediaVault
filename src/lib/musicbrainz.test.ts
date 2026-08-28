@@ -4,8 +4,29 @@ import {
   classifyAlbumKind,
   escapeLucene,
   normalizeAlbumTitle,
+  normalizeBarcode,
   parseReleaseDate,
 } from "./musicbrainz";
+
+describe("normalizeBarcode", () => {
+  it("accepts plausible UPC/EAN lengths (8, 12, 13, 14 digits)", () => {
+    expect(normalizeBarcode("12345678")).toBe("12345678");
+    expect(normalizeBarcode("123456789012")).toBe("123456789012");
+    expect(normalizeBarcode("1234567890123")).toBe("1234567890123");
+    expect(normalizeBarcode("12345678901234")).toBe("12345678901234");
+  });
+
+  it("strips non-digit characters a camera scanner or manual entry might add", () => {
+    expect(normalizeBarcode(" 123456789012 \n")).toBe("123456789012");
+    expect(normalizeBarcode("123-456-789012")).toBe("123456789012");
+  });
+
+  it("rejects implausible lengths", () => {
+    expect(normalizeBarcode("123")).toBeNull();
+    expect(normalizeBarcode("")).toBeNull();
+    expect(normalizeBarcode("1234567890123456789")).toBeNull();
+  });
+});
 
 describe("classifyAlbumKind", () => {
   it("Album with no secondary types -> STUDIO", () => {

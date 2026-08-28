@@ -90,6 +90,17 @@ export function escapeLucene(value: string): string {
 }
 
 /**
+ * Barcodes come from a camera scanner or manual typing, so strip everything
+ * but digits (whitespace, scanner-injected control chars) before using one
+ * as a lookup key. Returns null for anything that isn't a plausible
+ * UPC/EAN length (8, 12, 13 or 14 digits).
+ */
+export function normalizeBarcode(raw: string): string | null {
+  const digits = raw.replace(/\D/g, "");
+  return [8, 12, 13, 14].includes(digits.length) ? digits : null;
+}
+
+/**
  * iTunes sanitises characters that aren't legal in file/folder names — "/"
  * and ":" become "_" and ";" respectively. There's no reliable way to tell
  * that apart from genuine underscores/semicolons in an artist's real name,
@@ -236,6 +247,48 @@ async function searchReleaseGroups(artistMbid: string): Promise<any[]> {
     if (batch.length === 0 || offset >= total) break;
   }
   return results;
+}
+
+// --- Barcode lookup (scan-to-collection) ---
+
+export interface BarcodeReleaseMatch {
+  releaseGroupMbid: string;
+  title: string;
+  artistName: string;
+  year: number | null;
+  /** MusicBrainz release media format, e.g. "CD", "12\" Vinyl" — used to
+   *  pre-fill the medium picker on the scan page. */
+  format: string | null;
+}
+
+/**
+ * Resolve a barcode to a release via MusicBrainz's own barcode index (free,
+ * no key, exact match only — no fuzzy fallback needed since a barcode is
+ * either present verbatim or it isn't). Picks the first result with a
+ * resolvable release-group; MusicBrainz already ranks exact barcode matches
+ * first.
+ */
+export async function searchReleaseByBarcode(barcode: string): Promise<BarcodeReleaseMatch | null> {
+  const data = await mbFetch("/release", {
+    query: `barcode:${barcode}`,
+    inc: "release-groups+artist-credits+media",
+  });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const releases: any[] = data.releases ?? [];
+  const hit = releases.find((r) => r["release-group"]?.id);
+  if (!hit) return null;
+
+  const artistName = hit["artist-credit"]?.[0]?.artist?.name ?? hit["artist-credit"]?.[0]?.name ?? "Unknown Artist";
+  const year = hit.date ? Number(hit.date.slice(0, 4)) : null;
+  const format: string | null = hit.media?.[0]?.format ?? null;
+
+  return {
+    releaseGroupMbid: hit["release-group"].id,
+    title: hit["release-group"].title ?? hit.title,
+    artistName,
+    year: Number.isFinite(year) ? year : null,
+    format,
+  };
 }
 
 // --- Cover art pass (shared by matched and various=true artists) ---
@@ -784,6 +837,7 @@ export interface PhysicalFields {
   pressYear?: number;
   condition?: string;
   notes?: string;
+  barcode?: string;
 }
 
 export function physicalCopyData(medium: PhysicalMedium, v: PhysicalFields) {
@@ -795,6 +849,10 @@ export function physicalCopyData(medium: PhysicalMedium, v: PhysicalFields) {
     pressYear: v.pressYear ?? null,
     condition: v.condition || null,
     notes: v.notes || null,
+    // Omitted entirely (not set to null) when the caller didn't supply one —
+    // a manual PhysicalCopyForm edit has no barcode field, and must not wipe
+    // out a barcode a scan previously attached to this row.
+    ...(v.barcode !== undefined ? { barcode: v.barcode || null } : {}),
     // An explicit save is a confirmation — backfilled rows lose their
     // "inferred" status the moment they're edited by hand.
     inferred: false,

@@ -179,6 +179,13 @@ export interface CollectionMemberView {
   bestTier: ResolutionTier;
 }
 
+export interface FilmPhysicalCopyView {
+  id: number;
+  medium: string;
+  barcode: string | null;
+  notes: string | null;
+}
+
 export interface FilmDetail {
   id: number;
   title: string;
@@ -192,6 +199,7 @@ export interface FilmDetail {
   genres: string[];
   matchConfidence: string;
   versions: VersionView[];
+  physicalCopies: FilmPhysicalCopyView[];
   collection: { id: number; name: string; members: CollectionMemberView[] } | null;
 }
 
@@ -200,6 +208,7 @@ export async function getFilmDetail(id: number): Promise<FilmDetail | null> {
     where: { id },
     include: {
       versions: { include: { audioTracks: true } },
+      physicalCopies: true,
       collection: {
         include: {
           films: {
@@ -250,6 +259,12 @@ export async function getFilmDetail(id: number): Promise<FilmDetail | null> {
     genres: film.genres ? film.genres.split(",").map((g) => g.trim()).filter(Boolean) : [],
     matchConfidence: film.matchConfidence,
     versions,
+    physicalCopies: film.physicalCopies.map((c) => ({
+      id: c.id,
+      medium: c.medium,
+      barcode: c.barcode,
+      notes: c.notes,
+    })),
     collection: film.collection
       ? {
           id: film.collection.id,
@@ -598,7 +613,7 @@ export async function getReportData(): Promise<ReportData> {
     prisma.film.findMany({
       where: { owned: false },
       orderBy: { releaseDate: "asc" },
-      include: { collection: true },
+      include: { collection: true, physicalCopies: { select: { id: true } } },
     }),
     prisma.collection.findMany({ include: { films: true } }),
   ]);
@@ -619,6 +634,10 @@ export async function getReportData(): Promise<ReportData> {
   const missingByCollectionMap = new Map<number, MissingGroup>();
   for (const f of missingFilms) {
     if (!f.collection) continue;
+    // Owned=false but with a FilmPhysicalCopy isn't a gap — you have the
+    // disc, just haven't ripped it — so it's excluded here, same as the
+    // music report treats a physical-only album (queries-music.ts).
+    if (f.physicalCopies.length > 0) continue;
     const key = f.collection.id;
     if (!missingByCollectionMap.has(key)) {
       missingByCollectionMap.set(key, {

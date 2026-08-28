@@ -40,6 +40,7 @@ export async function POST(req: NextRequest) {
   if (Number.isInteger(body.pressYear)) fields.pressYear = body.pressYear as number;
   if (typeof body.condition === "string") fields.condition = body.condition;
   if (typeof body.notes === "string") fields.notes = body.notes;
+  if (typeof body.barcode === "string") fields.barcode = body.barcode;
 
   const result = await prisma.physicalCopy.upsert({
     where: { albumId_medium: { albumId, medium } },

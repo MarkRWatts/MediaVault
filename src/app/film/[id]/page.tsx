@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import PosterImage from "@/components/PosterImage";
 import VersionCard from "@/components/VersionCard";
 import CollectionStrip from "@/components/CollectionStrip";
+import FilmPhysicalCopyForm from "@/components/FilmPhysicalCopyForm";
 import { getFilmDetail } from "@/lib/queries";
 import { getJellyfinServerInfo, jellyfinPlayUrl } from "@/lib/jellyfin";
 
@@ -136,6 +137,20 @@ export default async function FilmPage({
               ))}
             </div>
           )}
+        </section>
+
+        <section className="flex flex-col gap-3">
+          <h2 className="font-display text-xl tracking-wide">Physical copies</h2>
+          <div className="flex flex-wrap items-center gap-3">
+            {(["DVD", "BLURAY", "UHD"] as const).map((medium) => (
+              <FilmPhysicalCopyForm
+                key={medium}
+                filmId={film.id}
+                medium={medium}
+                initial={film.physicalCopies.find((c) => c.medium === medium) ?? null}
+              />
+            ))}
+          </div>
         </section>
 
         {film.collection && (

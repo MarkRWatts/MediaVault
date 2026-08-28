@@ -8,6 +8,7 @@
 //   Album.kind:            STUDIO | COMPILATION | EP | LIVE | SINGLE | REMIX | SOUNDTRACK | OTHER
 //   Album.coverSource:     embedded | caa | itunes | manual
 //   Track.codec:           alac | aac | mp3 | flac | drm | unknown
+//   FilmPhysicalCopy.medium: DVD | BLURAY | UHD
 //   ScanRun.kind:          SCAN | ENRICH | JELLYFIN | ENRICH_MUSIC   ScanRun.status: RUNNING | DONE | FAILED
 
 generator client {
@@ -52,11 +53,30 @@ model Film {
   collectionId    Int?
   collection      Collection? @relation(fields: [collectionId], references: [id])
   versions        Version[]
+  physicalCopies  FilmPhysicalCopy[]
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
 
   @@index([collectionId])
   @@index([sortTitle])
+}
+
+// A physical disc you own of this film — independent of digital ownership
+// (Film.owned/versions). Presence of a row means "own on <medium>", full
+// stop; the film may or may not also have a ripped Version. Mirrors
+// PhysicalCopy below, one row per (film, medium).
+model FilmPhysicalCopy {
+  id        Int      @id @default(autoincrement())
+  filmId    Int
+  film      Film     @relation(fields: [filmId], references: [id], onDelete: Cascade)
+  medium    String // DVD | BLURAY | UHD (see Version.format vocabulary)
+  barcode   String?
+  notes     String?
+  addedAt   DateTime @default(now())
+
+  @@unique([filmId, medium])
+  @@index([filmId])
+  @@index([barcode])
 }
 
 // One file on disk. A film with a DVD rip and a BluRay rip (or theatrical +
@@ -262,9 +282,11 @@ model PhysicalCopy {
   pressYear Int? // pressing year — often later than Album.year for reissues
   condition String? // free text ("VG+", "Sealed", ...)
   notes     String?
+  barcode   String?
   addedAt   DateTime @default(now())
 
   @@unique([albumId, medium])
+  @@index([barcode])
 }
 
 model Track {
