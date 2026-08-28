@@ -31,6 +31,12 @@ services:
       JELLYFIN_API_KEY: ${JELLYFIN_API_KEY:-}
       JELLYFIN_MOVIES_PREFIX: ${JELLYFIN_MOVIES_PREFIX:-/media/Movies/}
       JELLYFIN_TV_PREFIX: ${JELLYFIN_TV_PREFIX:-/media/TV Shows/}
+      # BetterAuth (see HOUSEHOLDS_PLAN.md) — session/cookie signing key.
+      # Generate with `npx @better-auth/cli secret`; set in .env.docker on
+      # the VM, never committed.
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-}
+      # BetterAuth's own base URL, for building callback/redirect URLs.
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-}
     volumes:
       # SQLite database and cached posters.
       - data:/app/data
