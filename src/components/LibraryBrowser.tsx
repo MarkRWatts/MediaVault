@@ -12,17 +12,21 @@ type SortKey = "title" | "year" | "added";
 const ALL_CODECS = "all";
 const SHELF_SIZE = 20;
 
-type DisplayItem =
-  | { kind: "film"; film: LibraryFilm; sortTitle: string; year: number; addedAt: number }
-  | {
-      kind: "collection";
-      collectionId: number;
-      collectionName: string;
-      films: LibraryFilm[];
-      sortTitle: string;
-      year: number;
-      addedAt: number;
-    };
+type FilmItem = { kind: "film"; film: LibraryFilm; sortTitle: string; year: number; addedAt: number };
+type CollectionItem = {
+  kind: "collection";
+  collectionId: number;
+  collectionName: string;
+  films: LibraryFilm[];
+  sortTitle: string;
+  year: number;
+  addedAt: number;
+};
+type DisplayItem = FilmItem | CollectionItem;
+
+function filmItem(f: LibraryFilm): FilmItem {
+  return { kind: "film", film: f, sortTitle: f.sortTitle, year: f.year ?? 0, addedAt: new Date(f.createdAt).getTime() };
+}
 
 // Chronological order within a collection: release date, falling back to year.
 function byRelease(a: LibraryFilm, b: LibraryFilm): number {
@@ -30,11 +34,14 @@ function byRelease(a: LibraryFilm, b: LibraryFilm): number {
   return (a.year ?? 0) - (b.year ?? 0);
 }
 
-// Groups films that share a collection into contiguous, chronologically
-// ordered blocks, so a franchise reads as a run rather than being scattered
-// by title/year/added-date sort. Each group carries representative sort keys
-// (its most notable member) so the group slots into the list naturally.
-function buildDisplayItems(films: LibraryFilm[]): DisplayItem[] {
+// Splits films into standalone films and collection groups (2+ owned members
+// in the current filtered set), each group chronologically ordered and
+// carrying representative sort keys (its most notable member) so it slots
+// into a sorted list naturally. Collections get pulled out entirely here —
+// they're rendered in their own row rather than folded into a member's
+// "best format" section (a 25-Blu-ray/DVD-mixed set like James Bond has no
+// single honest format to sit under).
+function buildDisplayItems(films: LibraryFilm[]): { films: FilmItem[]; collections: CollectionItem[] } {
   const byCollection = new Map<number, LibraryFilm[]>();
   for (const f of films) {
     if (f.collectionId === null) continue;
@@ -43,7 +50,8 @@ function buildDisplayItems(films: LibraryFilm[]): DisplayItem[] {
     byCollection.set(f.collectionId, list);
   }
 
-  const items: DisplayItem[] = [];
+  const filmItems: FilmItem[] = [];
+  const collectionItems: CollectionItem[] = [];
   const seenCollections = new Set<number>();
 
   for (const f of films) {
@@ -51,7 +59,7 @@ function buildDisplayItems(films: LibraryFilm[]): DisplayItem[] {
       if (seenCollections.has(f.collectionId)) continue;
       seenCollections.add(f.collectionId);
       const members = [...byCollection.get(f.collectionId)!].sort(byRelease);
-      items.push({
+      collectionItems.push({
         kind: "collection",
         collectionId: f.collectionId,
         collectionName: f.collectionName ?? "Collection",
@@ -61,49 +69,33 @@ function buildDisplayItems(films: LibraryFilm[]): DisplayItem[] {
         addedAt: members.reduce((max, m) => Math.max(max, new Date(m.createdAt).getTime()), 0),
       });
     } else {
-      items.push({
-        kind: "film",
-        film: f,
-        sortTitle: f.sortTitle,
-        year: f.year ?? 0,
-        addedAt: new Date(f.createdAt).getTime(),
-      });
+      filmItems.push(filmItem(f));
     }
   }
 
-  return items;
+  return { films: filmItems, collections: collectionItems };
 }
 
-// Media-type section a display item belongs to, best format first — mirrors
-// the disc-format precedence used elsewhere (UHD > BLURAY > DVD). A
-// collection group takes the best format owned by any of its members, so
-// e.g. a franchise with one 4K entry surfaces under "4K". "Other" (HD/SD/
-// UNKNOWN/no versions) exists so nothing is silently dropped, but per the
-// "empty categories don't show" rule it never renders when the library has
-// none of those.
-type SectionKey = "4K" | "Blu-ray" | "DVD" | "Other";
-const SECTION_ORDER: SectionKey[] = ["4K", "Blu-ray", "DVD", "Other"];
+function sortItems<T extends DisplayItem>(items: T[], sort: SortKey): T[] {
+  const sorted = [...items];
+  if (sort === "title") sorted.sort((a, b) => a.sortTitle.localeCompare(b.sortTitle));
+  else if (sort === "year") sorted.sort((a, b) => b.year - a.year);
+  else sorted.sort((a, b) => b.addedAt - a.addedAt);
+  return sorted;
+}
 
-function sectionForFormats(formats: string[], bestTierRank: number): SectionKey {
-  if (formats.includes("UHD") || bestTierRank === 0) return "4K";
-  if (formats.includes("BLURAY")) return "Blu-ray";
-  if (formats.includes("DVD")) return "DVD";
+// Media-type section a film belongs to, best format first — mirrors the
+// disc-format precedence used elsewhere (UHD > BLURAY > DVD). "Other"
+// (HD/SD/UNKNOWN) exists so nothing is silently dropped, but per the "empty
+// categories don't show" rule it never renders when the library has none.
+type FormatSectionKey = "4K" | "Blu-ray" | "DVD" | "Other";
+const FORMAT_SECTION_ORDER: FormatSectionKey[] = ["4K", "Blu-ray", "DVD", "Other"];
+
+function formatSectionFor(film: LibraryFilm): FormatSectionKey {
+  if (film.formats.includes("UHD") || film.bestTier.rank === 0) return "4K";
+  if (film.formats.includes("BLURAY")) return "Blu-ray";
+  if (film.formats.includes("DVD")) return "DVD";
   return "Other";
-}
-
-function itemSection(item: DisplayItem): SectionKey {
-  if (item.kind === "film") return sectionForFormats(item.film.formats, item.film.bestTier.rank);
-  const formats = new Set<string>();
-  let bestRank = 9;
-  for (const f of item.films) {
-    f.formats.forEach((fmt) => formats.add(fmt));
-    bestRank = Math.min(bestRank, f.bestTier.rank);
-  }
-  return sectionForFormats(Array.from(formats), bestRank);
-}
-
-function itemFilmCount(item: DisplayItem): number {
-  return item.kind === "film" ? 1 : item.films.length;
 }
 
 function ChevronIcon({ collapsed }: { collapsed: boolean }) {
@@ -121,11 +113,35 @@ function ChevronIcon({ collapsed }: { collapsed: boolean }) {
   );
 }
 
+function SectionHeader({
+  title,
+  count,
+  collapsed,
+  onToggle,
+}: {
+  title: string;
+  count: number;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button type="button" onClick={onToggle} aria-expanded={!collapsed} className="flex items-center gap-2 text-left">
+      <ChevronIcon collapsed={collapsed} />
+      <h2 className="font-display text-xl tracking-wide">{title}</h2>
+      <span className="font-mono text-xs text-text-faint">
+        {count} film{count === 1 ? "" : "s"}
+      </span>
+    </button>
+  );
+}
+
 const FILTERS: { key: FilterKey; label: string }[] = [
   { key: "all", label: "All" },
   { key: "collection", label: "In a collection" },
   { key: "noposter", label: "No poster" },
 ];
+
+const COLLECTIONS_SECTION = "Collections";
 
 export default function LibraryBrowser({ films }: { films: LibraryFilm[] }) {
   const [query, setQuery] = useState("");
@@ -134,9 +150,9 @@ export default function LibraryBrowser({ films }: { films: LibraryFilm[] }) {
   const [audioFormat, setAudioFormat] = useState(ALL_CODECS);
   const [sort, setSort] = useState<SortKey>("title");
   const [stack, setStack] = useState(true);
-  const [collapsedSections, setCollapsedSections] = useState<Set<SectionKey>>(new Set());
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
 
-  function toggleSection(key: SectionKey) {
+  function toggleSection(key: string) {
     setCollapsedSections((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
@@ -190,27 +206,36 @@ export default function LibraryBrowser({ films }: { films: LibraryFilm[] }) {
     return list;
   }, [films, filter, videoCodec, audioFormat, query]);
 
-  const displayItems = useMemo(() => {
-    const items = buildDisplayItems(filtered);
-    const sorted = [...items];
-    if (sort === "title") sorted.sort((a, b) => a.sortTitle.localeCompare(b.sortTitle));
-    else if (sort === "year") sorted.sort((a, b) => b.year - a.year);
-    else sorted.sort((a, b) => b.addedAt - a.addedAt);
-    return sorted;
-  }, [filtered, sort]);
+  // Stacking on: collections are pulled into their own row, format sections
+  // only ever see standalone films. Stacking off: no grouping at all — every
+  // film (collection member or not) sorts and sections individually.
+  const { collectionItems, formatFilmItems } = useMemo(() => {
+    if (!stack) return { collectionItems: [] as CollectionItem[], formatFilmItems: filtered.map(filmItem) };
+    const { films: standalone, collections } = buildDisplayItems(filtered);
+    return { collectionItems: collections, formatFilmItems: standalone };
+  }, [filtered, stack]);
 
-  const sections = useMemo(() => {
-    const byKey = new Map<SectionKey, DisplayItem[]>();
-    for (const item of displayItems) {
-      const key = itemSection(item);
+  const sortedCollectionItems = useMemo(
+    () => sortItems(collectionItems, sort),
+    [collectionItems, sort],
+  );
+  const sortedFormatFilmItems = useMemo(
+    () => sortItems(formatFilmItems, sort),
+    [formatFilmItems, sort],
+  );
+
+  const formatSections = useMemo(() => {
+    const byKey = new Map<FormatSectionKey, FilmItem[]>();
+    for (const item of sortedFormatFilmItems) {
+      const key = formatSectionFor(item.film);
       const list = byKey.get(key) ?? [];
       list.push(item);
       byKey.set(key, list);
     }
-    return SECTION_ORDER.map((key) => ({ key, items: byKey.get(key) ?? [] })).filter(
+    return FORMAT_SECTION_ORDER.map((key) => ({ key, items: byKey.get(key) ?? [] })).filter(
       (s) => s.items.length > 0,
     );
-  }, [displayItems]);
+  }, [sortedFormatFilmItems]);
 
   if (films.length === 0) {
     return (
@@ -227,172 +252,171 @@ export default function LibraryBrowser({ films }: { films: LibraryFilm[] }) {
 
   return (
     <div className="flex flex-1 flex-col gap-6 px-4 py-6 sm:px-6">
-      <FilmShelf title="New releases" films={newReleases} />
-      <FilmShelf title="Recently added" films={recentlyAdded} />
-
-      <div className="flex flex-col gap-5">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex flex-1 flex-wrap items-center gap-2">
-            <div className="relative">
-              <svg
-                aria-hidden
-                viewBox="0 0 20 20"
-                className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-text-faint"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={1.8}
-              >
-                <circle cx="9" cy="9" r="6" />
-                <path d="M17 17l-4-4" strokeLinecap="round" />
-              </svg>
-              <input
-                type="search"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search titles…"
-                aria-label="Search titles"
-                className="w-full rounded-md border border-border bg-bg-elevated py-1.5 pl-8 pr-3 text-sm text-text placeholder:text-text-faint focus-visible:outline-none sm:w-56"
-              />
-            </div>
-
-            <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Filter">
-              {FILTERS.map((f) => (
-                <button
-                  key={f.key}
-                  type="button"
-                  onClick={() => setFilter(f.key)}
-                  aria-pressed={filter === f.key}
-                  className={`inline-flex min-h-10 items-center justify-center rounded-full border px-3 py-1 text-xs font-medium tracking-wide transition-colors sm:min-h-0 ${
-                    filter === f.key
-                      ? "border-accent-border bg-accent-dim text-accent"
-                      : "border-border text-text-muted hover:border-border-strong hover:text-text"
-                  }`}
-                >
-                  {f.label}
-                </button>
-              ))}
-            </div>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-1 flex-wrap items-center gap-2">
+          <div className="relative">
+            <svg
+              aria-hidden
+              viewBox="0 0 20 20"
+              className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-text-faint"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={1.8}
+            >
+              <circle cx="9" cy="9" r="6" />
+              <path d="M17 17l-4-4" strokeLinecap="round" />
+            </svg>
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search titles…"
+              aria-label="Search titles"
+              className="w-full rounded-md border border-border bg-bg-elevated py-1.5 pl-8 pr-3 text-sm text-text placeholder:text-text-faint focus-visible:outline-none sm:w-56"
+            />
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-1.5 text-xs text-text-muted">
-              Video
-              <select
-                value={videoCodec}
-                onChange={(e) => setVideoCodec(e.target.value)}
-                className="rounded-md border border-border bg-bg-elevated px-2 py-1 text-xs text-text focus-visible:outline-none"
+          <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Filter">
+            {FILTERS.map((f) => (
+              <button
+                key={f.key}
+                type="button"
+                onClick={() => setFilter(f.key)}
+                aria-pressed={filter === f.key}
+                className={`inline-flex min-h-10 items-center justify-center rounded-full border px-3 py-1 text-xs font-medium tracking-wide transition-colors sm:min-h-0 ${
+                  filter === f.key
+                    ? "border-accent-border bg-accent-dim text-accent"
+                    : "border-border text-text-muted hover:border-border-strong hover:text-text"
+                }`}
               >
-                <option value={ALL_CODECS}>All</option>
-                {videoCodecOptions.map((c) => (
-                  <option key={c} value={c}>
-                    {videoCodecLabel(c)}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="flex items-center gap-1.5 text-xs text-text-muted">
-              Audio
-              <select
-                value={audioFormat}
-                onChange={(e) => setAudioFormat(e.target.value)}
-                className="rounded-md border border-border bg-bg-elevated px-2 py-1 text-xs text-text focus-visible:outline-none"
-              >
-                <option value={ALL_CODECS}>All</option>
-                {audioFormatOptions.map((a) => (
-                  <option key={a} value={a}>
-                    {a}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="flex items-center gap-1.5 text-xs text-text-muted">
-              Sort
-              <select
-                value={sort}
-                onChange={(e) => setSort(e.target.value as SortKey)}
-                className="rounded-md border border-border bg-bg-elevated px-2 py-1 text-xs text-text focus-visible:outline-none"
-              >
-                <option value="title">Title</option>
-                <option value="year">Year</option>
-                <option value="added">Recently added</option>
-              </select>
-            </label>
-
-            <label className="flex items-center gap-1.5 text-xs text-text-muted">
-              <input
-                type="checkbox"
-                checked={stack}
-                onChange={(e) => setStack(e.target.checked)}
-                className="h-3.5 w-3.5 rounded border-border accent-accent"
-              />
-              Stack collections
-            </label>
+                {f.label}
+              </button>
+            ))}
           </div>
         </div>
 
-        <p className="text-xs text-text-faint">
-          {filtered.length === films.length ? (
-            <>
-              {films.length} film{films.length === 1 ? "" : "s"}
-            </>
-          ) : (
-            <>
-              {filtered.length} of {films.length} films
-            </>
-          )}
-        </p>
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-1.5 text-xs text-text-muted">
+            Video
+            <select
+              value={videoCodec}
+              onChange={(e) => setVideoCodec(e.target.value)}
+              className="rounded-md border border-border bg-bg-elevated px-2 py-1 text-xs text-text focus-visible:outline-none"
+            >
+              <option value={ALL_CODECS}>All</option>
+              {videoCodecOptions.map((c) => (
+                <option key={c} value={c}>
+                  {videoCodecLabel(c)}
+                </option>
+              ))}
+            </select>
+          </label>
 
-        {filtered.length === 0 ? (
-          <div className="flex flex-1 flex-col items-center justify-center gap-1 py-24 text-center">
-            <p className="text-sm text-text-muted">No films match.</p>
-            <p className="text-xs text-text-faint">Try a different search or filter.</p>
-          </div>
-        ) : (
-          <div className="flex flex-col gap-6">
-            {sections.map(({ key, items }) => {
-              const collapsed = collapsedSections.has(key);
-              const count = items.reduce((sum, item) => sum + itemFilmCount(item), 0);
-              return (
-                <section key={key} className="flex flex-col gap-3">
-                  <button
-                    type="button"
-                    onClick={() => toggleSection(key)}
-                    aria-expanded={!collapsed}
-                    className="flex items-center gap-2 text-left"
-                  >
-                    <ChevronIcon collapsed={collapsed} />
-                    <h2 className="font-display text-xl tracking-wide">{key}</h2>
-                    <span className="font-mono text-xs text-text-faint">
-                      {count} film{count === 1 ? "" : "s"}
-                    </span>
-                  </button>
+          <label className="flex items-center gap-1.5 text-xs text-text-muted">
+            Audio
+            <select
+              value={audioFormat}
+              onChange={(e) => setAudioFormat(e.target.value)}
+              className="rounded-md border border-border bg-bg-elevated px-2 py-1 text-xs text-text focus-visible:outline-none"
+            >
+              <option value={ALL_CODECS}>All</option>
+              {audioFormatOptions.map((a) => (
+                <option key={a} value={a}>
+                  {a}
+                </option>
+              ))}
+            </select>
+          </label>
 
-                  {!collapsed && (
-                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
-                      {items.map((item) =>
-                        item.kind === "film" ? (
-                          <FilmCard key={item.film.id} film={item.film} />
-                        ) : stack ? (
-                          <StackedFilmCard
-                            key={`c${item.collectionId}`}
-                            collectionId={item.collectionId}
-                            collectionName={item.collectionName}
-                            films={item.films}
-                          />
-                        ) : (
-                          item.films.map((film) => <FilmCard key={film.id} film={film} />)
-                        ),
-                      )}
-                    </div>
-                  )}
-                </section>
-              );
-            })}
-          </div>
-        )}
+          <label className="flex items-center gap-1.5 text-xs text-text-muted">
+            Sort
+            <select
+              value={sort}
+              onChange={(e) => setSort(e.target.value as SortKey)}
+              className="rounded-md border border-border bg-bg-elevated px-2 py-1 text-xs text-text focus-visible:outline-none"
+            >
+              <option value="title">Title</option>
+              <option value="year">Year</option>
+              <option value="added">Recently added</option>
+            </select>
+          </label>
+
+          <label className="flex items-center gap-1.5 text-xs text-text-muted">
+            <input
+              type="checkbox"
+              checked={stack}
+              onChange={(e) => setStack(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-border accent-accent"
+            />
+            Stack collections
+          </label>
+        </div>
       </div>
+
+      <p className="text-xs text-text-faint">
+        {filtered.length === films.length ? (
+          <>
+            {films.length} film{films.length === 1 ? "" : "s"}
+          </>
+        ) : (
+          <>
+            {filtered.length} of {films.length} films
+          </>
+        )}
+      </p>
+
+      <FilmShelf title="New releases" films={newReleases} />
+      <FilmShelf title="Recently added" films={recentlyAdded} />
+
+      {filtered.length === 0 ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-1 py-24 text-center">
+          <p className="text-sm text-text-muted">No films match.</p>
+          <p className="text-xs text-text-faint">Try a different search or filter.</p>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-6">
+          {sortedCollectionItems.length > 0 && (
+            <section className="flex flex-col gap-3">
+              <SectionHeader
+                title={COLLECTIONS_SECTION}
+                count={sortedCollectionItems.reduce((sum, item) => sum + item.films.length, 0)}
+                collapsed={collapsedSections.has(COLLECTIONS_SECTION)}
+                onToggle={() => toggleSection(COLLECTIONS_SECTION)}
+              />
+              {!collapsedSections.has(COLLECTIONS_SECTION) && (
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
+                  {sortedCollectionItems.map((item) => (
+                    <StackedFilmCard
+                      key={`c${item.collectionId}`}
+                      collectionId={item.collectionId}
+                      collectionName={item.collectionName}
+                      films={item.films}
+                    />
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
+
+          {formatSections.map(({ key, items }) => (
+            <section key={key} className="flex flex-col gap-3">
+              <SectionHeader
+                title={key}
+                count={items.length}
+                collapsed={collapsedSections.has(key)}
+                onToggle={() => toggleSection(key)}
+              />
+              {!collapsedSections.has(key) && (
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
+                  {items.map((item) => (
+                    <FilmCard key={item.film.id} film={item.film} />
+                  ))}
+                </div>
+              )}
+            </section>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

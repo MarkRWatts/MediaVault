@@ -26,7 +26,7 @@ export default function FilmCard({
       />
       <div className={`flex flex-1 flex-col gap-1.5 ${compact ? "p-1.5" : "p-2.5"}`}>
         <h3
-          className={`line-clamp-2 font-semibold leading-snug text-text ${compact ? "text-xs" : "text-sm"}`}
+          className={`line-clamp-2 font-semibold leading-snug text-text ${compact ? "min-h-[2lh] text-xs" : "text-sm"}`}
         >
           {film.title}
         </h3>
