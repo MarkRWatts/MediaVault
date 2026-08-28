@@ -267,6 +267,44 @@ a flat role + manual provisioning. Auth/households (~5–6.5 days) and
 watch-history (~3 days) are still genuinely separate and shippable as two
 rounds.
 
+## Post-deploy correction: `isAppOwner` + `/account` + `/admin`
+
+Cross-checked against `/Users/mark/claude-code/template-app`, a more mature
+BetterAuth+households blueprint another session built. Surfaced a real
+architectural gap: `requireOwnerOrResponse()` was checking
+`Member.role === "owner"` for scan/enrich/report/admin access — the wrong
+field. That's a *per-household* role (whoever manages a given household),
+while "runs the scanning pipeline and sees the report" was always meant to
+be the product owner specifically, app-wide, regardless of who owns which
+household. Harmless while there was exactly one household with Mark as its
+only owner; would have broken the moment anyone else became a household
+owner (see below).
+
+**Done, merged**:
+- `User.isAppOwner Boolean @default(false)` — a new, separate field.
+  `requireOwnerOrResponse()`/`requireOwnerOrRedirect()` now check this
+  instead of `Member.role`. `scripts/grant-app-owner.ts <email>` grants it.
+  **Must be run against production immediately after this deploys** — until
+  it runs, `isAppOwner` is `false` for everyone, including Mark, so scan/
+  enrich/report/admin would be unreachable in the gap between deploy and
+  running the script.
+- `/household` rebuilt into a unified `/account` page (identity, household
+  name + rename, member list with promote/demote/remove, invite form,
+  delete-account) — matches the template's shape, MediaVault's own dark
+  styling. Nav link renamed "Account", pointing at `/account`.
+- `/admin` — access-code minting/revoking UI (`AccessCode` gained `note`/
+  `sentAt` fields) plus a content-free audit log (`AuditLog` model,
+  `logAudit()`) recording who did what kind of action, never the content.
+  Gated by `isAppOwner`.
+- Household-scoped actions (rename, promote/demote/remove-member) stay
+  gated by `Member.role === "owner"`, deliberately NOT switched to
+  `isAppOwner` — that's the whole point of the two staying separate.
+
+**Deliberately not adopted from the template**: its sidebar/left-nav
+layout (kept MediaVault's existing top nav) and its branded HTML email
+system (kept the minimal plain-text-first style already used for OTP
+emails).
+
 ## Explicitly deferred (not in this plan)
 
 - **Jellyfin SSO** (BetterAuth as an OIDC provider via `jellyfin-plugin-sso`,
