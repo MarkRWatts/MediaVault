@@ -16,7 +16,11 @@ export default function NavLinks() {
   const pathname = usePathname();
 
   return (
-    <nav aria-label="Primary" className="flex items-center gap-1">
+    // Six links no longer fit a narrow phone's width alongside the logo —
+    // rather than let them get clipped/squashed off-screen, the row scrolls
+    // horizontally (same pattern FilmShelf already uses), with shrink-0 so
+    // an individual link truncates by scrolling into view, not by shrinking.
+    <nav aria-label="Primary" className="flex min-w-0 items-center gap-1 overflow-x-auto">
       {LINKS.map((link) => {
         const active =
           link.href === "/" ? pathname === "/" : pathname.startsWith(link.href);
@@ -25,7 +29,7 @@ export default function NavLinks() {
             key={link.href}
             href={link.href}
             aria-current={active ? "page" : undefined}
-            className={`rounded-md px-3 py-1.5 text-sm font-medium tracking-wide transition-colors ${
+            className={`shrink-0 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium tracking-wide transition-colors ${
               active
                 ? "text-accent bg-accent-dim"
                 : "text-text-muted hover:text-text hover:bg-bg-hover"

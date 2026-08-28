@@ -146,10 +146,18 @@ export async function searchMovieByTitleYear(title: string, year: number | null)
   const want = normalizeTitle(title);
   const yearOk = (r: { release_date?: string }) =>
     !year || !r.release_date || Math.abs(Number(r.release_date.slice(0, 4)) - year) <= 1;
+  // Unlike enrichOneFilm's own pickHit (same shape, trusted filename input),
+  // this NEVER falls back to TMDB's top-ranked result when nothing matches
+  // the normalised title — the title here comes from a barcode-lookup
+  // service's noisy retailer listing text, which is often garbled or just
+  // wrong. Confidently auto-picking "closest guess" on untrusted input
+  // silently added the wrong film to real scans; returning null (-> a
+  // "couldn't identify" result the user can correct manually) is the safer
+  // failure mode.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const pickHit = (results: any[] | undefined): any => {
     if (!results?.length) return undefined;
-    return results.slice(0, 5).find((r) => normalizeTitle(r.title ?? "") === want && yearOk(r)) ?? results[0];
+    return results.slice(0, 5).find((r) => normalizeTitle(r.title ?? "") === want && yearOk(r));
   };
 
   const yearParams: Record<string, string> = year ? { year: String(year) } : {};

@@ -218,6 +218,26 @@ model ScanRun {
   log        String? // JSON array of strings
 }
 
+// A barcode scanned via the /scan batch mode but not yet resolved to an
+// added Film/Album — a persistent, cross-device worklist (deliberately NOT
+// per-browser localStorage, so a phone scanning session is visible from any
+// device). A row is deleted once its barcode is successfully added to the
+// collection; it stays here while pending, unresolved ("unknown"), or
+// wrong, so the user can retry or correct it later. See
+// src/app/api/scan-queue for the CRUD + processing.
+model ScanQueueItem {
+  id           Int      @id @default(autoincrement())
+  barcode      String   @unique
+  mediaType    String   @default("auto") // auto | film | album
+  status       String   @default("pending") // pending | looking_up | resolved | error
+  resultJson   String? // serialized LookupResult, set once status=resolved
+  errorMessage String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([status])
+}
+
 // --- Music ---
 // Same philosophy as movies/TV: Album rows exist for back-catalogue entries
 // we DON'T own (owned=false), created from MusicBrainz release-group listings.

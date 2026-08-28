@@ -5,7 +5,7 @@ import Link from "next/link";
 import { formatLabel } from "@/lib/constants";
 import NoPoster from "@/components/NoPoster";
 
-// --- API response shapes (mirror src/app/api/barcode/*) ---
+// --- API response shapes (mirror src/app/api/barcode/*, src/app/api/scan-queue/*) ---
 
 interface OwnedFilm {
   status: "owned";
@@ -46,10 +46,11 @@ interface Unknown {
 }
 type LookupResult = OwnedFilm | OwnedAlbum | NotOwnedFilm | NotOwnedAlbum | Unknown;
 type SearchCandidate = { kind: "film"; candidate: FilmCandidate } | { kind: "album"; candidate: AlbumCandidate };
+type AddedRef = { href: string; label: string };
 
 const FILM_MEDIA = ["BLURAY", "DVD", "UHD"] as const;
 const ALBUM_MEDIA = ["CD", "VINYL"] as const;
-const QUEUE_STORAGE_KEY = "mediavault-scan-queue";
+const QUEUE_POLL_MS = 2500;
 
 function guessAlbumMedium(format: string | null): "CD" | "VINYL" {
   return format?.toLowerCase().includes("vinyl") ? "VINYL" : "CD";
@@ -57,41 +58,19 @@ function guessAlbumMedium(format: string | null): "CD" | "VINYL" {
 
 type MediaType = "auto" | "film" | "album";
 
-// --- Batch queue ---
-
+// A row from ScanQueueItem (prisma/schema.prisma) — the persistent,
+// cross-device worklist. Unlike the old localStorage-backed queue, adding a
+// barcode to the collection deletes its row server-side (see
+// /api/scan-queue/[id]) rather than tagging it "added" locally, so there's
+// no separate `added` field here — a resolved item just disappears once
+// it's actually in the collection.
 interface QueueItem {
+  id: number;
   barcode: string;
-  status: "pending" | "looking_up" | "resolved" | "error";
-  /** Media type selected when this barcode was scanned — captured per item
-   *  rather than read live from page state, so switching the selector mid-
-   *  session doesn't retroactively change what an already-queued item
-   *  resolves as. */
   mediaType: MediaType;
+  status: "pending" | "looking_up" | "resolved" | "error";
   result?: LookupResult;
   error?: string;
-  added?: { href: string; label: string };
-}
-
-function loadQueue(): QueueItem[] {
-  try {
-    const raw = localStorage.getItem(QUEUE_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as QueueItem[];
-    // A "looking_up" item from a previous session has no fetch actually in
-    // flight anymore — put it back in line rather than stalling forever.
-    return parsed.map((q) => (q.status === "looking_up" ? { ...q, status: "pending" } : q));
-  } catch {
-    return [];
-  }
-}
-
-function saveQueue(queue: QueueItem[]) {
-  try {
-    localStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(queue));
-  } catch {
-    // Storage full/unavailable (private browsing) — batch mode still works
-    // for the current tab session, it just won't survive a reload.
-  }
 }
 
 // Small cover/poster thumbnail so the user can visually confirm a lookup
@@ -148,6 +127,244 @@ function thumbFor(result: LookupResult): { src: string | null; title: string; ye
   return { src: null, title: "?", year: null, aspect: "poster" };
 }
 
+// Add one candidate (from a title search) to the collection. Shared by the
+// top-level "Search by title" panel and each queue row's correction widget
+// — `barcode` is only set for the latter, so the barcode gets attached to
+// the FilmPhysicalCopy/PhysicalCopy row same as an auto-resolved match.
+async function addCandidate(
+  candidate: SearchCandidate,
+  medium: string,
+  barcode?: string,
+): Promise<AddedRef> {
+  const body =
+    candidate.kind === "film"
+      ? { type: "film", tmdbId: candidate.candidate.tmdbId, medium, barcode }
+      : { type: "album", mbid: candidate.candidate.mbid, medium, barcode };
+  const res = await fetch("/api/barcode/add", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return candidate.kind === "film"
+    ? { href: `/film/${data.film.id}`, label: candidate.candidate.title }
+    : { href: `/music/album/${data.album.id}`, label: candidate.candidate.title };
+}
+
+// "Search by title" — a first-class alternative to scanning (top-level
+// panel), and a per-row correction tool for a wrong or unresolved batch
+// scan (an auto barcode-derived title guess is inherently less trustworthy
+// than one the user typed themselves — see searchMovieByTitleYear's
+// comment in src/lib/tmdb.ts). onAdd resolves once the pick is actually
+// saved; the caller decides what happens next (top-level: just show
+// "Added"; a queue row: remove itself from the queue).
+function TitleSearchWidget({
+  defaultType,
+  barcode,
+  onAdded,
+}: {
+  defaultType: "film" | "album";
+  barcode?: string;
+  onAdded?: (added: AddedRef) => void;
+}) {
+  const [searchType, setSearchType] = useState<"film" | "album">(defaultType);
+  const [title, setTitle] = useState("");
+  const [artist, setArtist] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [results, setResults] = useState<SearchCandidate[] | null>(null);
+  const [filmMedium, setFilmMedium] = useState<(typeof FILM_MEDIA)[number]>("BLURAY");
+  const [albumMedium, setAlbumMedium] = useState<(typeof ALBUM_MEDIA)[number]>("CD");
+  const [addedMap, setAddedMap] = useState<Record<string, AddedRef>>({});
+  const [addingKey, setAddingKey] = useState<string | null>(null);
+
+  const runSearch = async () => {
+    if (!title.trim()) return;
+    setSearching(true);
+    setError(null);
+    setResults(null);
+    try {
+      if (searchType === "film") {
+        const res = await fetch("/api/barcode/search-movie", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: title.trim() }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        setResults((data.results as FilmCandidate[]).map((c) => ({ kind: "film" as const, candidate: c })));
+      } else {
+        const res = await fetch("/api/barcode/search-album", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: title.trim(), artist: artist.trim() || undefined }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        setResults((data.results as AlbumCandidate[]).map((c) => ({ kind: "album" as const, candidate: c })));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Search failed");
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const handleAdd = async (r: SearchCandidate) => {
+    const key = r.kind === "film" ? String(r.candidate.tmdbId) : r.candidate.mbid;
+    setAddingKey(key);
+    setError(null);
+    try {
+      const added = await addCandidate(r, r.kind === "film" ? filmMedium : albumMedium, barcode);
+      setAddedMap((prev) => ({ ...prev, [key]: added }));
+      onAdded?.(added);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Add failed");
+    } finally {
+      setAddingKey(null);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-border bg-bg-elevated p-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-text">Search by title</h2>
+        <div className="flex items-center gap-1.5" role="group" aria-label="Search type">
+          {(
+            [
+              { key: "film", label: "Movie" },
+              { key: "album", label: "Album" },
+            ] as const
+          ).map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => {
+                setSearchType(t.key);
+                setResults(null);
+                setError(null);
+              }}
+              aria-pressed={searchType === t.key}
+              className={`rounded-full border px-2.5 py-1 text-xs font-medium tracking-wide transition-colors ${
+                searchType === t.key
+                  ? "border-accent-border bg-accent-dim text-accent"
+                  : "border-border text-text-muted hover:border-border-strong hover:text-text"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          runSearch();
+        }}
+        className="flex flex-col gap-2 sm:flex-row"
+      >
+        <input
+          type="text"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder={searchType === "film" ? "Movie title" : "Album title"}
+          className="flex-1 rounded-md border border-border bg-bg px-3 py-1.5 text-sm text-text placeholder:text-text-faint focus-visible:outline-none"
+        />
+        {searchType === "album" && (
+          <input
+            type="text"
+            value={artist}
+            onChange={(e) => setArtist(e.target.value)}
+            placeholder="Artist (optional)"
+            className="flex-1 rounded-md border border-border bg-bg px-3 py-1.5 text-sm text-text placeholder:text-text-faint focus-visible:outline-none"
+          />
+        )}
+        <button
+          type="submit"
+          disabled={searching || !title.trim()}
+          className="inline-flex min-h-10 items-center justify-center rounded-md border border-border px-3 py-1 text-sm font-medium text-text-muted transition-colors hover:border-border-strong hover:text-text disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0"
+        >
+          {searching ? "Searching…" : "Search"}
+        </button>
+      </form>
+
+      {error && <p className="text-xs text-missing">{error}</p>}
+
+      {results && (
+        <div className="flex flex-col gap-2">
+          {results.length === 0 && <p className="text-xs text-text-faint">No matches found.</p>}
+          {results.map((r) => {
+            const key = r.kind === "film" ? String(r.candidate.tmdbId) : r.candidate.mbid;
+            const rowAdded = addedMap[key];
+            const thumbSrc =
+              r.kind === "film"
+                ? r.candidate.posterPath
+                  ? `/api/poster/w154${r.candidate.posterPath}`
+                  : null
+                : r.candidate.coverArtUrl;
+
+            return (
+              <div key={key} className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2">
+                <div className="flex items-center gap-2">
+                  <Thumb src={thumbSrc} title={r.candidate.title} year={r.candidate.year} aspect={r.kind === "film" ? "poster" : "square"} />
+                  <span className="text-sm text-text">
+                    {r.kind === "album" ? `${r.candidate.artistName} — ` : ""}
+                    {r.candidate.title} {r.candidate.year ? `(${r.candidate.year})` : ""}
+                  </span>
+                </div>
+
+                {rowAdded ? (
+                  <Link href={rowAdded.href} className="text-xs text-accent hover:underline">
+                    Added — view
+                  </Link>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    {r.kind === "film" ? (
+                      <select
+                        value={filmMedium}
+                        onChange={(e) => setFilmMedium(e.target.value as (typeof FILM_MEDIA)[number])}
+                        className="rounded-md border border-border bg-bg-elevated px-1.5 py-1 text-xs text-text"
+                      >
+                        {FILM_MEDIA.map((m) => (
+                          <option key={m} value={m}>
+                            {formatLabel(m)}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <select
+                        value={albumMedium}
+                        onChange={(e) => setAlbumMedium(e.target.value as (typeof ALBUM_MEDIA)[number])}
+                        className="rounded-md border border-border bg-bg-elevated px-1.5 py-1 text-xs text-text"
+                      >
+                        {ALBUM_MEDIA.map((m) => (
+                          <option key={m} value={m}>
+                            {m === "VINYL" ? "Vinyl" : "CD"}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    <button
+                      type="button"
+                      disabled={addingKey === key}
+                      onClick={() => handleAdd(r)}
+                      className="rounded-md border border-accent px-2 py-1 text-xs font-medium text-accent transition-colors hover:bg-accent/10 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {addingKey === key ? "Adding…" : "Add"}
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function ScanPage() {
   const videoRef = useRef<HTMLVideoElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -166,21 +383,9 @@ export default function ScanPage() {
   const [filmMedium, setFilmMedium] = useState<(typeof FILM_MEDIA)[number]>("BLURAY");
   const [albumMedium, setAlbumMedium] = useState<(typeof ALBUM_MEDIA)[number]>("CD");
   const [adding, setAdding] = useState(false);
-  const [added, setAdded] = useState<{ href: string; label: string } | null>(null);
-
-  // "Search by title" — a first-class alternative to scanning, not just a
-  // fallback shown after a failed barcode (see runTitleSearch).
-  const [searchType, setSearchType] = useState<"film" | "album">("film");
-  const [searchTitle, setSearchTitle] = useState("");
-  const [searchArtist, setSearchArtist] = useState("");
-  const [searching, setSearching] = useState(false);
-  const [searchError, setSearchError] = useState<string | null>(null);
-  const [searchResults, setSearchResults] = useState<SearchCandidate[] | null>(null);
-  const [searchAdded, setSearchAdded] = useState<Record<string, { href: string; label: string }>>({});
-  const [addingKey, setAddingKey] = useState<string | null>(null);
+  const [added, setAdded] = useState<AddedRef | null>(null);
 
   const [queue, setQueue] = useState<QueueItem[]>([]);
-  const [queueLoaded, setQueueLoaded] = useState(false);
   const processingRef = useRef(false);
 
   // The camera-decode callback closes over lookup/queueScan once when the
@@ -192,23 +397,42 @@ export default function ScanPage() {
     mediaTypeRef.current = mediaType;
   }, [mediaType]);
 
-  // Load the queue once on mount (client-only — localStorage isn't
-  // available during SSR) and persist it on every change after that, so a
-  // scanning session (a shelf of discs) survives a reload or closed tab.
-  // queueLoaded gates the save effect: both effects fire on the same
-  // initial mount, in order, and without this guard the save effect's
-  // first run would still close over the pre-load `queue` ([]) and
-  // immediately overwrite whatever was in storage before the load ever
-  // gets applied — a ref flag doesn't fix this (its mutation doesn't force
-  // a fresh closure the way a state dependency does).
+  const fetchQueue = useCallback(async () => {
+    try {
+      const res = await fetch("/api/scan-queue");
+      const data = await res.json();
+      setQueue(data.items ?? []);
+    } catch {
+      // transient network hiccup — the next poll (or manual action) retries
+    }
+  }, []);
+
+  // The scan queue is server-side (ScanQueueItem), not per-browser
+  // localStorage — a phone mid-scan and a desktop reviewing results see the
+  // same list. Fetch once on mount (inline here, rather than delegating to
+  // fetchQueue, so the setState call is visibly scoped to this effect's own
+  // cleanup — mirrors AdminStrip's mount fetch), then poll while Batch mode
+  // is open so this device picks up items/results another device is adding.
   useEffect(() => {
-    setQueue(loadQueue());
-    setQueueLoaded(true);
+    let ignore = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/scan-queue");
+        const data = await res.json();
+        if (!ignore) setQueue(data.items ?? []);
+      } catch {
+        // transient network hiccup — the poll effect below retries
+      }
+    })();
+    return () => {
+      ignore = true;
+    };
   }, []);
   useEffect(() => {
-    if (!queueLoaded) return;
-    saveQueue(queue);
-  }, [queue, queueLoaded]);
+    if (mode !== "batch") return;
+    const id = setInterval(fetchQueue, QUEUE_POLL_MS);
+    return () => clearInterval(id);
+  }, [mode, fetchQueue]);
 
   const lookup = useCallback(async (code: string) => {
     setBarcode(code);
@@ -237,20 +461,29 @@ export default function ScanPage() {
   }, []);
 
   const queueScan = useCallback((code: string) => {
-    setQueue((prev) =>
-      prev.some((q) => q.barcode === code)
-        ? prev
-        : [...prev, { barcode: code, status: "pending", mediaType: mediaTypeRef.current }],
-    );
     setFlash(true);
     setTimeout(() => setFlash(false), 400);
+    (async () => {
+      try {
+        const res = await fetch("/api/scan-queue", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ barcode: code, mediaType: mediaTypeRef.current }),
+        });
+        const item = await res.json();
+        setQueue((prev) => (prev.some((q) => q.barcode === item.barcode) ? prev : [...prev, item]));
+      } catch {
+        // Best-effort — the row may still have been created server-side even
+        // if this response was lost; the next poll picks it up either way.
+      }
+    })();
   }, []);
 
   // Camera scan loop. Single mode: stops on a decode and hands off to
   // lookup() (paused while a result is showing, re-armed by resetScan()).
   // Batch mode: keeps running continuously — each decode just queues the
-  // barcode (deduped) so the user can scan a stack of discs back-to-back
-  // without waiting on a lookup between each one.
+  // barcode (deduped server-side) so the user can scan a stack of discs
+  // back-to-back without waiting on a lookup between each one.
   useEffect(() => {
     if (mode === "single" && barcode !== null) return; // showing a lookup result — camera stays off
 
@@ -318,49 +551,28 @@ export default function ScanPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, barcode === null]);
 
-  // Batch queue processor — one lookup in flight at a time (polite to the
-  // free MusicBrainz/UPCitemdb tiers), picks up the next "pending" item
-  // whenever the queue changes. Runs regardless of which mode is active, so
-  // a backlog keeps draining even after switching back to single-scan mode.
-  //
-  // processingRef (not state) guards re-entrancy: marking an item
-  // "looking_up" via setQueue is itself a `queue` change, which re-fires
-  // this effect before the fetch resolves. A `cancelled` flag tied to the
-  // effect's own cleanup looked like the obvious guard, but the re-fire
-  // triggers that very cleanup on the in-flight closure and cancels the
-  // fetch that's still running — the item then sits at "looking_up"
-  // forever, no new fetch ever starts. A ref sidesteps this: setting it
-  // doesn't schedule a re-render, so the fetch already in flight is never
-  // implicitly cancelled by its own start.
+  // Batch queue processor — ticks /api/scan-queue/process, which does the
+  // actual work server-side (and atomically claims the row, so two devices
+  // ticking at once can't double-process it — see that route). This effect
+  // just decides WHEN to tick: whenever this device sees a pending item.
+  // processingRef avoids piling up redundant ticks from this client while
+  // one is in flight; it's an efficiency guard, not a correctness one — the
+  // server-side claim is what actually makes concurrent ticks safe.
   useEffect(() => {
     if (processingRef.current) return;
-    const next = queue.find((q) => q.status === "pending");
-    if (!next) return;
+    if (!queue.some((q) => q.status === "pending")) return;
 
     processingRef.current = true;
-    setQueue((prev) => prev.map((q) => (q.barcode === next.barcode ? { ...q, status: "looking_up" } : q)));
-
     (async () => {
       try {
-        const type = next.mediaType === "auto" ? undefined : next.mediaType;
-        const res = await fetch("/api/barcode/lookup", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ barcode: next.barcode, type }),
-        });
+        const res = await fetch("/api/scan-queue/process", { method: "POST" });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-        setQueue((prev) =>
-          prev.map((q) => (q.barcode === next.barcode ? { ...q, status: "resolved", result: data as LookupResult } : q)),
-        );
-      } catch (err) {
-        setQueue((prev) =>
-          prev.map((q) =>
-            q.barcode === next.barcode
-              ? { ...q, status: "error", error: err instanceof Error ? err.message : "Lookup failed" }
-              : q,
-          ),
-        );
+        if (data.item) {
+          setQueue((prev) => prev.map((q) => (q.id === data.item.id ? data.item : q)));
+        }
+      } catch {
+        // next poll (or the next pending item triggering this effect again)
+        // will retry
       } finally {
         processingRef.current = false;
       }
@@ -377,14 +589,8 @@ export default function ScanPage() {
   const addFilm = async (candidate: FilmCandidate) => {
     setAdding(true);
     try {
-      const res = await fetch("/api/barcode/add", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "film", tmdbId: candidate.tmdbId, medium: filmMedium, barcode }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      setAdded({ href: `/film/${data.film.id}`, label: candidate.title });
+      const added = await addCandidate({ kind: "film", candidate }, filmMedium, barcode ?? undefined);
+      setAdded(added);
     } catch (err) {
       setLookupError(err instanceof Error ? err.message : "Add failed");
     } finally {
@@ -395,14 +601,8 @@ export default function ScanPage() {
   const addAlbum = async (candidate: AlbumCandidate) => {
     setAdding(true);
     try {
-      const res = await fetch("/api/barcode/add", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "album", mbid: candidate.mbid, medium: albumMedium, barcode }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      setAdded({ href: `/music/album/${data.album.id}`, label: candidate.title });
+      const added = await addCandidate({ kind: "album", candidate }, albumMedium, barcode ?? undefined);
+      setAdded(added);
     } catch (err) {
       setLookupError(err instanceof Error ? err.message : "Add failed");
     } finally {
@@ -410,122 +610,51 @@ export default function ScanPage() {
     }
   };
 
-  const addQueueItemFilm = async (item: QueueItem, candidate: FilmCandidate, medium: string) => {
+  // A queue item is fully handled once its barcode is actually in the
+  // collection — delete the server row (so it doesn't come back on the next
+  // poll/device) and drop it locally.
+  const removeQueueItem = async (id: number) => {
+    setQueue((prev) => prev.filter((q) => q.id !== id));
     try {
-      const res = await fetch("/api/barcode/add", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "film", tmdbId: candidate.tmdbId, medium, barcode: item.barcode }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      setQueue((prev) =>
-        prev.map((q) => (q.barcode === item.barcode ? { ...q, added: { href: `/film/${data.film.id}`, label: candidate.title } } : q)),
-      );
-    } catch (err) {
-      setQueue((prev) =>
-        prev.map((q) => (q.barcode === item.barcode ? { ...q, error: err instanceof Error ? err.message : "Add failed" } : q)),
-      );
+      await fetch(`/api/scan-queue/${id}`, { method: "DELETE" });
+    } catch {
+      fetchQueue(); // reconcile — the row may still exist server-side
     }
   };
 
-  const addQueueItemAlbum = async (item: QueueItem, candidate: AlbumCandidate, medium: string) => {
+  const addQueueItem = async (item: QueueItem, candidate: SearchCandidate, medium: string) => {
+    const added = await addCandidate(candidate, medium, item.barcode);
+    await removeQueueItem(item.id);
+    return added;
+  };
+
+  const retryQueueItem = async (id: number) => {
+    setQueue((prev) => prev.map((q) => (q.id === id ? { ...q, status: "pending", result: undefined, error: undefined } : q)));
     try {
-      const res = await fetch("/api/barcode/add", {
-        method: "POST",
+      const res = await fetch(`/api/scan-queue/${id}`, {
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "album", mbid: candidate.mbid, medium, barcode: item.barcode }),
+        body: JSON.stringify({ action: "retry" }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      setQueue((prev) =>
-        prev.map((q) =>
-          q.barcode === item.barcode ? { ...q, added: { href: `/music/album/${data.album.id}`, label: candidate.title } } : q,
-        ),
-      );
-    } catch (err) {
-      setQueue((prev) =>
-        prev.map((q) => (q.barcode === item.barcode ? { ...q, error: err instanceof Error ? err.message : "Add failed" } : q)),
-      );
+      const item = await res.json();
+      setQueue((prev) => prev.map((q) => (q.id === id ? item : q)));
+    } catch {
+      fetchQueue();
     }
   };
 
-  const removeQueueItem = (code: string) => setQueue((prev) => prev.filter((q) => q.barcode !== code));
-  const retryQueueItem = (code: string) =>
-    setQueue((prev) => prev.map((q) => (q.barcode === code ? { barcode: code, status: "pending", mediaType: q.mediaType } : q)));
-  const clearResolvedQueueItems = () =>
-    setQueue((prev) => prev.filter((q) => q.status === "pending" || q.status === "looking_up"));
-
-  const runTitleSearch = async () => {
-    if (!searchTitle.trim()) return;
-    setSearching(true);
-    setSearchError(null);
-    setSearchResults(null);
-    try {
-      if (searchType === "film") {
-        const res = await fetch("/api/barcode/search-movie", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title: searchTitle.trim() }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-        setSearchResults((data.results as FilmCandidate[]).map((c) => ({ kind: "film" as const, candidate: c })));
-      } else {
-        const res = await fetch("/api/barcode/search-album", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title: searchTitle.trim(), artist: searchArtist.trim() || undefined }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-        setSearchResults((data.results as AlbumCandidate[]).map((c) => ({ kind: "album" as const, candidate: c })));
-      }
-    } catch (err) {
-      setSearchError(err instanceof Error ? err.message : "Search failed");
-    } finally {
-      setSearching(false);
-    }
-  };
-
-  const addSearchFilm = async (c: FilmCandidate) => {
-    setAddingKey(String(c.tmdbId));
-    try {
-      const res = await fetch("/api/barcode/add", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "film", tmdbId: c.tmdbId, medium: filmMedium }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      setSearchAdded((prev) => ({ ...prev, [String(c.tmdbId)]: { href: `/film/${data.film.id}`, label: c.title } }));
-    } catch (err) {
-      setSearchError(err instanceof Error ? err.message : "Add failed");
-    } finally {
-      setAddingKey(null);
-    }
-  };
-
-  const addSearchAlbum = async (c: AlbumCandidate) => {
-    setAddingKey(c.mbid);
-    try {
-      const res = await fetch("/api/barcode/add", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "album", mbid: c.mbid, medium: albumMedium }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      setSearchAdded((prev) => ({ ...prev, [c.mbid]: { href: `/music/album/${data.album.id}`, label: c.title } }));
-    } catch (err) {
-      setSearchError(err instanceof Error ? err.message : "Add failed");
-    } finally {
-      setAddingKey(null);
-    }
+  // Only sweeps items with nothing left to decide — an already-owned match
+  // needs no further action, so it's safe to clear. Not-owned/unknown/error
+  // items stay (that's the whole point of a persistent worklist: they need
+  // an Add or a correction, not to quietly vanish).
+  const clearResolvedQueueItems = async () => {
+    const clearable = queue.filter((q) => q.status === "resolved" && q.result?.status === "owned");
+    setQueue((prev) => prev.filter((q) => !clearable.some((c) => c.id === q.id)));
+    await Promise.all(clearable.map((q) => fetch(`/api/scan-queue/${q.id}`, { method: "DELETE" }).catch(() => {})));
   };
 
   const pendingCount = queue.filter((q) => q.status === "pending" || q.status === "looking_up").length;
-  const doneCount = queue.length - pendingCount;
+  const clearableCount = queue.filter((q) => q.status === "resolved" && q.result?.status === "owned").length;
 
   return (
     <div className="mx-auto flex w-full max-w-lg flex-1 flex-col gap-4 px-4 py-8 sm:px-6">
@@ -655,21 +784,22 @@ export default function ScanPage() {
           {queue.length === 0 ? (
             <p className="text-sm text-text-faint">
               Scan discs one after another — each one is added to the queue below and looked up in the
-              background.
+              background. The queue is shared across devices, so it&rsquo;s still here if you check back from
+              another browser.
             </p>
           ) : (
             <div className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
                 <p className="text-xs text-text-faint">
-                  {queue.length} scanned · {pendingCount} pending{doneCount > 0 ? ` · ${doneCount} done` : ""}
+                  {queue.length} scanned · {pendingCount} pending
                 </p>
-                {doneCount > 0 && (
+                {clearableCount > 0 && (
                   <button
                     type="button"
                     onClick={clearResolvedQueueItems}
                     className="text-xs font-medium text-text-muted hover:text-text"
                   >
-                    Clear finished
+                    Clear already-owned
                   </button>
                 )}
               </div>
@@ -679,16 +809,11 @@ export default function ScanPage() {
                 .reverse()
                 .map((item) => (
                   <QueueRow
-                    key={item.barcode}
+                    key={item.id}
                     item={item}
-                    filmMedium={filmMedium}
-                    setFilmMedium={setFilmMedium}
-                    albumMedium={albumMedium}
-                    setAlbumMedium={setAlbumMedium}
-                    onAddFilm={(c) => addQueueItemFilm(item, c, filmMedium)}
-                    onAddAlbum={(c) => addQueueItemAlbum(item, c, albumMedium)}
-                    onRemove={() => removeQueueItem(item.barcode)}
-                    onRetry={() => retryQueueItem(item.barcode)}
+                    onAdd={(candidate, medium) => addQueueItem(item, candidate, medium)}
+                    onRemove={() => removeQueueItem(item.id)}
+                    onRetry={() => retryQueueItem(item.id)}
                   />
                 ))}
             </div>
@@ -838,299 +963,191 @@ export default function ScanPage() {
         </div>
       )}
 
-      {mode === "single" && (
-        <div className="flex flex-col gap-3 rounded-lg border border-border bg-bg-elevated p-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-text">Search by title</h2>
-            <div className="flex items-center gap-1.5" role="group" aria-label="Search type">
-              {(
-                [
-                  { key: "film", label: "Movie" },
-                  { key: "album", label: "Album" },
-                ] as const
-              ).map((t) => (
-                <button
-                  key={t.key}
-                  type="button"
-                  onClick={() => {
-                    setSearchType(t.key);
-                    setSearchResults(null);
-                    setSearchError(null);
-                  }}
-                  aria-pressed={searchType === t.key}
-                  className={`rounded-full border px-2.5 py-1 text-xs font-medium tracking-wide transition-colors ${
-                    searchType === t.key
-                      ? "border-accent-border bg-accent-dim text-accent"
-                      : "border-border text-text-muted hover:border-border-strong hover:text-text"
-                  }`}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              runTitleSearch();
-            }}
-            className="flex flex-col gap-2 sm:flex-row"
-          >
-            <input
-              type="text"
-              value={searchTitle}
-              onChange={(e) => setSearchTitle(e.target.value)}
-              placeholder={searchType === "film" ? "Movie title" : "Album title"}
-              className="flex-1 rounded-md border border-border bg-bg px-3 py-1.5 text-sm text-text placeholder:text-text-faint focus-visible:outline-none"
-            />
-            {searchType === "album" && (
-              <input
-                type="text"
-                value={searchArtist}
-                onChange={(e) => setSearchArtist(e.target.value)}
-                placeholder="Artist (optional)"
-                className="flex-1 rounded-md border border-border bg-bg px-3 py-1.5 text-sm text-text placeholder:text-text-faint focus-visible:outline-none"
-              />
-            )}
-            <button
-              type="submit"
-              disabled={searching || !searchTitle.trim()}
-              className="inline-flex min-h-10 items-center justify-center rounded-md border border-border px-3 py-1 text-sm font-medium text-text-muted transition-colors hover:border-border-strong hover:text-text disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0"
-            >
-              {searching ? "Searching…" : "Search"}
-            </button>
-          </form>
-
-          {searchError && <p className="text-xs text-missing">{searchError}</p>}
-
-          {searchResults && (
-            <div className="flex flex-col gap-2">
-              {searchResults.length === 0 && <p className="text-xs text-text-faint">No matches found.</p>}
-              {searchResults.map((r) => {
-                const key = r.kind === "film" ? String(r.candidate.tmdbId) : r.candidate.mbid;
-                const rowAdded = searchAdded[key];
-                const thumbSrc =
-                  r.kind === "film"
-                    ? r.candidate.posterPath
-                      ? `/api/poster/w154${r.candidate.posterPath}`
-                      : null
-                    : r.candidate.coverArtUrl;
-
-                return (
-                  <div key={key} className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2">
-                    <div className="flex items-center gap-2">
-                      <Thumb src={thumbSrc} title={r.candidate.title} year={r.candidate.year} aspect={r.kind === "film" ? "poster" : "square"} />
-                      <span className="text-sm text-text">
-                        {r.kind === "album" ? `${r.candidate.artistName} — ` : ""}
-                        {r.candidate.title} {r.candidate.year ? `(${r.candidate.year})` : ""}
-                      </span>
-                    </div>
-
-                    {rowAdded ? (
-                      <Link href={rowAdded.href} className="text-xs text-accent hover:underline">
-                        Added — view
-                      </Link>
-                    ) : (
-                      <div className="flex items-center gap-2">
-                        {r.kind === "film" ? (
-                          <select
-                            value={filmMedium}
-                            onChange={(e) => setFilmMedium(e.target.value as (typeof FILM_MEDIA)[number])}
-                            className="rounded-md border border-border bg-bg-elevated px-1.5 py-1 text-xs text-text"
-                          >
-                            {FILM_MEDIA.map((m) => (
-                              <option key={m} value={m}>
-                                {formatLabel(m)}
-                              </option>
-                            ))}
-                          </select>
-                        ) : (
-                          <select
-                            value={albumMedium}
-                            onChange={(e) => setAlbumMedium(e.target.value as (typeof ALBUM_MEDIA)[number])}
-                            className="rounded-md border border-border bg-bg-elevated px-1.5 py-1 text-xs text-text"
-                          >
-                            {ALBUM_MEDIA.map((m) => (
-                              <option key={m} value={m}>
-                                {m === "VINYL" ? "Vinyl" : "CD"}
-                              </option>
-                            ))}
-                          </select>
-                        )}
-                        <button
-                          type="button"
-                          disabled={addingKey === key}
-                          onClick={() => (r.kind === "film" ? addSearchFilm(r.candidate) : addSearchAlbum(r.candidate))}
-                          className="rounded-md border border-accent px-2 py-1 text-xs font-medium text-accent transition-colors hover:bg-accent/10 disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          {addingKey === key ? "Adding…" : "Add"}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
+      {mode === "single" && <TitleSearchWidget defaultType="film" />}
     </div>
   );
 }
 
 // One row in the batch queue — barcode, thumbnail once resolved, and
-// whatever action its current status calls for. Kept deliberately simpler
-// than the single-scan result panel: an unresolved ("unknown") barcode here
-// just points the user at Single scan's fuller manual-search flow rather
-// than duplicating it per row.
+// whatever action its current status calls for, plus a "Not right? Search
+// by title" toggle available on every non-in-flight status (an auto match
+// can be wrong, not just missing — see the misidentification note in
+// searchMovieByTitleYear).
 function QueueRow({
   item,
-  filmMedium,
-  setFilmMedium,
-  albumMedium,
-  setAlbumMedium,
-  onAddFilm,
-  onAddAlbum,
+  onAdd,
   onRemove,
   onRetry,
 }: {
   item: QueueItem;
-  filmMedium: (typeof FILM_MEDIA)[number];
-  setFilmMedium: (m: (typeof FILM_MEDIA)[number]) => void;
-  albumMedium: (typeof ALBUM_MEDIA)[number];
-  setAlbumMedium: (m: (typeof ALBUM_MEDIA)[number]) => void;
-  onAddFilm: (candidate: FilmCandidate) => void;
-  onAddAlbum: (candidate: AlbumCandidate) => void;
+  onAdd: (candidate: SearchCandidate, medium: string) => Promise<AddedRef>;
   onRemove: () => void;
   onRetry: () => void;
 }) {
+  const [filmMedium, setFilmMedium] = useState<(typeof FILM_MEDIA)[number]>("BLURAY");
+  const [albumMedium, setAlbumMedium] = useState<(typeof ALBUM_MEDIA)[number]>("CD");
   const [adding, setAdding] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
+  const [correcting, setCorrecting] = useState(false);
 
-  const handleAddFilm = async (c: FilmCandidate) => {
+  const handleAdd = async (candidate: SearchCandidate, medium: string) => {
     setAdding(true);
-    await onAddFilm(c);
-    setAdding(false);
-  };
-  const handleAddAlbum = async (c: AlbumCandidate) => {
-    setAdding(true);
-    await onAddAlbum(c);
-    setAdding(false);
+    setAddError(null);
+    try {
+      await onAdd(candidate, medium);
+      // Row disappears once the parent removes it from the queue — nothing
+      // else to do here.
+    } catch (err) {
+      setAddError(err instanceof Error ? err.message : "Add failed");
+    } finally {
+      setAdding(false);
+    }
   };
 
   const thumb = item.result && item.status === "resolved" ? thumbFor(item.result) : null;
+  const inFlight = item.status === "pending" || item.status === "looking_up";
+  const defaultCorrectionType = item.mediaType === "album" ? "album" : "film";
 
   return (
-    <div className="flex items-start gap-3 rounded-lg border border-border bg-bg-elevated p-3">
-      {thumb ? (
-        <Thumb src={thumb.src} title={thumb.title} year={thumb.year} aspect={thumb.aspect} />
-      ) : (
-        <div className="flex aspect-2/3 w-14 shrink-0 items-center justify-center rounded border border-border bg-bg text-text-faint">
-          <span className="text-[10px]">···</span>
-        </div>
-      )}
+    <div className="flex flex-col gap-2 rounded-lg border border-border bg-bg-elevated p-3">
+      <div className="flex items-start gap-3">
+        {thumb ? (
+          <Thumb src={thumb.src} title={thumb.title} year={thumb.year} aspect={thumb.aspect} />
+        ) : (
+          <div className="flex aspect-2/3 w-14 shrink-0 items-center justify-center rounded border border-border bg-bg text-text-faint">
+            <span className="text-[10px]">···</span>
+          </div>
+        )}
 
-      <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <span className="font-mono text-[11px] text-text-faint">{item.barcode}</span>
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <span className="font-mono text-[11px] text-text-faint">{item.barcode}</span>
 
-        {item.status === "pending" && <p className="text-xs text-text-muted">Queued…</p>}
-        {item.status === "looking_up" && <p className="text-xs text-text-muted">Looking up…</p>}
+          {item.status === "pending" && <p className="text-xs text-text-muted">Queued…</p>}
+          {item.status === "looking_up" && <p className="text-xs text-text-muted">Looking up…</p>}
 
-        {item.status === "error" && (
-          <div className="flex items-center gap-2">
-            <p className="text-xs text-missing">{item.error ?? "Lookup failed"}</p>
-            <button type="button" onClick={onRetry} className="text-xs font-medium text-accent hover:underline">
-              Retry
+          {item.status === "error" && (
+            <div className="flex items-center gap-2">
+              <p className="text-xs text-missing">{item.error ?? "Lookup failed"}</p>
+              <button type="button" onClick={onRetry} className="text-xs font-medium text-accent hover:underline">
+                Retry
+              </button>
+            </div>
+          )}
+
+          {item.status === "resolved" && item.result?.status === "owned" && item.result.type === "film" && (
+            <Link href={`/film/${item.result.film.id}`} className="text-sm text-accent hover:underline">
+              Already owned — {item.result.film.title}
+            </Link>
+          )}
+          {item.status === "resolved" && item.result?.status === "owned" && item.result.type === "album" && (
+            <Link href={`/music/album/${item.result.album.id}`} className="text-sm text-accent hover:underline">
+              Already owned — {item.result.album.artistName} — {item.result.album.title}
+            </Link>
+          )}
+
+          {item.status === "resolved" && item.result?.status === "unknown" && (
+            <p className="text-xs text-text-faint">Couldn&rsquo;t identify this barcode.</p>
+          )}
+
+          {item.status === "resolved" && item.result?.status === "not_owned" && item.result.type === "film" && (
+            <div className="flex flex-col gap-1">
+              <span className="text-xs text-text">
+                {item.result.candidate.title} {item.result.candidate.year ? `(${item.result.candidate.year})` : ""}
+              </span>
+              <div className="flex items-center gap-1.5">
+                <select
+                  value={filmMedium}
+                  onChange={(e) => setFilmMedium(e.target.value as (typeof FILM_MEDIA)[number])}
+                  className="rounded border border-border bg-bg px-1.5 py-1 text-xs text-text"
+                >
+                  {FILM_MEDIA.map((m) => (
+                    <option key={m} value={m}>
+                      {formatLabel(m)}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  disabled={adding}
+                  onClick={() =>
+                    item.result?.status === "not_owned" &&
+                    item.result.type === "film" &&
+                    handleAdd({ kind: "film", candidate: item.result.candidate }, filmMedium)
+                  }
+                  className="rounded border border-accent px-2 py-1 text-xs font-medium text-accent transition-colors hover:bg-accent/10 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {adding ? "Adding…" : "Add"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {item.status === "resolved" && item.result?.status === "not_owned" && item.result.type === "album" && (
+            <div className="flex flex-col gap-1">
+              <span className="text-xs text-text">
+                {item.result.candidate.artistName} — {item.result.candidate.title}
+              </span>
+              <div className="flex items-center gap-1.5">
+                <select
+                  value={albumMedium}
+                  onChange={(e) => setAlbumMedium(e.target.value as (typeof ALBUM_MEDIA)[number])}
+                  className="rounded border border-border bg-bg px-1.5 py-1 text-xs text-text"
+                >
+                  {ALBUM_MEDIA.map((m) => (
+                    <option key={m} value={m}>
+                      {m === "VINYL" ? "Vinyl" : "CD"}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  disabled={adding}
+                  onClick={() =>
+                    item.result?.status === "not_owned" &&
+                    item.result.type === "album" &&
+                    handleAdd({ kind: "album", candidate: item.result.candidate }, albumMedium)
+                  }
+                  className="rounded border border-accent px-2 py-1 text-xs font-medium text-accent transition-colors hover:bg-accent/10 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {adding ? "Adding…" : "Add"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {addError && <p className="text-xs text-missing">{addError}</p>}
+
+          {!inFlight && (
+            <button
+              type="button"
+              onClick={() => setCorrecting((v) => !v)}
+              className="w-fit text-xs font-medium text-text-muted hover:text-text"
+            >
+              {correcting ? "Cancel correction" : "Not right? Search by title"}
             </button>
-          </div>
-        )}
+          )}
+        </div>
 
-        {item.status === "resolved" && item.result?.status === "owned" && item.result.type === "film" && (
-          <Link href={`/film/${item.result.film.id}`} className="text-sm text-accent hover:underline">
-            Already owned — {item.result.film.title}
-          </Link>
-        )}
-        {item.status === "resolved" && item.result?.status === "owned" && item.result.type === "album" && (
-          <Link href={`/music/album/${item.result.album.id}`} className="text-sm text-accent hover:underline">
-            Already owned — {item.result.album.artistName} — {item.result.album.title}
-          </Link>
-        )}
-
-        {item.status === "resolved" && item.result?.status === "unknown" && (
-          <p className="text-xs text-text-faint">Couldn&rsquo;t identify — try Single scan to search by title.</p>
-        )}
-
-        {item.added && (
-          <Link href={item.added.href} className="text-sm text-accent hover:underline">
-            Added — {item.added.label}
-          </Link>
-        )}
-
-        {!item.added && item.status === "resolved" && item.result?.status === "not_owned" && item.result.type === "film" && (
-          <div className="flex flex-col gap-1">
-            <span className="text-xs text-text">{item.result.candidate.title} {item.result.candidate.year ? `(${item.result.candidate.year})` : ""}</span>
-            <div className="flex items-center gap-1.5">
-              <select
-                value={filmMedium}
-                onChange={(e) => setFilmMedium(e.target.value as (typeof FILM_MEDIA)[number])}
-                className="rounded border border-border bg-bg px-1.5 py-1 text-xs text-text"
-              >
-                {FILM_MEDIA.map((m) => (
-                  <option key={m} value={m}>
-                    {formatLabel(m)}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                disabled={adding}
-                onClick={() => item.result?.status === "not_owned" && item.result.type === "film" && handleAddFilm(item.result.candidate)}
-                className="rounded border border-accent px-2 py-1 text-xs font-medium text-accent transition-colors hover:bg-accent/10 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                {adding ? "Adding…" : "Add"}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {!item.added && item.status === "resolved" && item.result?.status === "not_owned" && item.result.type === "album" && (
-          <div className="flex flex-col gap-1">
-            <span className="text-xs text-text">
-              {item.result.candidate.artistName} — {item.result.candidate.title}
-            </span>
-            <div className="flex items-center gap-1.5">
-              <select
-                value={albumMedium}
-                onChange={(e) => setAlbumMedium(e.target.value as (typeof ALBUM_MEDIA)[number])}
-                className="rounded border border-border bg-bg px-1.5 py-1 text-xs text-text"
-              >
-                {ALBUM_MEDIA.map((m) => (
-                  <option key={m} value={m}>
-                    {m === "VINYL" ? "Vinyl" : "CD"}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                disabled={adding}
-                onClick={() => item.result?.status === "not_owned" && item.result.type === "album" && handleAddAlbum(item.result.candidate)}
-                className="rounded border border-accent px-2 py-1 text-xs font-medium text-accent transition-colors hover:bg-accent/10 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                {adding ? "Adding…" : "Add"}
-              </button>
-            </div>
-          </div>
-        )}
+        <button
+          type="button"
+          onClick={onRemove}
+          aria-label={`Remove ${item.barcode} from queue`}
+          className="shrink-0 text-text-faint hover:text-text"
+        >
+          ×
+        </button>
       </div>
 
-      <button
-        type="button"
-        onClick={onRemove}
-        aria-label={`Remove ${item.barcode} from queue`}
-        className="shrink-0 text-text-faint hover:text-text"
-      >
-        ×
-      </button>
+      {correcting && (
+        <TitleSearchWidget
+          defaultType={defaultCorrectionType}
+          barcode={item.barcode}
+          onAdded={() => {
+            setCorrecting(false);
+            onRemove(); // this row's barcode is now correctly attached elsewhere
+          }}
+        />
+      )}
     </div>
   );
 }
