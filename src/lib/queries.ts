@@ -89,7 +89,7 @@ export async function getLibraryFilms(): Promise<LibraryData> {
   const films = await prisma.film.findMany({
     // Digitally owned films, plus physical-only films (owned=false but a
     // disc is logged) — otherwise a scanned-but-unripped disc is invisible
-    // everywhere in the browsing UI. See PhysicalOnlyBadge / FilmCard.
+    // everywhere in the browsing UI. See FilmCard.
     where: { OR: [{ owned: true }, { physicalCopies: { some: {} } }] },
     orderBy: { sortTitle: "asc" },
     select: {

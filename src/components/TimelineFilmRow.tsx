@@ -1,7 +1,6 @@
 import Link from "next/link";
 import PosterImage from "@/components/PosterImage";
 import FormatBadge from "@/components/FormatBadge";
-import PhysicalOnlyBadge from "@/components/PhysicalOnlyBadge";
 import ResolutionBadge from "@/components/ResolutionBadge";
 import type { TimelineFilm } from "@/lib/queries";
 
@@ -49,7 +48,6 @@ export default function TimelineFilmRow({ film }: { film: TimelineFilm }) {
               {film.physicalMedia.map((m) => (
                 <FormatBadge key={m} kind={m} />
               ))}
-              <PhysicalOnlyBadge />
             </>
           ) : (
             <FormatBadge kind="MISSING" />

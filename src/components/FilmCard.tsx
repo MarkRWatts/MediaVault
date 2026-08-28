@@ -1,7 +1,6 @@
 import Link from "next/link";
 import PosterImage from "@/components/PosterImage";
 import FormatBadge from "@/components/FormatBadge";
-import PhysicalOnlyBadge from "@/components/PhysicalOnlyBadge";
 import type { LibraryFilm } from "@/lib/queries";
 
 export default function FilmCard({
@@ -14,7 +13,6 @@ export default function FilmCard({
   // A disc you've logged but never ripped: no Version rows (so film.formats
   // is empty), just a FilmPhysicalCopy. Falls back to the physical medium so
   // it still gets a format chip instead of showing nothing.
-  const isPhysicalOnly = !film.owned && film.physicalMedia.length > 0;
   const formatChips = (film.formats.length > 0 ? film.formats : film.physicalMedia).slice(0, 3);
 
   return (
@@ -44,7 +42,6 @@ export default function FilmCard({
               {formatChips.map((f) => (
                 <FormatBadge key={f} kind={f} />
               ))}
-              {isPhysicalOnly && <PhysicalOnlyBadge />}
             </div>
           )}
         </div>
