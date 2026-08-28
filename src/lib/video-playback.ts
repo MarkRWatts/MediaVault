@@ -163,6 +163,15 @@ export function buildFfmpegArgs(
     args.push("-map", `0:${plan.audioStreamIndex}`);
   }
 
+  // Drop chapters explicitly. Without this, the mov/mp4 muxer auto-converts
+  // any source chapter markers into an extra QuickTime chapter text track --
+  // harmless in a normal MP4, but in this fragmented output (required for the
+  // tailing reader, see below) the stray trak breaks playback outright:
+  // confirmed against a real file (chapters present, no subtitle stream) that
+  // Safari reports a duration but never renders a single video or audio frame
+  // once this extra track is present.
+  args.push("-map_chapters", "-1");
+
   if (plan.videoAction === "copy") {
     args.push("-c:v", "copy");
     if (plan.hevcTag) args.push("-tag:v", "hvc1");

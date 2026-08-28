@@ -115,6 +115,8 @@ describe("buildFfmpegArgs", () => {
       "0:v:0",
       "-map",
       "0:1",
+      "-map_chapters",
+      "-1",
       "-c:v",
       "copy",
       "-c:a",
@@ -163,5 +165,21 @@ describe("buildFfmpegArgs", () => {
     const args = buildFfmpegArgs("/in.mkv", "/out.mp4", plan);
     const movflags = args[args.indexOf("-movflags") + 1];
     expect(movflags.split("+")).toContain("delay_moov");
+  });
+
+  // Regression: a source chapter track (very common on DVD/Blu-ray rips) gets
+  // auto-converted into an extra QuickTime chapter text track by the mov
+  // muxer unless chapters are explicitly dropped. That stray track broke
+  // playback outright in a fragmented MP4 -- confirmed against a real file
+  // where Safari reported a duration but rendered no video or audio at all
+  // until this flag was added.
+  it("always drops chapters, to avoid an auto-inserted chapter track breaking fragmented playback", () => {
+    const plan = planVideoPlayback({
+      videoCodec: "h264",
+      container: "mkv",
+      audioTracks: [{ streamIdx: 1, codec: "ac3", profile: null, channels: 6 }],
+    })!;
+    const args = buildFfmpegArgs("/in.mkv", "/out.mp4", plan);
+    expect(args[args.indexOf("-map_chapters") + 1]).toBe("-1");
   });
 });
