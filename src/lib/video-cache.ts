@@ -20,14 +20,11 @@
 // Scope: Film Versions only for this first pass — TV episodes (EpisodeFile)
 // aren't wired up yet.
 
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { execFile, type ChildProcess } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { prisma } from "@/lib/db";
 import { planVideoPlayback, buildFfmpegArgs, type VideoPlaybackPlan } from "@/lib/video-playback";
-
-const execFileAsync = promisify(execFile);
 
 export type VideoStatus =
   | { state: "not-found" }
@@ -59,6 +56,72 @@ function partialPath(versionId: number): string {
   return path.join(cacheDir(), `${versionId}.mp4.partial`);
 }
 
+const DEFAULT_MAX_CACHE_BYTES = 10 * 1024 ** 3; // 10 GiB -- this runs on a small, shared VM.
+
+export function maxCacheBytes(): number {
+  const raw = Number(process.env.VIDEO_CACHE_MAX_BYTES);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_MAX_CACHE_BYTES;
+}
+
+export interface CacheEntry {
+  path: string;
+  size: number;
+  mtimeMs: number;
+}
+
+/** Pure decision: given the cache's current contents and a byte budget, which
+ * files to delete (oldest-last-played first) to get back under budget. No
+ * I/O here so this is cheap to test exhaustively -- see enforceCacheLimit
+ * for the readdir/stat/rm side. */
+export function selectEntriesToEvict(entries: CacheEntry[], limitBytes: number): string[] {
+  const total = entries.reduce((sum, e) => sum + e.size, 0);
+  if (total <= limitBytes) return [];
+
+  const oldestFirst = [...entries].sort((a, b) => a.mtimeMs - b.mtimeMs);
+  const toEvict: string[] = [];
+  let remaining = total;
+  for (const entry of oldestFirst) {
+    if (remaining <= limitBytes) break;
+    toEvict.push(entry.path);
+    remaining -= entry.size;
+  }
+  return toEvict;
+}
+
+/** Runs after every successful prepare. mtime is used as the LRU clock
+ * rather than atime, since atime updates aren't guaranteed by the
+ * filesystem (many mounts use noatime/relatime) -- touchCacheFile below
+ * keeps it current on every real play instead. */
+async function enforceCacheLimit(): Promise<void> {
+  const dir = cacheDir();
+  let names: string[];
+  try {
+    names = await fs.readdir(dir);
+  } catch {
+    return;
+  }
+
+  const entries: CacheEntry[] = [];
+  for (const name of names) {
+    if (!name.endsWith(".mp4")) continue; // never evict a live .partial write
+    const p = path.join(dir, name);
+    const stat = await fs.stat(p).catch(() => null);
+    if (stat) entries.push({ path: p, size: stat.size, mtimeMs: stat.mtimeMs });
+  }
+
+  for (const p of selectEntriesToEvict(entries, maxCacheBytes())) {
+    await fs.rm(p, { force: true }).catch(() => {});
+  }
+}
+
+/** Marks a cached file as just-played, so it looks recently-used to the LRU
+ * eviction above even on a filesystem that doesn't track real atime.
+ * Best-effort -- a failure here should never break playback. */
+function touchCacheFile(p: string): void {
+  const now = new Date();
+  fs.utimes(p, now, now).catch(() => {});
+}
+
 async function fileExists(p: string): Promise<boolean> {
   try {
     await fs.access(p);
@@ -80,6 +143,51 @@ function sleep(ms: number): Promise<void> {
 // that version is prepared (see prepare()), not on startup.
 const jobs = new Map<number, Promise<void>>();
 const jobErrors = new Map<number, string>();
+
+// How many live stream responses are currently reading a version's tailing
+// output. Pausing doesn't touch this -- the client just stops asking the
+// underlying connection for more bytes, it doesn't close it -- only an
+// actual disconnect (closed tab, navigation, stop) does. A short grace
+// period after the last reader leaves tolerates a quick reconnect/replay
+// without needlessly throwing away in-progress work.
+const activeReaders = new Map<number, number>();
+const cancelTimers = new Map<number, ReturnType<typeof setTimeout>>();
+const CANCEL_GRACE_MS = 8000;
+
+function cancelIfAbandoned(versionId: number): void {
+  cancelTimers.delete(versionId);
+  if (activeReaders.has(versionId)) return; // someone reconnected during the grace period
+  const proc = activeProcesses.get(versionId);
+  if (!proc) return;
+  cancelledJobs.add(versionId);
+  proc.kill("SIGTERM");
+}
+
+/** Call when a stream response starts tailing a version's in-progress
+ * output. Returns a function to call when that response ends (naturally or
+ * via disconnect) -- once the last reader for a version is gone, its ffmpeg
+ * job is killed after a grace period rather than left running for no one. */
+export function registerStreamReader(versionId: number): () => void {
+  activeReaders.set(versionId, (activeReaders.get(versionId) ?? 0) + 1);
+  const pending = cancelTimers.get(versionId);
+  if (pending) {
+    clearTimeout(pending);
+    cancelTimers.delete(versionId);
+  }
+
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const remaining = (activeReaders.get(versionId) ?? 1) - 1;
+    if (remaining <= 0) {
+      activeReaders.delete(versionId);
+      cancelTimers.set(versionId, setTimeout(() => cancelIfAbandoned(versionId), CANCEL_GRACE_MS));
+    } else {
+      activeReaders.set(versionId, remaining);
+    }
+  };
+}
 
 async function loadVersion(versionId: number): Promise<ResolvedVersion | null> {
   const version = await prisma.version.findUnique({
@@ -109,19 +217,52 @@ function resolveSourcePath(filePath: string): string | null {
 let hasLocalFfmpegPromise: Promise<boolean> | null = null;
 function detectLocalFfmpeg(): Promise<boolean> {
   if (!hasLocalFfmpegPromise) {
-    hasLocalFfmpegPromise = execFileAsync("ffmpeg", ["-version"])
-      .then(() => true)
-      .catch(() => false);
+    hasLocalFfmpegPromise = new Promise<boolean>((resolve) => {
+      execFile("ffmpeg", ["-version"], (err) => resolve(!err));
+    });
   }
   return hasLocalFfmpegPromise;
 }
 
-async function runFfmpeg(sourceAbsPath: string, outAbsPath: string, plan: VideoPlaybackPlan, sourceChannels: number | null): Promise<void> {
+// The running ffmpeg (or docker-run wrapping it) child process per version,
+// so a cancelled play (see registerStreamReader) has something to kill.
+const activeProcesses = new Map<number, ChildProcess>();
+// Set just before killing a process for cancellation, so its exit looks like
+// a deliberate stop rather than a real failure -- see runTrackedProcess.
+const cancelledJobs = new Set<number>();
+
+class PrepareCancelledError extends Error {}
+
+function runTrackedProcess(versionId: number, cmd: string, args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = execFile(cmd, args, { maxBuffer: 1024 * 1024 * 16 }, (err) => {
+      activeProcesses.delete(versionId);
+      if (err) {
+        if (cancelledJobs.delete(versionId)) {
+          reject(new PrepareCancelledError("stopped -- no active viewers"));
+        } else {
+          reject(err);
+        }
+        return;
+      }
+      resolve();
+    });
+    activeProcesses.set(versionId, child);
+  });
+}
+
+async function runFfmpeg(
+  sourceAbsPath: string,
+  outAbsPath: string,
+  plan: VideoPlaybackPlan,
+  sourceChannels: number | null,
+  versionId: number,
+): Promise<void> {
   const hasLocal = await detectLocalFfmpeg();
 
   if (hasLocal) {
     const args = buildFfmpegArgs(sourceAbsPath, outAbsPath, plan, sourceChannels);
-    await execFileAsync("ffmpeg", args, { maxBuffer: 1024 * 1024 * 16 });
+    await runTrackedProcess(versionId, "ffmpeg", args);
     return;
   }
 
@@ -140,22 +281,18 @@ async function runFfmpeg(sourceAbsPath: string, outAbsPath: string, plan: VideoP
   const containerOut = `/out/${outName}`;
 
   const args = buildFfmpegArgs(containerIn, containerOut, plan, sourceChannels);
-  await execFileAsync(
-    "docker",
-    [
-      "run",
-      "--rm",
-      "--entrypoint",
-      "/ffmpeg",
-      "-v",
-      `${root}:/movies-root:ro`,
-      "-v",
-      `${outDir}:/out`,
-      dockerImage,
-      ...args,
-    ],
-    { maxBuffer: 1024 * 1024 * 16 },
-  );
+  await runTrackedProcess(versionId, "docker", [
+    "run",
+    "--rm",
+    "--entrypoint",
+    "/ffmpeg",
+    "-v",
+    `${root}:/movies-root:ro`,
+    "-v",
+    `${outDir}:/out`,
+    dockerImage,
+    ...args,
+  ]);
 }
 
 async function prepare(versionId: number, version: ResolvedVersion, plan: VideoPlaybackPlan): Promise<void> {
@@ -176,10 +313,15 @@ async function prepare(versionId: number, version: ResolvedVersion, plan: VideoP
       : null;
 
   try {
-    await runFfmpeg(sourceAbsPath, partial, plan, sourceChannels);
+    await runFfmpeg(sourceAbsPath, partial, plan, sourceChannels, versionId);
     await fs.rename(partial, cachePath(versionId));
+    await enforceCacheLimit();
   } catch (err) {
     await fs.rm(partial, { force: true }).catch(() => {});
+    // A deliberate stop (no one was still watching) isn't a failure -- don't
+    // record it as a jobError, just leave things clean for the next play to
+    // start fresh. See registerStreamReader.
+    if (err instanceof PrepareCancelledError) return;
     throw err;
   }
 }
@@ -280,6 +422,7 @@ export async function resolveVideoStream(versionId: number): Promise<VideoStream
 
   const finalPath = cachePath(versionId);
   if (await fileExists(finalPath)) {
+    touchCacheFile(finalPath);
     return { kind: "complete", absPath: finalPath, contentType: "video/mp4" };
   }
 
@@ -300,7 +443,10 @@ export async function resolveVideoStream(versionId: number): Promise<VideoStream
   requestVideoPrepare(versionId, version, plan);
   for (let attempt = 0; attempt < START_POLL_MAX_ATTEMPTS; attempt++) {
     await sleep(START_POLL_INTERVAL_MS);
-    if (await fileExists(finalPath)) return { kind: "complete", absPath: finalPath, contentType: "video/mp4" };
+    if (await fileExists(finalPath)) {
+      touchCacheFile(finalPath);
+      return { kind: "complete", absPath: finalPath, contentType: "video/mp4" };
+    }
     if (await fileExists(partial)) return tailingResolution();
     const error = jobErrors.get(versionId);
     if (error) return { kind: "error", message: error };

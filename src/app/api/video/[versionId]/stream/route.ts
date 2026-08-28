@@ -19,7 +19,7 @@
 import { NextResponse } from "next/server";
 import { promises as fsPromises, createReadStream } from "node:fs";
 import { Readable } from "node:stream";
-import { resolveVideoStream } from "@/lib/video-cache";
+import { resolveVideoStream, registerStreamReader } from "@/lib/video-cache";
 import { createTailingStream } from "@/lib/tailing-stream";
 import { parseRange } from "@/lib/http-range";
 
@@ -53,6 +53,10 @@ export async function GET(req: Request, ctx: { params: Promise<{ versionId: stri
       isDone: resolved.isDone,
       hasErrored: resolved.hasErrored,
     });
+    // Ties the underlying ffmpeg job's lifetime to whether anyone's actually
+    // still watching -- pausing doesn't fire this (the connection stays
+    // open), only a real disconnect does. See registerStreamReader.
+    nodeStream.once("close", registerStreamReader(versionId));
     return new NextResponse(fileToWebStream(nodeStream), {
       status: 200,
       headers: {
