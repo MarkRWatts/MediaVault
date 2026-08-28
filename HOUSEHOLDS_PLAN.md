@@ -205,7 +205,7 @@ field anywhere in the current schema or code).
 | 1.5 | Wire Resend (`RESEND_API_KEY`, `sendEmail()` ported from jinglejotter.com) — **done**, merged | 0.25 day |
 | 2 | Auth API route + client hooks (`src/app/api/auth/[...all]/route.ts`, `src/lib/auth-client.ts`) — **done**, merged | 0.5 day |
 | 3 | `organization` plugin (→ Household/Member/Invitation), `emailOTP` plugin, the
-web-of-trust `databaseHooks` gate, `AccessCode` model + admin mint script | 1.5–2 days |
+web-of-trust `databaseHooks` gate, `AccessCode` model + admin mint script — **done**, merged, real SQLite concurrency tests added | 1.5–2 days |
 | 4 | `middleware.ts` gating + `/signin` (OTP) + `/signup` (code) pages + sign-out | 1–1.5 days |
 | 5 | Role gate on the owner-only management routes (list above) | 1 day |
 | 6 | End-to-end auth verification (both join paths, redirect, sign-out, role checks,
