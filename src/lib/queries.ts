@@ -823,6 +823,219 @@ export async function getReportData(): Promise<ReportData> {
 }
 
 // ---------------------------------------------------------------------------
+// Watch stats ("/stats" — signed-in user's own watch history, Phase 9 of
+// HOUSEHOLDS_PLAN.md's "Watch history & stats"). Deliberately kept small per
+// the plan's own wording: total watch time, most-watched titles/genres, a
+// recently-watched list — no charts, no household-wide aggregation (every
+// query below is scoped to one userId). TV/episode progress doesn't exist
+// yet (see WatchProgress.episodeFileId's doc comment in schema.prisma), so,
+// same as getContinueWatchingFilms, this only ever looks at versionId rows.
+// ---------------------------------------------------------------------------
+
+export interface WatchStatsFilm {
+  id: number;
+  title: string;
+  year: number | null;
+  posterPath: string | null;
+}
+
+export interface MostWatchedFilm extends WatchStatsFilm {
+  playCount: number;
+  completed: boolean;
+}
+
+export interface GenreStat {
+  genre: string;
+  secs: number;
+}
+
+export interface RecentlyWatchedRow {
+  film: WatchStatsFilm;
+  positionSecs: number;
+  durationSecs: number | null;
+  completed: boolean;
+  playCount: number;
+  updatedAt: string;
+}
+
+export interface WatchStats {
+  totalWatchSecs: number;
+  // Distinct titles with any qualifying progress — NOT mostWatched.length,
+  // since that list is capped at MOST_WATCHED_LIMIT.
+  totalFilmsWatched: number;
+  // Sum of playCount across every qualifying row (not deduped by film —
+  // see the dedup note on the most-watched loop below), i.e. "how many
+  // times has this person pressed play on something, in total".
+  totalPlays: number;
+  mostWatched: MostWatchedFilm[];
+  topGenres: GenreStat[];
+  recentlyWatched: RecentlyWatchedRow[];
+}
+
+const MOST_WATCHED_LIMIT = 10;
+const TOP_GENRES_LIMIT = 8;
+const RECENTLY_WATCHED_LIMIT = 30;
+
+// What "total watch time" means here — there's no single obviously-correct
+// definition, so this is the one picked and the reasoning for it:
+//
+// WatchProgress.positionSecs is "where the last session left off", not a
+// running total — naively summing it across rows would (a) undercount a
+// film watched three times (each rewatch overwrites positionSecs, so a
+// completed-then-rewatched film only ever shows ONE play's worth of
+// position, even though playCount says otherwise) and (b) treat a film
+// abandoned at 10% the same as one that just started, forever, since an
+// in-progress row's positionSecs never grows once you stop watching it.
+//
+// So: a COMPLETED row (reached WATCH_COMPLETED_RATIO of the runtime, per
+// the progress route) is assumed to represent playCount genuine full
+// watches — each viewing that ends in "completed" plausibly watched close
+// to the whole thing, so runtime × playCount is a reasonable estimate of
+// total time spent on it. This can overcount someone who abandoned a film
+// twice and only finished it the third time (all three plays would count
+// as full watches, when two weren't) — an acceptable v1 approximation
+// given WatchProgress keeps no per-session history, only the latest state.
+//
+// An INCOMPLETE row contributes its current positionSecs exactly once,
+// regardless of playCount — it's "how far into this one they've gotten
+// right now", not multiplied, since there's no basis for assuming earlier
+// plays of a still-in-progress film were full watches (unlike the
+// completed case, we don't even have a completion signal to anchor that
+// assumption on). This does undercount a film that's been restarted and
+// abandoned multiple times without ever finishing, but avoids fabricating
+// numbers with no signal behind them.
+//
+// The runtime figure itself prefers Version.durationSecs (the actual
+// probed file length) over Film.runtimeMins (TMDB metadata, coarser and
+// sometimes absent); when a version was never probed, positionSecs itself
+// is used as the runtime stand-in for a completed row, since reaching
+// WATCH_COMPLETED_RATIO means positionSecs is already close to the real
+// runtime by construction.
+function watchContributionSecs(row: {
+  positionSecs: number;
+  completed: boolean;
+  playCount: number;
+  durationSecs: number | null;
+}): number {
+  if (!row.completed) return row.positionSecs;
+  const runtime = row.durationSecs ?? row.positionSecs;
+  return runtime * Math.max(1, row.playCount);
+}
+
+export async function getWatchStats(userId: string): Promise<WatchStats> {
+  // Same WATCH_PROGRESS_MIN_SECS floor getContinueWatchingFilms uses — a
+  // few-second preview never really "started", so it shouldn't count as
+  // watch time, a most-watched title, or a recently-watched entry either.
+  const rows = await prisma.watchProgress.findMany({
+    where: { userId, versionId: { not: null }, positionSecs: { gte: WATCH_PROGRESS_MIN_SECS } },
+    orderBy: { updatedAt: "desc" },
+    select: {
+      positionSecs: true,
+      completed: true,
+      playCount: true,
+      updatedAt: true,
+      version: {
+        select: {
+          durationSecs: true,
+          film: { select: { id: true, title: true, year: true, posterPath: true, genres: true } },
+        },
+      },
+    },
+  });
+
+  type Row = (typeof rows)[number] & { version: NonNullable<(typeof rows)[number]["version"]> };
+  const usable = rows.filter((r): r is Row => r.version !== null);
+
+  // --- total watch time + genre weighting ---
+  //
+  // Genres are weighted by the same per-row watchContributionSecs() used
+  // for the total, split evenly across a film's comma-separated genre tags
+  // (Film.genres — see schema.prisma), rather than a separate playCount- or
+  // completion-only count: reusing one already-justified number keeps
+  // "most-watched genres" answering "where did the watch time above
+  // actually go", not a second, differently-weighted metric that could
+  // rank genres in a different order than the time totals would suggest.
+  // Unlike the most-watched-titles list below, this is NOT deduped across
+  // multiple Versions of the same film — time spent watching two different
+  // rips of the same title is still time spent, so both rows' contributions
+  // count.
+  let totalWatchSecs = 0;
+  const genreSecs = new Map<string, number>();
+  for (const r of usable) {
+    const contribution = watchContributionSecs({
+      positionSecs: r.positionSecs,
+      completed: r.completed,
+      playCount: r.playCount,
+      durationSecs: r.version.durationSecs,
+    });
+    totalWatchSecs += contribution;
+
+    const genres = r.version.film.genres
+      ? r.version.film.genres.split(",").map((g) => g.trim()).filter(Boolean)
+      : [];
+    if (genres.length > 0) {
+      const share = contribution / genres.length;
+      for (const g of genres) {
+        genreSecs.set(g, (genreSecs.get(g) ?? 0) + share);
+      }
+    }
+  }
+  const topGenres = Array.from(genreSecs.entries())
+    .map(([genre, secs]) => ({ genre, secs }))
+    .sort((a, b) => b.secs - a.secs)
+    .slice(0, TOP_GENRES_LIMIT);
+
+  // --- most-watched titles: ranked by playCount desc, ties broken by most
+  // recent updatedAt. `usable` already arrives updatedAt-desc from the
+  // query above and Array.prototype.sort is stable (ES2019+), so sorting
+  // only on playCount preserves that original order among ties — no
+  // separate tiebreak comparator needed. A film with progress on more than
+  // one Version (two rips) is deduped to its first (most-recently-updated)
+  // occurrence, same posture as getContinueWatchingFilms — "most watched
+  // title" should mean the title, not double-count because of how many rips
+  // exist of it. */
+  const seenFilmIds = new Set<number>();
+  const mostWatchedCandidates: MostWatchedFilm[] = [];
+  for (const r of usable) {
+    const f = r.version.film;
+    if (seenFilmIds.has(f.id)) continue;
+    seenFilmIds.add(f.id);
+    mostWatchedCandidates.push({
+      id: f.id,
+      title: f.title,
+      year: f.year,
+      posterPath: f.posterPath,
+      playCount: r.playCount,
+      completed: r.completed,
+    });
+  }
+  const mostWatched = mostWatchedCandidates
+    .sort((a, b) => b.playCount - a.playCount)
+    .slice(0, MOST_WATCHED_LIMIT);
+
+  const totalFilmsWatched = seenFilmIds.size;
+  const totalPlays = usable.reduce((sum, r) => sum + r.playCount, 0);
+
+  // --- recently watched: a plain "what did I watch and when" list, capped
+  // so a long-time user's page doesn't grow unbounded. ---
+  const recentlyWatched: RecentlyWatchedRow[] = usable.slice(0, RECENTLY_WATCHED_LIMIT).map((r) => ({
+    film: {
+      id: r.version.film.id,
+      title: r.version.film.title,
+      year: r.version.film.year,
+      posterPath: r.version.film.posterPath,
+    },
+    positionSecs: r.positionSecs,
+    durationSecs: r.version.durationSecs,
+    completed: r.completed,
+    playCount: r.playCount,
+    updatedAt: r.updatedAt.toISOString(),
+  }));
+
+  return { totalWatchSecs, totalFilmsWatched, totalPlays, mostWatched, topGenres, recentlyWatched };
+}
+
+// ---------------------------------------------------------------------------
 // TV report data ("/report" — TV section)
 // ---------------------------------------------------------------------------
 

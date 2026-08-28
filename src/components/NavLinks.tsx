@@ -23,14 +23,17 @@ const OWNER_LINKS = [
 
 export default function NavLinks({ signedIn = false, isOwner = false }: { signedIn?: boolean; isOwner?: boolean }) {
   const pathname = usePathname();
-  // /account is only reachable (and useful) once signed in — proxy.ts
-  // would bounce a signed-out visit to /signin anyway, so there's no point
-  // showing a dead link. Unified account/household settings page (see
-  // HOUSEHOLDS_PLAN.md) — identity + household management in one place.
+  // /stats and /account are only reachable (and useful) once signed in —
+  // proxy.ts would bounce a signed-out visit to /signin anyway, so there's
+  // no point showing dead links. /stats is personal watch history (Phase 9
+  // of HOUSEHOLDS_PLAN.md's "Watch history & stats") — any signed-in member,
+  // not owner-only, unlike the OWNER_LINKS above. /account is the unified
+  // account/household settings page (see HOUSEHOLDS_PLAN.md) — identity +
+  // household management in one place.
   const links = [
     ...LINKS,
     ...(isOwner ? OWNER_LINKS : []),
-    ...(signedIn ? [{ href: "/account", label: "Account" }] : []),
+    ...(signedIn ? [{ href: "/stats", label: "Stats" }, { href: "/account", label: "Account" }] : []),
   ];
 
   return (

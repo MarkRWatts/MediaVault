@@ -275,7 +275,25 @@ page, only for a signed-in user with at least one in-progress title, ahead of "N
 releases"/"Recently added". Verified live: appears once a film crosses the 30s/in-progress
 bar, disappears once it's watched to completion, and re-watching a completed film
 correctly resets `completed` instead of resuming from the end. Deployed to production and verified live | 1 day |
-| 9 | Stats v1 (watch time, most-watched, recent history) | 1 day |
+| 9 | Stats v1 (watch time, most-watched, recent history) — **done**. New `/stats`
+page (not folded into `/account` — that page is already dense with identity/
+household/invite/delete sections; a data-dense page like `/report` was the
+closer analog), gated on just being signed in via `requireMemberOrRedirect`
+(per-user data, no owner check). `getWatchStats()` in `src/lib/queries.ts`:
+total watch time defined as completed-row-runtime × playCount (runtime
+preferring `Version.durationSecs`, falling back to `positionSecs` when
+unprobed) plus in-progress rows counting their current `positionSecs` once,
+not multiplied by playCount — documented in-code with the reasoning and
+acknowledged edge cases. Most-watched titles ranked by playCount desc (stable
+sort preserves the updatedAt-desc tiebreak), deduped across multiple Versions
+of the same film. Most-watched genres weighted by the same per-row watch-time
+contribution, split evenly across `Film.genres`' comma-separated tags — reuses
+one justified number instead of a second, differently-weighted metric.
+Recently-watched capped at 30 rows. Nav gained a "Stats" link (any signed-in
+member, unlike the owner-only links). Verified against a real dev server with
+seeded WatchProgress rows (fresh worktree has no real watch history) — total
+time, genre split, most-watched ranking/dedup, and the 30s preview floor all
+confirmed rendering correctly | 1 day |
 
 **Total: ~1.5–2 weeks of focused work** — up from the earlier estimate now
 that the real access-code/OTP/web-of-trust design is ported in rather than
