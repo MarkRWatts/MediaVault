@@ -16,7 +16,10 @@ COPY prisma.config.ts ./prisma.config.ts
 
 # better-sqlite3 requires node-gyp to compile: python, make, g++.
 RUN apk add --no-cache python3 make g++
-RUN npm ci
+# --legacy-peer-deps: better-auth declares better-sqlite3@^12 as a peer for
+# its own (unused here) native SQLite dialect — this project uses the Prisma
+# adapter instead, on better-sqlite3@^13, so the conflict is harmless.
+RUN npm ci --legacy-peer-deps
 
 # Generate Prisma client to src/generated (gitignored).
 RUN npx prisma generate
@@ -35,6 +38,14 @@ COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
+# src/ + scripts/ + tsconfig.json aren't needed to run the built app itself,
+# but are needed for owner-run admin tooling (e.g. scripts/gen-access-code.ts,
+# see HOUSEHOLDS_PLAN.md) to work in production via
+# `docker compose exec app npx tsx scripts/<name>.ts` — tsx needs tsconfig.json
+# present to resolve this project's `@/*` path alias.
+COPY --from=builder /app/src ./src
+COPY --from=builder /app/scripts ./scripts
+COPY --from=builder /app/tsconfig.json ./tsconfig.json
 
 # ffprobe for ground-truth video metadata in the scanner.
 RUN apk add --no-cache ffmpeg
