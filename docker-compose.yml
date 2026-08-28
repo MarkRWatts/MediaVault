@@ -41,6 +41,11 @@ services:
       # HOUSEHOLDS_PLAN.md and src/lib/email.ts). Domain-verified for
       # markrwatts.com. Leave blank to disable OTP email sending.
       RESEND_API_KEY: ${RESEND_API_KEY:-}
+      # The web of trust's root anchor (see HOUSEHOLDS_PLAN.md "Access codes
+      # & the web of trust") — comma-separated email(s), case-insensitive.
+      # The product owner's own address(es); this is the one thing no
+      # database state can lock out.
+      ALLOWED_EMAILS: ${ALLOWED_EMAILS:-}
     volumes:
       # SQLite database and cached posters.
       - data:/app/data
