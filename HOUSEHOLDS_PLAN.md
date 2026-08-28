@@ -203,17 +203,20 @@ only calls out `/report`) was also gated: every action it drives goes
 through an owner-gated route, so a non-owner landing there would find
 nothing but buttons that 403.
 
-Also surfaced by the audit, out of scope for Phase 5 but worth flagging:
-`proxy.ts`'s matcher excludes `/api` entirely
-(`(?!api|_next/static|...)`), so **no** `/api/*` route — browsing/playback
-included — gets even the optimistic signed-in check proxy.ts gives every
-page. `requireOwnerOrResponse()` (`src/lib/require-member.ts`) covers this
-for the owner-only routes it's applied to (401 with no session, 403
-without ownership), but a browsing route like `api/video/.../stream` or
-`api/films` currently has no session check of its own — reachable by
-anyone with the URL, signed in or not. Left untouched per this phase's
-scope ("keep browsing/playback routes untouched"), but a real gap if
-MediaVault is ever exposed beyond a trusted LAN.
+Also surfaced by the audit — **fixed same session, not left open**:
+`proxy.ts`'s matcher excluded `/api` entirely (`(?!api|_next/static|...)`),
+so no `/api/*` route — browsing/playback included — got even the
+optimistic signed-in check proxy.ts gives every page.
+`requireOwnerOrResponse()` (`src/lib/require-member.ts`) covered this for
+the owner-only routes it's applied to (401 with no session, 403 without
+ownership), but a browsing route like `api/video/.../stream` or
+`api/films` had no session check of its own at all — reachable by anyone
+with the URL (plain sequential integer ids), signed in or not. `proxy.ts`
+now includes `/api` in its matcher (excluding only the `/api/auth/`
+prefix), returning a 401 JSON response instead of an HTML-page redirect
+for an unauthenticated API request. Verified live against a real dev
+server: unauthed `GET /api/video/1/stream` and `GET /api/films` now 401;
+`/api/auth/get-session` and `/signin` stay reachable.
 
 ## Watch history & stats
 
