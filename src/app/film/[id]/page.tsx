@@ -128,6 +128,7 @@ export default async function FilmPage({
                 <VersionCard
                   key={v.id}
                   version={v}
+                  filmTitle={film.title}
                   jellyfinHref={
                     v.jellyfinId && jellyfinServer ? jellyfinPlayUrl(v.jellyfinId, jellyfinServer.serverId) : null
                   }
