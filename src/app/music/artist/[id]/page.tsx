@@ -82,9 +82,14 @@ function StudioAlbumCard({ album }: { album: ArtistCatalogueAlbum }) {
   );
 }
 
-// "Also on the shelf" tile — owned non-studio albums, always a link (they're
-// on disk), kind chip instead of Owned/Missing.
+// "Also on the shelf" tile — non-studio albums you own (digitally or
+// physical-only), always a link (there's metadata to view either way). Kind
+// chip normally; physical-only swaps it for the medium, same distinction
+// StudioAlbumCard makes above.
 function ShelfAlbumCard({ album }: { album: ArtistShelfAlbum }) {
+  const isPhysicalOnly = album.owned === false && album.physicalMedia.length > 0;
+  const physicalLabel = album.physicalMedia.includes("VINYL") ? "Vinyl" : (album.physicalMedia[0] ?? "");
+
   return (
     <Link
       href={`/music/album/${album.id}`}
@@ -95,7 +100,7 @@ function ShelfAlbumCard({ album }: { album: ArtistShelfAlbum }) {
         <h3 className="line-clamp-2 text-xs text-text-muted">{album.title}</h3>
         <span className="flex items-center justify-between gap-2">
           <span className="font-mono text-[11px] text-text-faint">{album.year ?? "—"}</span>
-          <Chip tone="dvd">{KIND_LABELS[album.kind] ?? album.kind}</Chip>
+          <Chip tone="dvd">{isPhysicalOnly ? physicalLabel : (KIND_LABELS[album.kind] ?? album.kind)}</Chip>
         </span>
       </div>
     </Link>

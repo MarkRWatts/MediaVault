@@ -92,9 +92,13 @@ type FormatSectionKey = "4K" | "Blu-ray" | "DVD" | "Other";
 const FORMAT_SECTION_ORDER: FormatSectionKey[] = ["4K", "Blu-ray", "DVD", "Other"];
 
 function formatSectionFor(film: LibraryFilm): FormatSectionKey {
-  if (film.formats.includes("UHD") || film.bestTier.rank === 0) return "4K";
-  if (film.formats.includes("BLURAY")) return "Blu-ray";
-  if (film.formats.includes("DVD")) return "DVD";
+  // Physical-only films have no ripped Versions (so no formats/bestTier) —
+  // section them by the disc medium instead, so a scanned Blu-ray sits
+  // alongside owned Blu-ray rips rather than falling into "Other".
+  const formats = film.formats.length > 0 ? film.formats : film.physicalMedia;
+  if (formats.includes("UHD") || film.bestTier.rank === 0) return "4K";
+  if (formats.includes("BLURAY")) return "Blu-ray";
+  if (formats.includes("DVD")) return "DVD";
   return "Other";
 }
 

@@ -67,11 +67,16 @@ export interface LibraryFilm {
   collectionName: string | null;
   releaseDate: string | null;
   createdAt: string;
+  owned: boolean; // digitally owned (has a ripped Version) — false for physical-only entries
   formats: Format[];
   discCount: number;
   bestTier: ResolutionTier;
   videoCodecs: string[]; // raw codec_name values ("h264", "vc1"…) — filter matches on these
   audioFormats: string[]; // friendly audioBadge labels ("DTS-HD MA", "Dolby Digital"…)
+  /** Physical media you own this film on (DVD/BLURAY/UHD), independent of
+   *  `owned` — non-empty with owned=false means "own the disc, not ripped
+   *  yet", not a gap. Mirrors ArtistCatalogueAlbum.physicalMedia. */
+  physicalMedia: Format[];
 }
 
 export interface LibraryData {
@@ -82,7 +87,10 @@ export interface LibraryData {
 
 export async function getLibraryFilms(): Promise<LibraryData> {
   const films = await prisma.film.findMany({
-    where: { owned: true },
+    // Digitally owned films, plus physical-only films (owned=false but a
+    // disc is logged) — otherwise a scanned-but-unripped disc is invisible
+    // everywhere in the browsing UI. See PhysicalOnlyBadge / FilmCard.
+    where: { OR: [{ owned: true }, { physicalCopies: { some: {} } }] },
     orderBy: { sortTitle: "asc" },
     select: {
       id: true,
@@ -94,6 +102,8 @@ export async function getLibraryFilms(): Promise<LibraryData> {
       collection: { select: { name: true } },
       releaseDate: true,
       createdAt: true,
+      owned: true,
+      physicalCopies: { select: { medium: true } },
       versions: {
         select: {
           format: true,
@@ -116,6 +126,8 @@ export async function getLibraryFilms(): Promise<LibraryData> {
     collectionName: f.collection?.name ?? null,
     releaseDate: f.releaseDate ? f.releaseDate.toISOString() : null,
     createdAt: f.createdAt.toISOString(),
+    owned: f.owned,
+    physicalMedia: f.physicalCopies.map((c) => c.medium as Format),
     formats: Array.from(new Set(f.versions.map((v) => v.format as Format))),
     discCount: f.versions.length,
     bestTier: bestResolutionTier(f.versions),
@@ -328,6 +340,8 @@ export interface TimelineFilm {
   releaseDate: string | null;
   formats: Format[];
   bestTier: ResolutionTier;
+  /** See LibraryFilm.physicalMedia. */
+  physicalMedia: Format[];
 }
 
 export interface CollectionDetail {
@@ -346,7 +360,10 @@ export async function getCollectionDetail(id: number): Promise<CollectionDetail 
     include: {
       films: {
         orderBy: { releaseDate: "asc" },
-        include: { versions: { select: { format: true, width: true, height: true } } },
+        include: {
+          versions: { select: { format: true, width: true, height: true } },
+          physicalCopies: { select: { medium: true } },
+        },
       },
     },
   });
@@ -361,6 +378,7 @@ export async function getCollectionDetail(id: number): Promise<CollectionDetail 
     releaseDate: f.releaseDate ? f.releaseDate.toISOString() : null,
     formats: Array.from(new Set(f.versions.map((v) => v.format as Format))),
     bestTier: bestResolutionTier(f.versions),
+    physicalMedia: f.physicalCopies.map((c) => c.medium as Format),
   }));
 
   return {

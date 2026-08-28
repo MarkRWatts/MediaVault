@@ -1,14 +1,18 @@
 import Link from "next/link";
 import PosterImage from "@/components/PosterImage";
 import FormatBadge from "@/components/FormatBadge";
+import PhysicalOnlyBadge from "@/components/PhysicalOnlyBadge";
 import ResolutionBadge from "@/components/ResolutionBadge";
 import type { TimelineFilm } from "@/lib/queries";
 
 export default function TimelineFilmRow({ film }: { film: TimelineFilm }) {
+  const isPhysicalOnly = !film.owned && film.physicalMedia.length > 0;
+  const isPresent = film.owned || isPhysicalOnly; // has it, digitally or on disc
+
   const content = (
     <div
       className={`flex items-center gap-4 rounded-lg border p-3 transition-colors ${
-        film.owned
+        isPresent
           ? "border-border bg-bg-elevated hover:border-border-strong"
           : "border-border/60 bg-bg-elevated/50"
       }`}
@@ -19,12 +23,12 @@ export default function TimelineFilmRow({ film }: { film: TimelineFilm }) {
         year={film.year}
         sizes="64px"
         className={`aspect-2/3 w-14 shrink-0 rounded ${
-          film.owned ? "" : "grayscale opacity-45"
+          isPresent ? "" : "grayscale opacity-45"
         }`}
       />
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
         <span
-          className={`truncate text-sm font-semibold ${film.owned ? "text-text" : "text-text-muted"}`}
+          className={`truncate text-sm font-semibold ${isPresent ? "text-text" : "text-text-muted"}`}
         >
           {film.title}
         </span>
@@ -40,6 +44,13 @@ export default function TimelineFilmRow({ film }: { film: TimelineFilm }) {
             ) : (
               <span className="text-xs text-text-faint">No files</span>
             )
+          ) : isPhysicalOnly ? (
+            <>
+              {film.physicalMedia.map((m) => (
+                <FormatBadge key={m} kind={m} />
+              ))}
+              <PhysicalOnlyBadge />
+            </>
           ) : (
             <FormatBadge kind="MISSING" />
           )}
@@ -48,7 +59,7 @@ export default function TimelineFilmRow({ film }: { film: TimelineFilm }) {
     </div>
   );
 
-  return film.owned ? (
+  return isPresent ? (
     <Link href={`/film/${film.id}`}>{content}</Link>
   ) : (
     <div aria-label={`${film.title} — not in library`}>{content}</div>

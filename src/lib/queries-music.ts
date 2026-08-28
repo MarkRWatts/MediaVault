@@ -191,8 +191,10 @@ export async function getArtistDetail(id: number): Promise<ArtistDetail | null> 
     .map(toCatalogueAlbum)
     .sort(byYearAsc);
 
+  // Owned digitally, or physical-only (scanned/logged but never ripped) —
+  // same "not a gap" treatment as the studio grid above.
   const shelf: ArtistShelfAlbum[] = artist.albums
-    .filter((a) => a.owned && a.kind !== "STUDIO")
+    .filter((a) => a.kind !== "STUDIO" && (a.owned || a.physicalCopies.length > 0))
     .map((a) => ({ ...toCatalogueAlbum(a), kind: a.kind }))
     .sort(byYearAsc);
 
