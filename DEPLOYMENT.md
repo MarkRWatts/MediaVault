@@ -86,7 +86,7 @@ Then scan the movie share and enrich with TMDB data from a browser on a LAN devi
 On the VM:
 
 ```bash
-ssh deploy@192.168.1.1
+ssh deploy@192.168.1.77
 cd ~/MediaVault
 git pull
 docker compose --env-file .env.docker -f docker-compose.yml -f docker-compose.prod.yml up -d --build
@@ -119,7 +119,7 @@ A single Caddy instance on the VM fronts **every** app — currently jobAppTrack
 
 4. Add DNS records at your domain registrar:
    - CNAME: `_acme-challenge.mediavault` → the `MEDIAVAULT_ACMEDNS_SUBDOMAIN` returned above
-   - A: `mediavault` → your VM's static IP (e.g., `192.168.1.1`)
+   - A: `mediavault` → your VM's static IP (e.g., `192.168.1.77`)
 
 5. Add a site block to the shared Caddyfile (at `~/edge/Caddyfile`):
    ```
