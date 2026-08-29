@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { formatLabel } from "@/lib/constants";
+import { guessAlbumMedium } from "@/lib/album-medium";
 import NoPoster from "@/components/NoPoster";
 
 // --- API response shapes (mirror src/app/api/barcode/*, src/app/api/scan-queue/*) ---
@@ -68,10 +69,6 @@ type AddedRef = { href: string; label: string };
 const FILM_MEDIA = ["BLURAY", "DVD", "UHD"] as const;
 const ALBUM_MEDIA = ["CD", "VINYL"] as const;
 const QUEUE_POLL_MS = 2500;
-
-function guessAlbumMedium(format: string | null): "CD" | "VINYL" {
-  return format?.toLowerCase().includes("vinyl") ? "VINYL" : "CD";
-}
 
 type MediaType = "auto" | "film" | "album";
 

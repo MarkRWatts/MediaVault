@@ -8,6 +8,7 @@ import { searchReleaseByBarcode, searchReleaseGroupsByTitle } from "@/lib/musicb
 import { searchDiscogsByBarcode } from "@/lib/discogs";
 import { searchMovieByTitleYear } from "@/lib/tmdb";
 import { lookupMovieByBarcode } from "@/lib/barcode-lookup";
+import { guessAlbumMedium } from "@/lib/album-medium";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type LookupResult = any;
@@ -26,9 +27,24 @@ interface MusicBarcodeHit {
 async function buildMusicResult(hit: MusicBarcodeHit): Promise<LookupResult> {
   const album = await prisma.album.findUnique({
     where: { mbid: hit.releaseGroupMbid },
-    include: { physicalCopies: { select: { id: true } } },
+    include: { physicalCopies: { select: { medium: true } } },
   });
-  if (album && (album.owned || album.physicalCopies.length > 0)) {
+
+  // Medium-specific: owning this release-group in SOME form (a CD rip, a
+  // different pressing) doesn't mean the exact thing just scanned is
+  // already in the collection — scanning an LP barcode for an album you
+  // only have on CD should still offer to add the LP, not report "already
+  // owned" with no way to log the format actually in hand. Album.owned
+  // (digital) only counts toward CD specifically — a digital rip is
+  // overwhelmingly CD-sourced in this library (see the all-ALAC backfill),
+  // but is never a reasonable signal for vinyl ownership, which is always
+  // logged explicitly.
+  const scannedMedium = guessAlbumMedium(hit.format);
+  const alreadyOwnedInMedium =
+    album != null &&
+    (album.physicalCopies.some((c) => c.medium === scannedMedium) || (scannedMedium === "CD" && album.owned));
+
+  if (album && alreadyOwnedInMedium) {
     return {
       status: "owned",
       type: "album",

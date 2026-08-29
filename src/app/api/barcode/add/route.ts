@@ -82,7 +82,17 @@ export async function POST(req: NextRequest) {
     const discogsReleaseId = Number.isInteger(body.discogsReleaseId) ? (body.discogsReleaseId as number) : null;
     const pressingRef = releaseMbid || (discogsReleaseId != null ? String(discogsReleaseId) : "");
     if (pressingRef) {
-      await attachPhysicalRelease(result.album.id, medium, pressingRef);
+      // Genuinely best-effort: attachPhysicalRelease's internal network
+      // calls are already individually guarded, but an unexpected failure
+      // in its own DB write must not fail this whole request and undo the
+      // add that already succeeded above — the album/copy already exists;
+      // losing the pressing-specific tracks/cover is a lesser miss than
+      // reporting "add failed" for an add that actually went through.
+      try {
+        await attachPhysicalRelease(result.album.id, medium, pressingRef);
+      } catch {
+        // swallow — see above
+      }
     }
 
     return NextResponse.json({ album: result.album });

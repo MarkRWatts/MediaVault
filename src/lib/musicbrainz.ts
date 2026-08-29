@@ -1234,7 +1234,13 @@ export async function createPhysicalOnlyAlbum(
     const copy = await prisma.physicalCopy.upsert({
       where: { albumId_medium: { albumId: existingAlbum.id, medium } },
       create: { albumId: existingAlbum.id, medium, releaseMbid, ...physicalCopyData(medium, fields) },
-      update: { releaseMbid, ...physicalCopyData(medium, fields) },
+      // releaseMbid deliberately omitted here — this branch only ever knows
+      // a release-group id, never a specific release, so blindly writing it
+      // on every call would wipe out a real pressing link a previous
+      // attachPhysicalRelease call set (e.g. a duplicate scan/retry of an
+      // already-added barcode). A genuine re-link goes through
+      // attachPhysicalRelease directly, which does mean to overwrite it.
+      update: { ...physicalCopyData(medium, fields) },
     });
     if (releaseMbid) await populatePhysicalReleaseFromMusicBrainz(copy, releaseMbid);
     const artist = await prisma.artist.findUnique({ where: { id: existingAlbum.artistId } });
