@@ -9,6 +9,7 @@ import AudioCodecBadge from "@/components/AudioCodecBadge";
 import AlbumPlayer from "@/components/AlbumPlayer";
 import PhysicalCopyForm from "@/components/PhysicalCopyForm";
 import DigitalSourceForm from "@/components/DigitalSourceForm";
+import DeleteAlbumButton from "@/components/DeleteAlbumButton";
 import { digitalSourceLabel } from "@/lib/digital-source";
 import { getAlbumDetail } from "@/lib/queries-music";
 import type { AlbumTrackView } from "@/lib/queries-music";
@@ -200,6 +201,9 @@ export default async function AlbumPage({
           initial={album.copies.find((c) => c.medium === "CD") ?? null}
         />
         {album.owned && <DigitalSourceForm albumId={album.id} initial={album.digitalSource} />}
+        {!album.owned && (
+          <DeleteAlbumButton albumId={album.id} title={album.title} artistId={album.artist.id} />
+        )}
       </div>
 
       <div className="flex flex-col gap-6">

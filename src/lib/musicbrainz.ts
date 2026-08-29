@@ -398,6 +398,11 @@ function titleOverlap(a: string, b: string): number {
 }
 
 const ANCHOR_OVERLAP_THRESHOLD = 0.5;
+// How many years apart a "Various Artists" anchor candidate's own
+// first-release-date may be from the searched item's year before it's
+// rejected — see the isVariousArtists branch below for why this only
+// applies there.
+const ANCHOR_COMP_YEAR_TOLERANCE = 2;
 
 /**
  * Anchor search for a Discogs-only release — the barcode->Discogs fallback
@@ -414,25 +419,50 @@ const ANCHOR_OVERLAP_THRESHOLD = 0.5;
  * that matches on artist alone but has no real title hit would still hand
  * back that artist's top-ranked release and get silently, wrongly, anchored
  * to it.
+ *
+ * A second, narrower guard covers a failure mode titleOverlap can't catch
+ * at all: a generic "Various Artists" compilation title ("The Rock Album",
+ * "80s") is reused verbatim by many unrelated budget-label compilations
+ * across different years — MusicBrainz's relevance ranking has no reason to
+ * prefer the one that's actually this pressing, so a 100%-overlap title
+ * match can still be the wrong release entirely. `year`, when known,
+ * disambiguates: reject a Various-Artists-credited candidate whose own
+ * first-release-date is more than a couple of years off. This is
+ * deliberately scoped to Various-Artists credits only — a *named* artist's
+ * release-group legitimately spans decades of reissues (Alan Stivell's 1971
+ * "Renaissance de la harpe celtique", anchoring a 1983 reissue pressing —
+ * an artist's own back-catalogue, unlike an anonymous compilation, really
+ * is one continuous work), and requiring year proximity there would throw
+ * away exactly the matches this function exists to widen the net for.
  */
-export async function searchReleaseGroupAnchor(title: string, artist: string): Promise<TitleSearchAlbum[]> {
+export async function searchReleaseGroupAnchor(
+  title: string,
+  artist: string,
+  year?: number | null,
+): Promise<TitleSearchAlbum[]> {
   const query = `releasegroup:(${normalizeTitle(title)}) AND artist:"${escapeLucene(artist)}"`;
   const data = await mbFetch("/release-group", { query, limit: "5" });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const groups: any[] = data["release-groups"] ?? [];
 
+  const isVariousArtists = /^various/i.test(artist.trim());
+
   return groups
     .map((rg) => {
-      const year = rg["first-release-date"] ? Number(rg["first-release-date"].slice(0, 4)) : null;
+      const rgYear = rg["first-release-date"] ? Number(rg["first-release-date"].slice(0, 4)) : null;
       return {
         mbid: rg.id,
         title: rg.title,
         artistName: rg["artist-credit"]?.[0]?.artist?.name ?? rg["artist-credit"]?.[0]?.name ?? "Unknown Artist",
-        year: Number.isFinite(year) ? year : null,
+        year: Number.isFinite(rgYear) ? rgYear : null,
         coverArtUrl: `https://coverartarchive.org/release-group/${rg.id}/front-250`,
       };
     })
-    .filter((rg) => titleOverlap(title, rg.title) >= ANCHOR_OVERLAP_THRESHOLD);
+    .filter((rg) => titleOverlap(title, rg.title) >= ANCHOR_OVERLAP_THRESHOLD)
+    .filter((rg) => {
+      if (!isVariousArtists || year == null || rg.year == null) return true;
+      return Math.abs(rg.year - year) <= ANCHOR_COMP_YEAR_TOLERANCE;
+    });
 }
 
 /**

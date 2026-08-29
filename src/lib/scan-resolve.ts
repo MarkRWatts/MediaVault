@@ -130,7 +130,7 @@ export async function resolveMusic(barcode: string): Promise<LookupResult | null
     const discogsHit = await searchDiscogsByBarcode(barcode);
     if (!discogsHit) return null;
 
-    const anchors = await searchReleaseGroupAnchor(discogsHit.title, discogsHit.artistName);
+    const anchors = await searchReleaseGroupAnchor(discogsHit.title, discogsHit.artistName, discogsHit.year);
     const anchor = await pickAnchor(anchors);
     if (!anchor) return null;
 
@@ -181,7 +181,7 @@ export async function resolveDiscogsUrl(url: string): Promise<LookupResult> {
     : Number(releaseMatch![1]);
 
   const release = await fetchDiscogsRelease(discogsReleaseId);
-  const anchors = await searchReleaseGroupAnchor(release.title, release.artistName);
+  const anchors = await searchReleaseGroupAnchor(release.title, release.artistName, release.year);
   const anchor = await pickAnchor(anchors);
   if (!anchor) return { status: "unknown" };
 
