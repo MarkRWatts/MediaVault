@@ -6,7 +6,7 @@ import path from "node:path";
 import { prisma } from "@/lib/db";
 import { normalizeTitle, sortTitle } from "@/lib/parse";
 import type { Film, Show } from "@/generated/prisma/client";
-import { guardAndCreateRun, updateProgress, finishRun, failRun } from "@/lib/runs";
+import { guardAndCreateRun, updateProgress, finishRun, failRun, type RunKind } from "@/lib/runs";
 
 const TMDB_BASE = "https://api.themoviedb.org/3";
 const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p";
@@ -631,7 +631,7 @@ async function enrichOneShow(show: Show, log: string[]): Promise<void> {
   }
 }
 
-async function doEnrich(runId: number): Promise<void> {
+async function doEnrichFilms(runId: number): Promise<void> {
   const log: string[] = [];
 
   const films = await prisma.film.findMany({
@@ -639,18 +639,8 @@ async function doEnrich(runId: number): Promise<void> {
     orderBy: [{ owned: "desc" }, { id: "asc" }],
   });
 
-  const shows = await prisma.show.findMany({
-    where: { matchConfidence: { in: ["UNMATCHED", "LOW"] } },
-    orderBy: [{ id: "asc" }],
-  });
-
-  const total = films.length + shows.length;
-  await updateProgress(runId, {
-    total,
-    filesSeen: 0,
-    progress: 0,
-    message: `Enriching ${films.length} film(s), ${shows.length} show(s)`,
-  });
+  const total = films.length;
+  await updateProgress(runId, { total, filesSeen: 0, progress: 0, message: `Enriching ${total} film(s)` });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const collectionCache = new Map<number, any>();
@@ -673,6 +663,21 @@ async function doEnrich(runId: number): Promise<void> {
     }
   }
 
+  await finishRun(runId, log, `Enriched ${total} film(s)`);
+}
+
+async function doEnrichTv(runId: number): Promise<void> {
+  const log: string[] = [];
+
+  const shows = await prisma.show.findMany({
+    where: { matchConfidence: { in: ["UNMATCHED", "LOW"] } },
+    orderBy: [{ id: "asc" }],
+  });
+
+  const total = shows.length;
+  await updateProgress(runId, { total, filesSeen: 0, progress: 0, message: `Enriching ${total} show(s)` });
+
+  let completed = 0;
   for (const show of shows) {
     try {
       await enrichOneShow(show, log);
@@ -690,17 +695,29 @@ async function doEnrich(runId: number): Promise<void> {
     }
   }
 
-  await finishRun(runId, log, `Enriched ${films.length} film(s), ${shows.length} show(s)`);
+  await finishRun(runId, log, `Enriched ${total} show(s)`);
 }
 
+export type EnrichMediaType = "FILM" | "TV";
+
+const ENRICH_KIND: Record<EnrichMediaType, RunKind> = {
+  FILM: "ENRICH_FILM",
+  TV: "ENRICH_TV",
+};
+
+const ENRICH_RUNNER: Record<EnrichMediaType, (runId: number) => Promise<void>> = {
+  FILM: doEnrichFilms,
+  TV: doEnrichTv,
+};
+
 /**
- * Kick off enrichment. Resolves quickly once the run is registered (or an
- * existing run is found, or the run is failed immediately for a missing API
- * key) — the actual TMDB work continues in the background and is not
- * awaited here.
+ * Kick off enrichment for one media type. Resolves quickly once the run is
+ * registered (or an existing run is found, or the run is failed immediately
+ * for a missing API key) — the actual TMDB work continues in the background
+ * and is not awaited here.
  */
-export async function runEnrich(): Promise<{ runId: number; started: boolean }> {
-  const { run, started } = await guardAndCreateRun("ENRICH");
+export async function runEnrich(mediaType: EnrichMediaType): Promise<{ runId: number; started: boolean }> {
+  const { run, started } = await guardAndCreateRun(ENRICH_KIND[mediaType]);
   if (!started) return { runId: run.id, started: false };
 
   if (!process.env.TMDB_API_KEY) {
@@ -708,8 +725,8 @@ export async function runEnrich(): Promise<{ runId: number; started: boolean }> 
     return { runId: run.id, started: true };
   }
 
-  doEnrich(run.id).catch(async (err) => {
-    console.error("[tmdb] enrich failed:", err);
+  ENRICH_RUNNER[mediaType](run.id).catch(async (err) => {
+    console.error(`[tmdb] ${mediaType} enrich failed:`, err);
     await failRun(run.id, err).catch((e) => console.error("[tmdb] failed to record failure:", e));
   });
 

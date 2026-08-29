@@ -3,6 +3,7 @@ import { requireOwnerOrRedirect } from "@/lib/require-member";
 import { formatCode } from "@/lib/access";
 import { MintCodeForm } from "@/components/admin/MintCodeForm";
 import { CodeRowActions } from "@/components/admin/CodeRowActions";
+import ScanControls from "@/components/admin/ScanControls";
 
 // DB-backed listing: must render per-request, not be frozen at build time
 // (the Docker image is built with no database present).
@@ -87,6 +88,15 @@ export default async function AdminPage() {
           lets a new person in.
         </p>
       </header>
+
+      <section className="flex flex-col gap-4">
+        <h2 className="font-display text-xl tracking-wide text-text">Library</h2>
+        <p className="text-sm text-text-muted">
+          Rescan walks the library folders for new/changed/removed files; fetch metadata pulls TMDB (film/TV) or
+          MusicBrainz (music) matches for anything unmatched. Each media type runs independently.
+        </p>
+        <ScanControls />
+      </section>
 
       <section className="flex flex-col gap-4">
         <h2 className="font-display text-xl tracking-wide text-text">Access codes</h2>

@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { headers } from "next/headers";
 import NavLinks from "@/components/NavLinks";
-import AdminStrip from "@/components/AdminStrip";
 import SignOutButton from "@/components/SignOutButton";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
@@ -38,12 +37,7 @@ export default async function Nav() {
           <img src="/logo.png" alt="MediaVault" className="h-8 w-auto sm:h-10" />
         </Link>
         <NavLinks signedIn={Boolean(session?.user)} isOwner={isOwner} />
-        {/* Below lg there isn't room for the admin strip on the same row as
-            the logo + links, so it wraps to its own full-width row (flex-wrap
-            above gives it nowhere else to go) and right-aligns its content.
-            At lg+ it's pinned to the end of the single row, unchanged. */}
         <div className="flex w-full items-center justify-end gap-3 lg:ml-auto lg:w-auto">
-          {isOwner && <AdminStrip />}
           {session?.user && <SignOutButton />}
         </div>
       </div>

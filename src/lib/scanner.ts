@@ -13,7 +13,7 @@ import { parseEpisodePath, type ParsedEpisodeFile } from "@/lib/parse-tv";
 import { parseTrackPath, type ParsedTrack } from "@/lib/parse-music";
 import { classifyFormat, isLosslessCodec, MUSIC_EXTENSIONS } from "@/lib/constants";
 import { audioBadge } from "@/lib/audio";
-import { guardAndCreateRun, updateProgress, finishRun, failRun } from "@/lib/runs";
+import { guardAndCreateRun, updateProgress, finishRun, failRun, type RunKind } from "@/lib/runs";
 
 const MAX_DEPTH = 3;
 const PROBE_CONCURRENCY = 3;
@@ -70,15 +70,24 @@ async function mapPool<T, R>(items: T[], limit: number, fn: (item: T, idx: numbe
 async function resolveFilm(representative: ParsedFile, log: string[]): Promise<number> {
   let film = null;
 
+  // Cascade through identifiers rather than picking exactly one branch: a
+  // rip's imdbId tag may not match a barcode-scan stub whose imdbId wasn't
+  // backfilled yet (TMDB doesn't always return imdb_id at stub-creation
+  // time), so a miss on the highest-priority signal must fall through to
+  // the next one instead of going straight to create() and leaving the
+  // stub's physical copy permanently unlinked.
   if (representative.imdbId) {
     film = await prisma.film.findUnique({ where: { imdbId: representative.imdbId } });
-  } else if (representative.tmdbId) {
+  }
+  if (!film && representative.tmdbId) {
     film = await prisma.film.findUnique({ where: { tmdbId: representative.tmdbId } });
-  } else {
+  }
+  if (!film) {
     // Match owned films AND physical-only ones (owned:false but a
     // FilmPhysicalCopy exists) — a rip whose filename carries no imdb/tmdb
-    // tag should still merge into a disc you already logged instead of
-    // creating a duplicate. Mirrors the same OR in getLibraryFilms.
+    // tag (or whose tag doesn't match an unbackfilled stub) should still
+    // merge into a disc you already logged instead of creating a
+    // duplicate. Mirrors the same OR in getLibraryFilms.
     const normTitle = normalizeTitle(representative.title);
     const candidates = await prisma.film.findMany({
       where: {
@@ -533,7 +542,17 @@ async function processTrack(file: MusicCandidateFile, albumId: number, log: stri
   }
 }
 
-async function doScan(runId: number, force: boolean): Promise<void> {
+// Lazy import to avoid a module-load cycle (jellyfin.ts doesn't import
+// scanner.ts, but keeping the coupling one-directional and load-time-free is
+// cheap insurance). Fire-and-forget: a scan shouldn't block on Jellyfin.
+async function triggerJellyfinSync(): Promise<void> {
+  const { jellyfinConfigured, runJellyfinSync } = await import("@/lib/jellyfin");
+  if (jellyfinConfigured()) {
+    runJellyfinSync().catch((err) => console.error("[scanner] post-scan Jellyfin sync failed to start:", err));
+  }
+}
+
+async function doScanFilms(runId: number, force: boolean): Promise<void> {
   const log: string[] = [];
   const moviesPath = process.env.MOVIES_PATH;
   if (!moviesPath) throw new Error("MOVIES_PATH is not set");
@@ -556,81 +575,16 @@ async function doScan(runId: number, force: boolean): Promise<void> {
     candidates.push({ parsed, absPath, size: stat.size, mtimeMs: stat.mtimeMs });
   }
 
-  // TV discovery happens up front too, so the run's total reflects both
-  // phases from the start. TVSHOWS_PATH is optional — when unset, the TV
-  // phase is skipped entirely (nothing is touched, nothing is deleted).
-  const tvShowsPath = process.env.TVSHOWS_PATH;
-  const tvRelPaths: string[] = [];
-  if (tvShowsPath) await walk(tvShowsPath, tvShowsPath, 0, tvRelPaths);
-  else log.push("TVSHOWS_PATH not set — skipping TV scan");
+  const total = candidates.length;
+  await updateProgress(runId, { total, filesSeen: 0, progress: 0, message: `Found ${total} movie file(s)` });
 
-  const tvCandidates: TvCandidate[] = [];
-  let tvUnparsed = 0;
-  for (const relPath of tvRelPaths) {
-    const absPath = path.join(tvShowsPath!, relPath);
-    let stat;
-    try {
-      stat = await fs.stat(absPath);
-    } catch (err) {
-      log.push(`Could not stat "${relPath}": ${err instanceof Error ? err.message : String(err)}`);
-      continue;
-    }
-    const parsed = parseEpisodePath(relPath);
-    if (!parsed) {
-      tvUnparsed++;
-      log.push(`Could not parse episode info from "${relPath}"`);
-      continue;
-    }
-    tvCandidates.push({ parsed, absPath, size: stat.size, mtimeMs: stat.mtimeMs });
-  }
-
-  // Music discovery happens up front too, same graceful-absence pattern as
-  // TVSHOWS_PATH: MUSIC_PATH is optional, and when unset the music phase is
-  // skipped entirely (nothing is touched, nothing is deleted).
-  const musicPath = process.env.MUSIC_PATH;
-  const musicRelPaths: string[] = musicPath ? await walkMusic(musicPath) : [];
-  if (!musicPath) log.push("MUSIC_PATH not set — skipping music scan");
-
-  const musicCandidates: MusicCandidateFile[] = [];
-  let musicUnparsed = 0;
-  for (const relPath of musicRelPaths) {
-    const absPath = path.join(musicPath!, relPath);
-    let stat;
-    try {
-      stat = await fs.stat(absPath);
-    } catch (err) {
-      log.push(`Could not stat "${relPath}": ${err instanceof Error ? err.message : String(err)}`);
-      continue;
-    }
-    const parsed = parseTrackPath(relPath);
-    if (!parsed) {
-      musicUnparsed++;
-      log.push(`Could not parse track info from "${relPath}"`);
-      continue;
-    }
-    musicCandidates.push({ parsed, absPath, size: stat.size, mtimeMs: stat.mtimeMs });
-  }
-
-  const movieTotal = candidates.length;
-  const tvTotal = tvCandidates.length;
-  const musicTotal = musicCandidates.length;
-  const total = movieTotal + tvTotal + musicTotal;
-  await updateProgress(runId, {
-    total,
-    filesSeen: 0,
-    progress: 0,
-    message: `Found ${movieTotal} movie file(s), ${tvTotal} TV episode file(s), ${musicTotal} music file(s)${tvUnparsed ? ` (${tvUnparsed} TV unparsed)` : ""}${musicUnparsed ? ` (${musicUnparsed} music unparsed)` : ""}`,
-  });
-
-  let overallCompleted = 0;
+  let completed = 0;
   async function reportProgress(message: string): Promise<void> {
-    overallCompleted++;
-    if (overallCompleted % PROGRESS_UPDATE_EVERY === 0 || overallCompleted === total) {
-      await updateProgress(runId, { progress: overallCompleted, filesSeen: overallCompleted, message });
+    completed++;
+    if (completed % PROGRESS_UPDATE_EVERY === 0 || completed === total) {
+      await updateProgress(runId, { progress: completed, filesSeen: completed, message });
     }
   }
-
-  // ---- Movies ----
 
   // Group by filmKey and resolve Film identity for each group up front.
   const groups = new Map<string, CandidateFile[]>();
@@ -651,7 +605,7 @@ async function doScan(runId: number, force: boolean): Promise<void> {
   await mapPool(candidates, PROBE_CONCURRENCY, async (file) => {
     const filmId = filmIdByPath.get(file.parsed.relPath)!;
     await processVersion(file, filmId, log, force);
-    await reportProgress(`Probed ${overallCompleted}/${total}: ${file.parsed.fileName}`);
+    await reportProgress(`Probed ${completed}/${total}: ${file.parsed.fileName}`);
   });
 
   // Delete Version rows for files no longer on disk.
@@ -679,224 +633,328 @@ async function doScan(runId: number, force: boolean): Promise<void> {
     }
   }
 
-  // ---- TV ----
-
-  if (tvShowsPath) {
-    // Resolve Show/Season/Episode identities up front, serially (like
-    // resolveFilm above) — cheap and keeps the concurrent probe phase free of
-    // upsert races on the same Show/ShowSeason row.
-    const showIdByFolder = new Map<string, number>();
-    const seasonIdByKey = new Map<string, number>();
-    const episodeIdsByPath = new Map<string, number[]>();
-
-    for (const c of tvCandidates) {
-      const { parsed } = c;
-      let showId = showIdByFolder.get(parsed.showFolder);
-      if (showId === undefined) {
-        showId = await resolveShow(parsed.showFolder, parsed.showTitle, parsed.showYear);
-        showIdByFolder.set(parsed.showFolder, showId);
-      }
-      const seasonKey = `${showId}:${parsed.season}`;
-      let seasonId = seasonIdByKey.get(seasonKey);
-      if (seasonId === undefined) {
-        seasonId = await resolveSeason(showId, parsed.season);
-        seasonIdByKey.set(seasonKey, seasonId);
-      }
-      const episodeIds: number[] = [];
-      for (const epNum of parsed.episodes) {
-        episodeIds.push(await resolveEpisode(seasonId, epNum));
-      }
-      episodeIdsByPath.set(parsed.relPath, episodeIds);
-    }
-
-    // Probe + upsert episode files, bounded concurrency (SMB share).
-    await mapPool(tvCandidates, PROBE_CONCURRENCY, async (file) => {
-      const episodeIds = episodeIdsByPath.get(file.parsed.relPath)!;
-      await processEpisodeFile(file, episodeIds, log, force);
-      await reportProgress(`Probed ${overallCompleted}/${total}: ${file.parsed.fileName}`);
-    });
-
-    // Delete EpisodeFile rows for TV files no longer on disk.
-    const seenTvPaths = new Set(tvCandidates.map((c) => c.parsed.relPath));
-    const allEpisodeFiles = await prisma.episodeFile.findMany({ select: { id: true, filePath: true } });
-    const staleEpisodeFileIds = allEpisodeFiles.filter((f) => !seenTvPaths.has(f.filePath)).map((f) => f.id);
-    if (staleEpisodeFileIds.length > 0) {
-      await prisma.episodeFile.deleteMany({ where: { id: { in: staleEpisodeFileIds } } });
-      log.push(`Removed ${staleEpisodeFileIds.length} episode file(s) for TV files no longer on disk`);
-    }
-
-    // Owned episodes left with zero files: revert to a TMDB manifest
-    // placeholder (owned=false) if the show is TMDB-matched — that row is
-    // what the missing-episode report is built from — otherwise drop it.
-    const emptyOwnedEpisodes = await prisma.episode.findMany({
-      where: { owned: true, files: { none: {} } },
-      select: {
-        id: true,
-        episodeNumber: true,
-        season: { select: { seasonNumber: true, show: { select: { title: true, tmdbId: true } } } },
-      },
-    });
-    for (const ep of emptyOwnedEpisodes) {
-      const label = `"${ep.season.show.title}" S${ep.season.seasonNumber}E${ep.episodeNumber}`;
-      if (ep.season.show.tmdbId != null) {
-        await prisma.episode.update({ where: { id: ep.id }, data: { owned: false } });
-        log.push(`${label} has no files left — reverted to missing (show is TMDB-matched)`);
-      } else {
-        await prisma.episode.delete({ where: { id: ep.id } });
-        log.push(`Deleted ${label} — no files left, show not TMDB-matched`);
-      }
-    }
-
-    // Shows whose top-level folder vanished from disk.
-    let topEntries: Dirent[] = [];
-    try {
-      topEntries = await fs.readdir(tvShowsPath, { withFileTypes: true });
-    } catch {
-      topEntries = [];
-    }
-    const currentFolders = new Set(
-      topEntries.filter((e) => e.isDirectory() && !e.name.startsWith(".")).map((e) => e.name),
-    );
-    const allShows = await prisma.show.findMany({ select: { id: true, folder: true, title: true } });
-    for (const s of allShows) {
-      if (currentFolders.has(s.folder)) continue;
-      await prisma.show.delete({ where: { id: s.id } });
-      log.push(`Deleted show "${s.title}" — folder "${s.folder}" no longer on disk`);
-    }
-  }
-
-  // ---- Music ----
-
-  if (musicPath) {
-    // Resolve Artist/Album identities up front, serially (like
-    // resolveShow/resolveSeason above) — avoids upsert races on the same
-    // Artist/Album row during the concurrent probe phase below.
-    const artistIdByFolder = new Map<string, number>();
-    const albumIdByKey = new Map<string, number>();
-
-    for (const c of musicCandidates) {
-      const { parsed } = c;
-      let artistId = artistIdByFolder.get(parsed.artistFolder);
-      if (artistId === undefined) {
-        const various = parsed.artistFolder === COMPILATIONS_FOLDER;
-        artistId = await resolveArtist(parsed.artistFolder, parsed.artistName, various);
-        artistIdByFolder.set(parsed.artistFolder, artistId);
-      }
-      const albumKey = `${artistId}:${parsed.albumFolder}`;
-      let albumId = albumIdByKey.get(albumKey);
-      if (albumId === undefined) {
-        albumId = await resolveAlbum(artistId, parsed.albumFolder, parsed.albumTitle);
-        albumIdByKey.set(albumKey, albumId);
-      }
-    }
-
-    // Probe + upsert tracks, bounded concurrency (SMB share).
-    await mapPool(musicCandidates, PROBE_CONCURRENCY, async (file) => {
-      const albumKey = `${artistIdByFolder.get(file.parsed.artistFolder)}:${file.parsed.albumFolder}`;
-      const albumId = albumIdByKey.get(albumKey)!;
-      await processTrack(file, albumId, log, force);
-      await reportProgress(`Probed ${overallCompleted}/${total}: ${file.parsed.fileName}`);
-    });
-
-    // Delete Track rows for music files no longer on disk.
-    const seenMusicPaths = new Set(musicCandidates.map((c) => c.parsed.relPath));
-    const allTracks = await prisma.track.findMany({ select: { id: true, filePath: true } });
-    const staleTrackIds = allTracks.filter((t) => !seenMusicPaths.has(t.filePath)).map((t) => t.id);
-    if (staleTrackIds.length > 0) {
-      await prisma.track.deleteMany({ where: { id: { in: staleTrackIds } } });
-      log.push(`Removed ${staleTrackIds.length} track(s) for music files no longer on disk`);
-    }
-
-    // Owned albums left with zero tracks: if MusicBrainz-matched and still a
-    // studio album, revert to a "missing" back-catalogue placeholder
-    // (owned=false, folder cleared — same shape as the placeholders
-    // musicbrainz.ts creates for albums we never owned); otherwise there's no
-    // back-catalogue reason to keep the row, so delete it outright.
-    const emptyOwnedAlbums = await prisma.album.findMany({
-      where: { owned: true, tracks: { none: {} } },
-      select: { id: true, title: true, mbid: true, kind: true },
-    });
-    for (const a of emptyOwnedAlbums) {
-      if (a.mbid && a.kind === "STUDIO") {
-        await prisma.album.update({ where: { id: a.id }, data: { owned: false, folder: null } });
-        log.push(`"${a.title}" has no tracks left — reverted to missing (studio album, MusicBrainz-matched)`);
-      } else {
-        await prisma.album.delete({ where: { id: a.id } });
-        log.push(`Deleted "${a.title}" — no tracks left`);
-      }
-    }
-
-    // Artists left with zero albums at all (every album either deleted above
-    // or, if never owned, never existed for this artist in the first place).
-    const emptyArtists = await prisma.artist.findMany({
-      where: { albums: { none: {} } },
-      select: { id: true, name: true },
-    });
-    for (const ar of emptyArtists) {
-      await prisma.artist.delete({ where: { id: ar.id } });
-      log.push(`Deleted artist "${ar.name}" — no albums left`);
-    }
-
-    // Fallback release year from the files' own date tags for albums
-    // MusicBrainz can't match (all of Compilations by design, plus title
-    // mismatches): the modal tagYear across the album's tracks. MB-matched
-    // albums always take MusicBrainz's date instead (enrichment overwrites).
-    const yearless = await prisma.album.findMany({
-      where: { owned: true, year: null, mbid: null, tracks: { some: { tagYear: { not: null } } } },
-      select: { id: true, title: true, tracks: { select: { tagYear: true } } },
-    });
-    for (const a of yearless) {
-      const counts = new Map<number, number>();
-      for (const t of a.tracks) {
-        if (t.tagYear != null) counts.set(t.tagYear, (counts.get(t.tagYear) ?? 0) + 1);
-      }
-      let best: number | null = null;
-      let bestN = 0;
-      for (const [y, n] of counts) {
-        if (n > bestN) {
-          best = y;
-          bestN = n;
-        }
-      }
-      if (best != null) {
-        await prisma.album.update({ where: { id: a.id }, data: { year: best } });
-        log.push(`Set year ${best} for "${a.title}" from the files' own date tags`);
-      }
-    }
-  }
-
-  await finishRun(
-    runId,
-    log,
-    `Scanned ${movieTotal} movie file(s), ${tvTotal} TV episode file(s), ${musicTotal} music file(s)`,
-  );
-
-  // Lazy import to avoid a module-load cycle (jellyfin.ts doesn't import
-  // scanner.ts, but keeping the coupling one-directional and load-time-free
-  // is cheap insurance). Fire-and-forget: a scan shouldn't block on Jellyfin.
-  const { jellyfinConfigured, runJellyfinSync } = await import("@/lib/jellyfin");
-  if (jellyfinConfigured()) {
-    runJellyfinSync().catch((err) => console.error("[scanner] post-scan Jellyfin sync failed to start:", err));
-  }
+  await finishRun(runId, log, `Scanned ${total} movie file(s)`);
+  await triggerJellyfinSync();
 }
 
+async function doScanTv(runId: number, force: boolean): Promise<void> {
+  const log: string[] = [];
+  const tvShowsPath = process.env.TVSHOWS_PATH;
+  if (!tvShowsPath) throw new Error("TVSHOWS_PATH is not set");
+
+  const tvRelPaths: string[] = [];
+  await walk(tvShowsPath, tvShowsPath, 0, tvRelPaths);
+
+  const tvCandidates: TvCandidate[] = [];
+  let tvUnparsed = 0;
+  for (const relPath of tvRelPaths) {
+    const absPath = path.join(tvShowsPath, relPath);
+    let stat;
+    try {
+      stat = await fs.stat(absPath);
+    } catch (err) {
+      log.push(`Could not stat "${relPath}": ${err instanceof Error ? err.message : String(err)}`);
+      continue;
+    }
+    const parsed = parseEpisodePath(relPath);
+    if (!parsed) {
+      tvUnparsed++;
+      log.push(`Could not parse episode info from "${relPath}"`);
+      continue;
+    }
+    tvCandidates.push({ parsed, absPath, size: stat.size, mtimeMs: stat.mtimeMs });
+  }
+
+  const total = tvCandidates.length;
+  await updateProgress(runId, {
+    total,
+    filesSeen: 0,
+    progress: 0,
+    message: `Found ${total} TV episode file(s)${tvUnparsed ? ` (${tvUnparsed} unparsed)` : ""}`,
+  });
+
+  let completed = 0;
+  async function reportProgress(message: string): Promise<void> {
+    completed++;
+    if (completed % PROGRESS_UPDATE_EVERY === 0 || completed === total) {
+      await updateProgress(runId, { progress: completed, filesSeen: completed, message });
+    }
+  }
+
+  // Resolve Show/Season/Episode identities up front, serially (like
+  // resolveFilm) — cheap and keeps the concurrent probe phase free of
+  // upsert races on the same Show/ShowSeason row.
+  const showIdByFolder = new Map<string, number>();
+  const seasonIdByKey = new Map<string, number>();
+  const episodeIdsByPath = new Map<string, number[]>();
+
+  for (const c of tvCandidates) {
+    const { parsed } = c;
+    let showId = showIdByFolder.get(parsed.showFolder);
+    if (showId === undefined) {
+      showId = await resolveShow(parsed.showFolder, parsed.showTitle, parsed.showYear);
+      showIdByFolder.set(parsed.showFolder, showId);
+    }
+    const seasonKey = `${showId}:${parsed.season}`;
+    let seasonId = seasonIdByKey.get(seasonKey);
+    if (seasonId === undefined) {
+      seasonId = await resolveSeason(showId, parsed.season);
+      seasonIdByKey.set(seasonKey, seasonId);
+    }
+    const episodeIds: number[] = [];
+    for (const epNum of parsed.episodes) {
+      episodeIds.push(await resolveEpisode(seasonId, epNum));
+    }
+    episodeIdsByPath.set(parsed.relPath, episodeIds);
+  }
+
+  // Probe + upsert episode files, bounded concurrency (SMB share).
+  await mapPool(tvCandidates, PROBE_CONCURRENCY, async (file) => {
+    const episodeIds = episodeIdsByPath.get(file.parsed.relPath)!;
+    await processEpisodeFile(file, episodeIds, log, force);
+    await reportProgress(`Probed ${completed}/${total}: ${file.parsed.fileName}`);
+  });
+
+  // Delete EpisodeFile rows for TV files no longer on disk.
+  const seenTvPaths = new Set(tvCandidates.map((c) => c.parsed.relPath));
+  const allEpisodeFiles = await prisma.episodeFile.findMany({ select: { id: true, filePath: true } });
+  const staleEpisodeFileIds = allEpisodeFiles.filter((f) => !seenTvPaths.has(f.filePath)).map((f) => f.id);
+  if (staleEpisodeFileIds.length > 0) {
+    await prisma.episodeFile.deleteMany({ where: { id: { in: staleEpisodeFileIds } } });
+    log.push(`Removed ${staleEpisodeFileIds.length} episode file(s) for TV files no longer on disk`);
+  }
+
+  // Owned episodes left with zero files: revert to a TMDB manifest
+  // placeholder (owned=false) if the show is TMDB-matched — that row is
+  // what the missing-episode report is built from — otherwise drop it.
+  const emptyOwnedEpisodes = await prisma.episode.findMany({
+    where: { owned: true, files: { none: {} } },
+    select: {
+      id: true,
+      episodeNumber: true,
+      season: { select: { seasonNumber: true, show: { select: { title: true, tmdbId: true } } } },
+    },
+  });
+  for (const ep of emptyOwnedEpisodes) {
+    const label = `"${ep.season.show.title}" S${ep.season.seasonNumber}E${ep.episodeNumber}`;
+    if (ep.season.show.tmdbId != null) {
+      await prisma.episode.update({ where: { id: ep.id }, data: { owned: false } });
+      log.push(`${label} has no files left — reverted to missing (show is TMDB-matched)`);
+    } else {
+      await prisma.episode.delete({ where: { id: ep.id } });
+      log.push(`Deleted ${label} — no files left, show not TMDB-matched`);
+    }
+  }
+
+  // Shows whose top-level folder vanished from disk.
+  let topEntries: Dirent[] = [];
+  try {
+    topEntries = await fs.readdir(tvShowsPath, { withFileTypes: true });
+  } catch {
+    topEntries = [];
+  }
+  const currentFolders = new Set(
+    topEntries.filter((e) => e.isDirectory() && !e.name.startsWith(".")).map((e) => e.name),
+  );
+  const allShows = await prisma.show.findMany({ select: { id: true, folder: true, title: true } });
+  for (const s of allShows) {
+    if (currentFolders.has(s.folder)) continue;
+    await prisma.show.delete({ where: { id: s.id } });
+    log.push(`Deleted show "${s.title}" — folder "${s.folder}" no longer on disk`);
+  }
+
+  await finishRun(runId, log, `Scanned ${total} TV episode file(s)`);
+  await triggerJellyfinSync();
+}
+
+async function doScanMusic(runId: number, force: boolean): Promise<void> {
+  const log: string[] = [];
+  const musicPath = process.env.MUSIC_PATH;
+  if (!musicPath) throw new Error("MUSIC_PATH is not set");
+
+  const musicRelPaths = await walkMusic(musicPath);
+
+  const musicCandidates: MusicCandidateFile[] = [];
+  let musicUnparsed = 0;
+  for (const relPath of musicRelPaths) {
+    const absPath = path.join(musicPath, relPath);
+    let stat;
+    try {
+      stat = await fs.stat(absPath);
+    } catch (err) {
+      log.push(`Could not stat "${relPath}": ${err instanceof Error ? err.message : String(err)}`);
+      continue;
+    }
+    const parsed = parseTrackPath(relPath);
+    if (!parsed) {
+      musicUnparsed++;
+      log.push(`Could not parse track info from "${relPath}"`);
+      continue;
+    }
+    musicCandidates.push({ parsed, absPath, size: stat.size, mtimeMs: stat.mtimeMs });
+  }
+
+  const total = musicCandidates.length;
+  await updateProgress(runId, {
+    total,
+    filesSeen: 0,
+    progress: 0,
+    message: `Found ${total} music file(s)${musicUnparsed ? ` (${musicUnparsed} unparsed)` : ""}`,
+  });
+
+  let completed = 0;
+  async function reportProgress(message: string): Promise<void> {
+    completed++;
+    if (completed % PROGRESS_UPDATE_EVERY === 0 || completed === total) {
+      await updateProgress(runId, { progress: completed, filesSeen: completed, message });
+    }
+  }
+
+  // Resolve Artist/Album identities up front, serially (like
+  // resolveShow/resolveSeason) — avoids upsert races on the same
+  // Artist/Album row during the concurrent probe phase below.
+  const artistIdByFolder = new Map<string, number>();
+  const albumIdByKey = new Map<string, number>();
+
+  for (const c of musicCandidates) {
+    const { parsed } = c;
+    let artistId = artistIdByFolder.get(parsed.artistFolder);
+    if (artistId === undefined) {
+      const various = parsed.artistFolder === COMPILATIONS_FOLDER;
+      artistId = await resolveArtist(parsed.artistFolder, parsed.artistName, various);
+      artistIdByFolder.set(parsed.artistFolder, artistId);
+    }
+    const albumKey = `${artistId}:${parsed.albumFolder}`;
+    let albumId = albumIdByKey.get(albumKey);
+    if (albumId === undefined) {
+      albumId = await resolveAlbum(artistId, parsed.albumFolder, parsed.albumTitle);
+      albumIdByKey.set(albumKey, albumId);
+    }
+  }
+
+  // Probe + upsert tracks, bounded concurrency (SMB share).
+  await mapPool(musicCandidates, PROBE_CONCURRENCY, async (file) => {
+    const albumKey = `${artistIdByFolder.get(file.parsed.artistFolder)}:${file.parsed.albumFolder}`;
+    const albumId = albumIdByKey.get(albumKey)!;
+    await processTrack(file, albumId, log, force);
+    await reportProgress(`Probed ${completed}/${total}: ${file.parsed.fileName}`);
+  });
+
+  // Delete Track rows for music files no longer on disk.
+  const seenMusicPaths = new Set(musicCandidates.map((c) => c.parsed.relPath));
+  const allTracks = await prisma.track.findMany({ select: { id: true, filePath: true } });
+  const staleTrackIds = allTracks.filter((t) => !seenMusicPaths.has(t.filePath)).map((t) => t.id);
+  if (staleTrackIds.length > 0) {
+    await prisma.track.deleteMany({ where: { id: { in: staleTrackIds } } });
+    log.push(`Removed ${staleTrackIds.length} track(s) for music files no longer on disk`);
+  }
+
+  // Owned albums left with zero tracks: if MusicBrainz-matched and still a
+  // studio album, revert to a "missing" back-catalogue placeholder
+  // (owned=false, folder cleared — same shape as the placeholders
+  // musicbrainz.ts creates for albums we never owned); otherwise there's no
+  // back-catalogue reason to keep the row, so delete it outright.
+  const emptyOwnedAlbums = await prisma.album.findMany({
+    where: { owned: true, tracks: { none: {} } },
+    select: { id: true, title: true, mbid: true, kind: true },
+  });
+  for (const a of emptyOwnedAlbums) {
+    if (a.mbid && a.kind === "STUDIO") {
+      await prisma.album.update({ where: { id: a.id }, data: { owned: false, folder: null } });
+      log.push(`"${a.title}" has no tracks left — reverted to missing (studio album, MusicBrainz-matched)`);
+    } else {
+      await prisma.album.delete({ where: { id: a.id } });
+      log.push(`Deleted "${a.title}" — no tracks left`);
+    }
+  }
+
+  // Artists left with zero albums at all (every album either deleted above
+  // or, if never owned, never existed for this artist in the first place).
+  const emptyArtists = await prisma.artist.findMany({
+    where: { albums: { none: {} } },
+    select: { id: true, name: true },
+  });
+  for (const ar of emptyArtists) {
+    await prisma.artist.delete({ where: { id: ar.id } });
+    log.push(`Deleted artist "${ar.name}" — no albums left`);
+  }
+
+  // Fallback release year from the files' own date tags for albums
+  // MusicBrainz can't match (all of Compilations by design, plus title
+  // mismatches): the modal tagYear across the album's tracks. MB-matched
+  // albums always take MusicBrainz's date instead (enrichment overwrites).
+  const yearless = await prisma.album.findMany({
+    where: { owned: true, year: null, mbid: null, tracks: { some: { tagYear: { not: null } } } },
+    select: { id: true, title: true, tracks: { select: { tagYear: true } } },
+  });
+  for (const a of yearless) {
+    const counts = new Map<number, number>();
+    for (const t of a.tracks) {
+      if (t.tagYear != null) counts.set(t.tagYear, (counts.get(t.tagYear) ?? 0) + 1);
+    }
+    let best: number | null = null;
+    let bestN = 0;
+    for (const [y, n] of counts) {
+      if (n > bestN) {
+        best = y;
+        bestN = n;
+      }
+    }
+    if (best != null) {
+      await prisma.album.update({ where: { id: a.id }, data: { year: best } });
+      log.push(`Set year ${best} for "${a.title}" from the files' own date tags`);
+    }
+  }
+
+  await finishRun(runId, log, `Scanned ${total} music file(s)`);
+}
+
+export type ScanMediaType = "FILM" | "TV" | "MUSIC";
+
+const SCAN_KIND: Record<ScanMediaType, RunKind> = {
+  FILM: "SCAN_FILM",
+  TV: "SCAN_TV",
+  MUSIC: "SCAN_MUSIC",
+};
+
+const SCAN_RUNNER: Record<ScanMediaType, (runId: number, force: boolean) => Promise<void>> = {
+  FILM: doScanFilms,
+  TV: doScanTv,
+  MUSIC: doScanMusic,
+};
+
+const SCAN_PATH_ENV: Record<ScanMediaType, string> = {
+  FILM: "MOVIES_PATH",
+  TV: "TVSHOWS_PATH",
+  MUSIC: "MUSIC_PATH",
+};
+
 /**
- * Kick off a scan. Resolves quickly once the run is registered (or an
- * existing run is found) — the actual walk/probe/upsert work continues in
- * the background and is not awaited here.
+ * Kick off a scan of one media type. Resolves quickly once the run is
+ * registered (or an existing run is found, or the run is failed immediately
+ * for a missing library path) — the actual walk/probe/upsert work continues
+ * in the background and is not awaited here.
  *
  * `force` ignores the size+mtime probe cache and re-probes every file even
  * when nothing on disk changed — used for a one-off re-probe after adding
  * new ffprobe-derived fields (e.g. audio profile, HDR range) so existing
  * rows pick up values that would otherwise stay null forever.
  */
-export async function runScan(options: { force?: boolean } = {}): Promise<{ runId: number; started: boolean }> {
+export async function runScan(
+  mediaType: ScanMediaType,
+  options: { force?: boolean } = {},
+): Promise<{ runId: number; started: boolean }> {
   const force = options.force ?? false;
-  const { run, started } = await guardAndCreateRun("SCAN");
+  const { run, started } = await guardAndCreateRun(SCAN_KIND[mediaType]);
   if (!started) return { runId: run.id, started: false };
 
-  doScan(run.id, force).catch(async (err) => {
-    console.error("[scanner] scan failed:", err);
+  if (!process.env[SCAN_PATH_ENV[mediaType]]) {
+    await failRun(run.id, new Error(`${SCAN_PATH_ENV[mediaType]} is not set`));
+    return { runId: run.id, started: true };
+  }
+
+  SCAN_RUNNER[mediaType](run.id, force).catch(async (err) => {
+    console.error(`[scanner] ${mediaType} scan failed:`, err);
     await failRun(run.id, err).catch((e) => console.error("[scanner] failed to record failure:", e));
   });
 

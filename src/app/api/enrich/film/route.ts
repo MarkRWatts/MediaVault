@@ -7,13 +7,13 @@ export async function POST() {
   if (member instanceof NextResponse) return member;
 
   try {
-    const { runId, started } = await runEnrich();
+    const { runId, started } = await runEnrich("FILM");
     if (!started) {
       return NextResponse.json({ runId }, { status: 409 });
     }
     return NextResponse.json({ runId });
   } catch (err) {
-    console.error("[api/enrich] failed to start enrich:", err);
+    console.error("[api/enrich/film] failed to start enrich:", err);
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
   }
 }

@@ -7,7 +7,14 @@ import type { ScanRun } from "@/generated/prisma/client";
 
 const STALE_RUN_MS = 30 * 60 * 1000; // 30 minutes
 
-export type RunKind = "SCAN" | "ENRICH" | "JELLYFIN" | "ENRICH_MUSIC";
+export type RunKind =
+  | "SCAN_FILM"
+  | "SCAN_TV"
+  | "SCAN_MUSIC"
+  | "ENRICH_FILM"
+  | "ENRICH_TV"
+  | "ENRICH_MUSIC"
+  | "JELLYFIN";
 
 /**
  * Guard + register a new run of `kind`. If a RUNNING run of the same kind
@@ -110,31 +117,40 @@ function toSummary(run: ScanRun | null): RunSummary | null {
   };
 }
 
+const ALL_KINDS: RunKind[] = [
+  "SCAN_FILM",
+  "SCAN_TV",
+  "SCAN_MUSIC",
+  "ENRICH_FILM",
+  "ENRICH_TV",
+  "ENRICH_MUSIC",
+  "JELLYFIN",
+];
+
 export async function getLatestRuns(): Promise<{
-  latestScan: RunSummary | null;
-  latestEnrich: RunSummary | null;
+  latestScanFilm: RunSummary | null;
+  latestScanTv: RunSummary | null;
+  latestScanMusic: RunSummary | null;
+  latestEnrichFilm: RunSummary | null;
+  latestEnrichTv: RunSummary | null;
+  latestEnrichMusic: RunSummary | null;
   latestJellyfin: RunSummary | null;
-  latestMusicEnrich: RunSummary | null;
   running: boolean;
 }> {
-  const [latestScanRun, latestEnrichRun, latestJellyfinRun, latestMusicEnrichRun] = await Promise.all([
-    prisma.scanRun.findFirst({ where: { kind: "SCAN" }, orderBy: { startedAt: "desc" } }),
-    prisma.scanRun.findFirst({ where: { kind: "ENRICH" }, orderBy: { startedAt: "desc" } }),
-    prisma.scanRun.findFirst({ where: { kind: "JELLYFIN" }, orderBy: { startedAt: "desc" } }),
-    prisma.scanRun.findFirst({ where: { kind: "ENRICH_MUSIC" }, orderBy: { startedAt: "desc" } }),
-  ]);
+  const runs = await Promise.all(
+    ALL_KINDS.map((kind) => prisma.scanRun.findFirst({ where: { kind }, orderBy: { startedAt: "desc" } })),
+  );
 
-  const running =
-    latestScanRun?.status === "RUNNING" ||
-    latestEnrichRun?.status === "RUNNING" ||
-    latestJellyfinRun?.status === "RUNNING" ||
-    latestMusicEnrichRun?.status === "RUNNING";
+  const running = runs.some((r) => r?.status === "RUNNING");
 
   return {
-    latestScan: toSummary(latestScanRun),
-    latestEnrich: toSummary(latestEnrichRun),
-    latestJellyfin: toSummary(latestJellyfinRun),
-    latestMusicEnrich: toSummary(latestMusicEnrichRun),
+    latestScanFilm: toSummary(runs[0]),
+    latestScanTv: toSummary(runs[1]),
+    latestScanMusic: toSummary(runs[2]),
+    latestEnrichFilm: toSummary(runs[3]),
+    latestEnrichTv: toSummary(runs[4]),
+    latestEnrichMusic: toSummary(runs[5]),
+    latestJellyfin: toSummary(runs[6]),
     running,
   };
 }
