@@ -171,7 +171,15 @@ export interface ArtistShelfAlbum extends ArtistCatalogueAlbum {
 }
 
 export interface ArtistDetail {
-  artist: { id: number; name: string; disambiguation: string | null; various: boolean };
+  artist: {
+    id: number;
+    name: string;
+    disambiguation: string | null;
+    various: boolean;
+    bio: string | null;
+    hasPhoto: boolean;
+    hasBackdrop: boolean;
+  };
   studio: ArtistCatalogueAlbum[]; // full back-catalogue, release (year) order, nulls last
   shelf: ArtistShelfAlbum[]; // owned non-studio albums, by year
   stats: { owned: number; total: number; pct: number; yearMin: number | null; yearMax: number | null };
@@ -231,6 +239,9 @@ export async function getArtistDetail(id: number): Promise<ArtistDetail | null> 
       name: artist.name,
       disambiguation: artist.disambiguation,
       various: artist.various,
+      bio: artist.bio,
+      hasPhoto: artist.photoPath != null,
+      hasBackdrop: artist.backdropPath != null,
     },
     studio,
     shelf,
@@ -286,6 +297,10 @@ export interface PhysicalCopyView {
   notes: string | null;
   /** Set once this copy is linked to a specific MusicBrainz release. */
   releaseMbid: string | null;
+  /** Set once this copy is linked to a specific Discogs release (fallback
+   *  when MusicBrainz has no entry for this pressing) — mutually exclusive
+   *  with releaseMbid in practice. */
+  discogsReleaseId: number | null;
   /** True when this pressing has its own cover art — served at /api/physical-cover/<id>. */
   hasCover: boolean;
   /** Pressing-specific tracklist (see PhysicalTrack) — empty unless linked to a release. */
@@ -374,6 +389,7 @@ export async function getAlbumDetail(id: number): Promise<AlbumDetail | null> {
         condition: c.condition,
         notes: c.notes,
         releaseMbid: c.releaseMbid,
+        discogsReleaseId: c.discogsReleaseId,
         hasCover: c.coverPath != null,
         tracks: c.tracks
           .slice()

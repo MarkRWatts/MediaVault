@@ -165,14 +165,39 @@ export default async function ArtistPage({
         <Link href="/music" className="w-fit text-xs font-medium text-text-muted hover:text-text">
           ← Music
         </Link>
-        <div>
-          <h1 className="font-display text-4xl leading-none tracking-wide text-balance sm:text-5xl">
-            {artist.name}
-          </h1>
-          {artist.disambiguation && (
-            <p className="mt-1 text-sm text-text-faint">{artist.disambiguation}</p>
+
+        {artist.hasBackdrop && (
+          // One hero image per artist page load, not worth next/image's machinery.
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={`/api/artist-image/${artist.id}/backdrop`}
+            alt=""
+            className="h-40 w-full rounded-lg border border-border-strong object-cover sm:h-56"
+          />
+        )}
+
+        <div className="flex items-center gap-4">
+          {artist.hasPhoto && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={`/api/artist-image/${artist.id}/photo`}
+              alt={`${artist.name} portrait`}
+              className="h-16 w-16 shrink-0 rounded-full border border-border-strong object-cover sm:h-20 sm:w-20"
+            />
           )}
+          <div>
+            <h1 className="font-display text-4xl leading-none tracking-wide text-balance sm:text-5xl">
+              {artist.name}
+            </h1>
+            {artist.disambiguation && (
+              <p className="mt-1 text-sm text-text-faint">{artist.disambiguation}</p>
+            )}
+          </div>
         </div>
+
+        {artist.bio && (
+          <p className="max-w-2xl whitespace-pre-line text-sm leading-relaxed text-text-muted">{artist.bio}</p>
+        )}
 
         {!artist.various && (
           <div className="flex flex-col gap-2">

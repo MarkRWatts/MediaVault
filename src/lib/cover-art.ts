@@ -38,7 +38,7 @@ const MIN_EMBEDDED_COVER_BYTES = 2 * 1024;
 // mandatory artist-name check below.
 const ITUNES_TITLE_THRESHOLD = 0.6;
 
-export type CoverSource = "embedded" | "caa" | "itunes" | "manual";
+export type CoverSource = "embedded" | "caa" | "itunes" | "discogs" | "manual";
 
 export interface CoverTarget {
   id: number;
@@ -345,6 +345,22 @@ export async function fetchCover(album: CoverTarget): Promise<CoverResult | null
  * shows for this copy. Refuses outright when coverSource is already
  * "manual", same convention as fetchCover.
  */
+async function cachePhysicalCopyCover(
+  albumId: number,
+  medium: string,
+  buf: Buffer,
+  source: CoverSource,
+): Promise<CoverResult | null> {
+  const fileName = `${albumId}-${medium.toLowerCase()}.jpg`;
+  try {
+    await fs.mkdir(COVERS_DIR, { recursive: true });
+    await fs.writeFile(path.join(COVERS_DIR, fileName), buf);
+    return { fileName, source };
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchPhysicalCopyCover(copy: {
   albumId: number;
   medium: string;
@@ -355,12 +371,33 @@ export async function fetchPhysicalCopyCover(copy: {
 
   const buf = await fetchReleaseCaaCover(copy.releaseMbid);
   if (!buf) return null;
+  return cachePhysicalCopyCover(copy.albumId, copy.medium, buf, "caa");
+}
 
-  const fileName = `${copy.albumId}-${copy.medium.toLowerCase()}.jpg`;
+/**
+ * Discogs fallback cover fetch (see discogs.ts) — Discogs already hands
+ * back a direct, full-size image URL (unlike MusicBrainz+CAA's separate
+ * archive lookup), so this is a plain download. May be a lower-quality or
+ * off-target photo (e.g. shrinkwrapped sleeve) — Discogs images are
+ * user-submitted and there's no way to verify quality from the API alone.
+ */
+export async function fetchDiscogsPhysicalCopyCover(copy: {
+  albumId: number;
+  medium: string;
+  coverUrl: string;
+  coverSource: string | null;
+}): Promise<CoverResult | null> {
+  if (copy.coverSource === "manual") return null;
+
   try {
-    await fs.mkdir(COVERS_DIR, { recursive: true });
-    await fs.writeFile(path.join(COVERS_DIR, fileName), buf);
-    return { fileName, source: "caa" };
+    const res = await fetch(copy.coverUrl, {
+      headers: { "User-Agent": USER_AGENT },
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!res.ok) return null;
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.byteLength < MIN_COVER_BYTES) return null;
+    return cachePhysicalCopyCover(copy.albumId, copy.medium, buf, "discogs");
   } catch {
     return null;
   }

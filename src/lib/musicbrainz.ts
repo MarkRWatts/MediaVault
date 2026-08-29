@@ -15,7 +15,9 @@ import type { Artist } from "@/generated/prisma/client";
 import type { AlbumKind } from "@/lib/constants";
 import { MUSIC_GAP_MIN_OWNED, MUSIC_GAP_MIN_PCT } from "@/lib/constants";
 import { guardAndCreateRun, updateProgress, finishRun, failRun } from "@/lib/runs";
-import { fetchCover, fetchPhysicalCopyCover } from "@/lib/cover-art";
+import { fetchCover, fetchPhysicalCopyCover, fetchDiscogsPhysicalCopyCover } from "@/lib/cover-art";
+import { DISCOGS_URL_RE, fetchDiscogsRelease } from "@/lib/discogs";
+import { fetchArtistEnrichment } from "@/lib/artist-bio";
 
 // Defaults to the public API; set MUSICBRAINZ_BASE_URL (e.g.
 // http://localhost:15000/ws/2) to point at a local musicbrainz-docker mirror
@@ -750,6 +752,53 @@ async function reconcileArtistAlbums(artistId: number, artistName: string, artis
 
 // --- Per-artist driver ---
 
+/**
+ * Roon-style bio/photo/backdrop, best-effort — see fetchArtistEnrichment.
+ * Only fetches pieces this artist doesn't already have (never re-fetches, and
+ * never touches a "manual" owner-curated field), and never blocks or fails
+ * the wider enrich run over a lookup miss.
+ */
+async function enrichArtistBioAndImages(
+  artistId: number,
+  artistName: string,
+  mbid: string | null,
+  log: string[],
+): Promise<void> {
+  const current = await prisma.artist.findUnique({
+    where: { id: artistId },
+    select: { bio: true, bioSource: true, photoPath: true, photoSource: true, backdropPath: true, backdropSource: true },
+  });
+  if (!current) return;
+
+  const needsBio = current.bioSource !== "manual" && !current.bio;
+  const needsPhoto = current.photoSource !== "manual" && !current.photoPath;
+  const needsBackdrop = current.backdropSource !== "manual" && !current.backdropPath;
+  if (!needsBio && !needsPhoto && !needsBackdrop) return;
+
+  try {
+    const result = await fetchArtistEnrichment({ id: artistId, mbid, name: artistName, needsBio, needsPhoto, needsBackdrop });
+    const data: Record<string, string> = {};
+    if (result.bio) {
+      data.bio = result.bio.text;
+      data.bioSource = result.bio.source;
+    }
+    if (result.photo) {
+      data.photoPath = result.photo.fileName;
+      data.photoSource = result.photo.source;
+    }
+    if (result.backdrop) {
+      data.backdropPath = result.backdrop.fileName;
+      data.backdropSource = result.backdrop.source;
+    }
+    if (Object.keys(data).length > 0) {
+      await prisma.artist.update({ where: { id: artistId }, data });
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log.push(`Bio/image enrichment failed for "${artistName}": ${message}`);
+  }
+}
+
 async function enrichOneArtist(artist: Artist, log: string[]): Promise<void> {
   let mbid = artist.mbid;
 
@@ -780,12 +829,16 @@ async function enrichOneArtist(artist: Artist, log: string[]): Promise<void> {
     // Stays UNMATCHED — no release-group listing to reconcile against. The
     // cover pass still runs: embedded art needs no MusicBrainz id at all,
     // and a manually-matched album (POST /api/album-match) has its own
-    // release-group mbid for CAA despite the artist being unmatched.
+    // release-group mbid for CAA despite the artist being unmatched. Bio
+    // enrichment still runs too — Wikipedia's name-based lookup needs no
+    // mbid at all, unlike TheAudioDB/Fanart.tv.
     await fetchMissingCoversForArtist(artist.id, artist.name, log);
+    await enrichArtistBioAndImages(artist.id, artist.name, null, log);
     return;
   }
 
   await reconcileArtistAlbums(artist.id, artist.name, mbid, log);
+  await enrichArtistBioAndImages(artist.id, artist.name, mbid, log);
 }
 
 async function doMusicEnrich(runId: number): Promise<void> {
@@ -966,39 +1019,76 @@ export function physicalCopyData(medium: PhysicalMedium, v: PhysicalFields) {
  * outright rather than diffing, since a re-attach means the owner is
  * correcting which pressing this copy actually is.
  */
-async function populatePhysicalRelease(
+async function replacePhysicalTracks(
+  copyId: number,
+  tracks: { disc: number; trackNumber: number | null; title: string; durationSecs: number | null }[],
+): Promise<void> {
+  await prisma.physicalTrack.deleteMany({ where: { physicalCopyId: copyId } });
+  if (tracks.length > 0) {
+    await prisma.physicalTrack.createMany({ data: tracks.map((t) => ({ physicalCopyId: copyId, ...t })) });
+  }
+}
+
+async function saveCoverIfFound(
+  copyId: number,
+  result: { fileName: string; source: string } | null,
+): Promise<void> {
+  if (!result) return;
+  await prisma.physicalCopy.update({
+    where: { id: copyId },
+    data: { coverPath: result.fileName, coverSource: result.source },
+  });
+}
+
+async function populatePhysicalReleaseFromMusicBrainz(
   copy: { id: number; albumId: number; medium: string; coverSource: string | null },
   releaseMbid: string,
 ): Promise<void> {
   try {
-    const tracks = await fetchReleaseTrackList(releaseMbid);
-    await prisma.physicalTrack.deleteMany({ where: { physicalCopyId: copy.id } });
-    if (tracks.length > 0) {
-      await prisma.physicalTrack.createMany({
-        data: tracks.map((t) => ({ physicalCopyId: copy.id, ...t })),
-      });
-    }
+    await replacePhysicalTracks(copy.id, await fetchReleaseTrackList(releaseMbid));
   } catch {
-    // best-effort — leave whatever tracks were there before untouched isn't
-    // possible once deleteMany has run, but a fetch failure throws before
-    // that call, so this just means "no tracks", not partial data.
+    // best-effort — a fetch failure just means "no tracks", not partial data
   }
-
   try {
-    const result = await fetchPhysicalCopyCover({
-      albumId: copy.albumId,
-      medium: copy.medium,
-      releaseMbid,
-      coverSource: copy.coverSource,
-    });
-    if (result) {
-      await prisma.physicalCopy.update({
-        where: { id: copy.id },
-        data: { coverPath: result.fileName, coverSource: result.source },
-      });
-    }
+    await saveCoverIfFound(
+      copy.id,
+      await fetchPhysicalCopyCover({
+        albumId: copy.albumId,
+        medium: copy.medium,
+        releaseMbid,
+        coverSource: copy.coverSource,
+      }),
+    );
   } catch {
     // best-effort — no cover for this pressing, the album's own still shows
+  }
+}
+
+async function populatePhysicalReleaseFromDiscogs(
+  copy: { id: number; albumId: number; medium: string; coverSource: string | null },
+  discogsReleaseId: number,
+): Promise<void> {
+  let release: Awaited<ReturnType<typeof fetchDiscogsRelease>> | null = null;
+  try {
+    release = await fetchDiscogsRelease(discogsReleaseId);
+    await replacePhysicalTracks(copy.id, release.tracks);
+  } catch {
+    // best-effort — a fetch failure just means "no tracks", not partial data
+  }
+  if (release?.coverUrl) {
+    try {
+      await saveCoverIfFound(
+        copy.id,
+        await fetchDiscogsPhysicalCopyCover({
+          albumId: copy.albumId,
+          medium: copy.medium,
+          coverUrl: release.coverUrl,
+          coverSource: copy.coverSource,
+        }),
+      );
+    } catch {
+      // best-effort — no cover for this pressing, the album's own still shows
+    }
   }
 }
 
@@ -1012,26 +1102,51 @@ async function populatePhysicalRelease(
  * release-group id — this function only exists to attach release-level
  * data, so accepting a release-group id would be a silent no-op.
  */
+/**
+ * Dispatches on the input's shape — a Discogs release URL/bare id, a
+ * MusicBrainz release URL, or a bare MusicBrainz release UUID — to whichever
+ * source actually has this pressing. Falls back to Discogs when MusicBrainz
+ * simply has no entry for it (common for smaller-run/newer vinyl).
+ */
 export async function attachPhysicalRelease(
   albumId: number,
   medium: PhysicalMedium,
   mb: string,
 ): Promise<{ ok: true; trackCount: number } | { ok: false; status: number; error: string }> {
-  const urlMatch = MB_URL_RE.exec(mb);
-  let releaseMbid: string;
-  if (urlMatch) {
-    if (urlMatch[1].toLowerCase() !== "release") {
+  const trimmed = mb.trim();
+
+  const discogsUrlMatch = DISCOGS_URL_RE.exec(trimmed);
+  const mbUrlMatch = MB_URL_RE.exec(trimmed);
+
+  let source: "musicbrainz" | "discogs";
+  let releaseMbid: string | null = null;
+  let discogsReleaseId: number | null = null;
+
+  if (discogsUrlMatch) {
+    source = "discogs";
+    discogsReleaseId = Number(discogsUrlMatch[1]);
+  } else if (mbUrlMatch) {
+    if (mbUrlMatch[1].toLowerCase() !== "release") {
       return {
         ok: false,
         status: 400,
         error: "expected a specific release URL (musicbrainz.org/release/...), not a release-group — a release-group has no fixed tracklist or cover",
       };
     }
-    releaseMbid = urlMatch[2].toLowerCase();
-  } else if (MB_UUID_RE.test(mb.trim())) {
-    releaseMbid = mb.trim().toLowerCase();
+    source = "musicbrainz";
+    releaseMbid = mbUrlMatch[2].toLowerCase();
+  } else if (MB_UUID_RE.test(trimmed)) {
+    source = "musicbrainz";
+    releaseMbid = trimmed.toLowerCase();
+  } else if (/^\d+$/.test(trimmed)) {
+    source = "discogs";
+    discogsReleaseId = Number(trimmed);
   } else {
-    return { ok: false, status: 400, error: "expected a musicbrainz.org release URL or a release UUID" };
+    return {
+      ok: false,
+      status: 400,
+      error: "expected a musicbrainz.org or discogs.com release URL, a release UUID, or a bare Discogs release id",
+    };
   }
 
   const copy = await prisma.physicalCopy.findUnique({ where: { albumId_medium: { albumId, medium } } });
@@ -1039,8 +1154,19 @@ export async function attachPhysicalRelease(
     return { ok: false, status: 404, error: "no physical copy on this medium for this album yet — add one first" };
   }
 
-  await prisma.physicalCopy.update({ where: { id: copy.id }, data: { releaseMbid } });
-  await populatePhysicalRelease(copy, releaseMbid);
+  // Whichever source this link uses becomes the copy's canonical one — the
+  // other id is cleared so a stale MusicBrainz link doesn't linger after
+  // re-linking via Discogs (or vice versa) and confuse a future re-fetch.
+  await prisma.physicalCopy.update({
+    where: { id: copy.id },
+    data: { releaseMbid, discogsReleaseId },
+  });
+
+  if (source === "musicbrainz") {
+    await populatePhysicalReleaseFromMusicBrainz(copy, releaseMbid!);
+  } else {
+    await populatePhysicalReleaseFromDiscogs(copy, discogsReleaseId!);
+  }
 
   const trackCount = await prisma.physicalTrack.count({ where: { physicalCopyId: copy.id } });
   return { ok: true, trackCount };
@@ -1110,7 +1236,7 @@ export async function createPhysicalOnlyAlbum(
       create: { albumId: existingAlbum.id, medium, releaseMbid, ...physicalCopyData(medium, fields) },
       update: { releaseMbid, ...physicalCopyData(medium, fields) },
     });
-    if (releaseMbid) await populatePhysicalRelease(copy, releaseMbid);
+    if (releaseMbid) await populatePhysicalReleaseFromMusicBrainz(copy, releaseMbid);
     const artist = await prisma.artist.findUnique({ where: { id: existingAlbum.artistId } });
     return {
       ok: true,
@@ -1156,7 +1282,7 @@ export async function createPhysicalOnlyAlbum(
   const copy = await prisma.physicalCopy.create({
     data: { albumId: album.id, medium, releaseMbid, ...physicalCopyData(medium, fields) },
   });
-  if (releaseMbid) await populatePhysicalRelease(copy, releaseMbid);
+  if (releaseMbid) await populatePhysicalReleaseFromMusicBrainz(copy, releaseMbid);
 
   // Best-effort cover fetch, same shape as fetchMissingCoversForArtist's
   // per-album try/catch — must never fail the add.

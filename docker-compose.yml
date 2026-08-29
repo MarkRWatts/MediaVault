@@ -52,6 +52,16 @@ services:
       # A music lookup fails outright if this is set but the mirror isn't
       # running, rather than silently falling back.
       MUSICBRAINZ_BASE_URL: ${MUSICBRAINZ_BASE_URL:-}
+      # Discogs fallback for pressing-specific tracklist/cover when
+      # MusicBrainz has no entry for it (see src/lib/discogs.ts). Optional —
+      # only raises the API rate limit, not required at this app's scale.
+      DISCOGS_TOKEN: ${DISCOGS_TOKEN:-}
+      # Artist bio/photo/backdrop enrichment (see src/lib/artist-bio.ts).
+      # AUDIODB_API_KEY is optional (falls back to the shared public test
+      # key); FANART_API_KEY is optional too but strictly required for any
+      # Fanart.tv art at all — that source is skipped entirely without it.
+      AUDIODB_API_KEY: ${AUDIODB_API_KEY:-}
+      FANART_API_KEY: ${FANART_API_KEY:-}
     volumes:
       # SQLite database and cached posters.
       - data:/app/data

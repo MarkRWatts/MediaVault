@@ -254,6 +254,13 @@ works.
   container ports to the LAN by default). Must be started on the Mac before
   a music scan/enrich on the VM, or lookups fail outright rather than
   falling back to the public API. Leave unset to always use musicbrainz.org.
+- `DISCOGS_TOKEN`: Optional — raises the rate limit for the Discogs fallback
+  used when MusicBrainz has no entry for a specific pressing (see
+  `src/lib/discogs.ts`). Not required at this app's scale.
+- `AUDIODB_API_KEY` / `FANART_API_KEY`: Optional — artist bio/photo/backdrop
+  enrichment (see `src/lib/artist-bio.ts`). TheAudioDB needs no signup at
+  this scale; Fanart.tv strictly requires a free personal key
+  (https://fanart.tv/get-an-api-key/) and is skipped entirely without one.
 
 No `FFPROBE_DOCKER_IMAGE` needed — the runner image installs ffmpeg.
 

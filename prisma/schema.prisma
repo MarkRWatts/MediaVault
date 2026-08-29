@@ -265,6 +265,17 @@ model Artist {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
+  // Roon-style enrichment (see artist-bio.ts) — best-effort, multi-source,
+  // fetched once mbid is known and cached like Album.coverPath. Null simply
+  // means "not fetched yet" or "no source had anything", same convention as
+  // the rest of this app's enrichment fields — never blocks anything.
+  bio            String? // biography text
+  bioSource      String? // theaudiodb | wikipedia | manual
+  photoPath      String? // cached portrait/thumb image, relative to POSTER_CACHE_DIR/artists/
+  photoSource    String? // theaudiodb | fanart | wikipedia | manual
+  backdropPath   String? // cached wide background/banner image, relative to POSTER_CACHE_DIR/artists/
+  backdropSource String? // fanart | theaudiodb | manual
+
   @@index([sortName])
 }
 
@@ -323,8 +334,13 @@ model PhysicalCopy {
   // specific release (see attachPhysicalRelease in musicbrainz.ts) —
   // metadata-only copies work fine without it.
   releaseMbid String?
+  // Discogs fallback (see discogs.ts) — used when MusicBrainz simply has no
+  // entry for this pressing (common for newer/smaller-run vinyl). Mutually
+  // exclusive with releaseMbid in practice (attachPhysicalRelease clears
+  // whichever source it isn't using), never both meaningfully set at once.
+  discogsReleaseId Int?
   coverPath   String? // cached cover art specific to this pressing, relative to POSTER_CACHE_DIR/covers/
-  coverSource String? // caa | manual — "manual" is never overwritten, same convention as Album.coverSource
+  coverSource String? // caa | discogs | manual — "manual" is never overwritten, same convention as Album.coverSource
   tracks      PhysicalTrack[]
 
   @@unique([albumId, medium])

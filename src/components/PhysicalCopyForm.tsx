@@ -195,12 +195,13 @@ export default function PhysicalCopyForm({
             type="text"
             value={releaseMb}
             onChange={(e) => setReleaseMb(e.target.value)}
-            placeholder="musicbrainz.org/release/... — pulls this pressing's own tracklist & cover"
+            placeholder="musicbrainz.org/release/... or discogs.com/release/... — pulls this pressing's own tracklist & cover"
             className="rounded border border-border bg-bg px-2 py-1 text-sm text-text placeholder-text-faint"
           />
           {initial && initial.tracks.length > 0 && (
             <p className="text-xs text-text-faint">
-              Linked: {initial.tracks.length} track{initial.tracks.length === 1 ? "" : "s"}
+              Linked via {initial.discogsReleaseId ? "Discogs" : "MusicBrainz"}: {initial.tracks.length} track
+              {initial.tracks.length === 1 ? "" : "s"}
               {initial.hasCover ? ", own cover art" : ""}
             </p>
           )}
