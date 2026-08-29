@@ -1,7 +1,9 @@
-// One-shot CD/source backfill: POST creates an inferred PhysicalCopy(medium:
-// "CD") for every digitally-owned album whose tracks are ALL ALAC — per Mark,
-// every all-ALAC album in the library is a rip of a CD he physically owns —
-// and stamps Album.digitalSource for the two cases that can be safely
+// One-shot CD/source backfill: POST creates a PhysicalCopy(medium: "CD") for
+// every digitally-owned album whose tracks are ALL ALAC — per Mark, every
+// all-ALAC album in the library is a rip of a CD he physically owns, a
+// confirmed fact rather than a guess, so these are created already
+// confirmed (inferred: false) — and stamps Album.digitalSource for the two
+// cases that can be safely
 // inferred: all-ALAC => "cd", any FairPlay-DRM track => "itunes" (DRM files
 // only ever came from the iTunes Store). Everything else (AAC/MP3/FLAC
 // without DRM) is a purchase or download of unknowable origin and is
@@ -43,7 +45,7 @@ export async function POST() {
 
     if (allAlac && !album.physicalCopies.some((c) => c.medium === "CD")) {
       await prisma.physicalCopy.create({
-        data: { albumId: album.id, medium: "CD", format: "CD", inferred: true },
+        data: { albumId: album.id, medium: "CD", format: "CD", inferred: false },
       });
       created.push({ id: album.id, artist: album.artist.name, title: album.title });
     }
