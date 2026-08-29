@@ -402,3 +402,32 @@ export async function fetchDiscogsPhysicalCopyCover(copy: {
     return null;
   }
 }
+
+/**
+ * Album-level fallback for a physical-only Discogs-sourced album whose
+ * MusicBrainz release-group has no Cover Art Archive entry and no iTunes
+ * match either (see fetchCover above) — common for small-run/novelty
+ * releases (a kids' TV tie-in single, say). Reuses the same pressing photo
+ * just fetched for its PhysicalCopy rather than leaving the album with no
+ * cover at all when a usable image is already in hand. The caller (see
+ * populatePhysicalReleaseFromDiscogs in musicbrainz.ts) only calls this when
+ * the album genuinely has none yet — never overwrites an existing or
+ * manually-set one.
+ */
+export async function fetchDiscogsAlbumCover(albumId: number, coverUrl: string): Promise<CoverResult | null> {
+  try {
+    const res = await fetch(coverUrl, {
+      headers: { "User-Agent": USER_AGENT },
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!res.ok) return null;
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.byteLength < MIN_COVER_BYTES) return null;
+    const fileName = `${albumId}.jpg`;
+    await fs.mkdir(COVERS_DIR, { recursive: true });
+    await fs.writeFile(path.join(COVERS_DIR, fileName), buf);
+    return { fileName, source: "discogs" };
+  } catch {
+    return null;
+  }
+}

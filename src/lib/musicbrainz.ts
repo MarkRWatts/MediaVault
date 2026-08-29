@@ -15,7 +15,7 @@ import type { Artist } from "@/generated/prisma/client";
 import type { AlbumKind } from "@/lib/constants";
 import { MUSIC_GAP_MIN_OWNED, MUSIC_GAP_MIN_PCT } from "@/lib/constants";
 import { guardAndCreateRun, updateProgress, finishRun, failRun } from "@/lib/runs";
-import { fetchCover, fetchPhysicalCopyCover, fetchDiscogsPhysicalCopyCover } from "@/lib/cover-art";
+import { fetchCover, fetchPhysicalCopyCover, fetchDiscogsPhysicalCopyCover, fetchDiscogsAlbumCover } from "@/lib/cover-art";
 import { DISCOGS_URL_RE, fetchDiscogsRelease } from "@/lib/discogs";
 import { fetchArtistEnrichment } from "@/lib/artist-bio";
 
@@ -1165,6 +1165,29 @@ async function populatePhysicalReleaseFromDiscogs(
       );
     } catch {
       // best-effort — no cover for this pressing, the album's own still shows
+    }
+
+    // Back-fill the ALBUM's own cover too when it has none — a physical-only
+    // add whose MusicBrainz release-group has no Cover Art Archive entry and
+    // no iTunes match either (fetchCover in cover-art.ts) would otherwise
+    // stay coverless even though a perfectly usable photo was just fetched
+    // for the pressing above.
+    try {
+      const album = await prisma.album.findUnique({
+        where: { id: copy.albumId },
+        select: { coverPath: true, coverSource: true },
+      });
+      if (album && !album.coverPath && album.coverSource !== "manual") {
+        const result = await fetchDiscogsAlbumCover(copy.albumId, release.coverUrl);
+        if (result) {
+          await prisma.album.update({
+            where: { id: copy.albumId },
+            data: { coverPath: result.fileName, coverSource: result.source },
+          });
+        }
+      }
+    } catch {
+      // best-effort — never fail the larger attach over this
     }
   }
 }
