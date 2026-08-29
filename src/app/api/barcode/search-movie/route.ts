@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { searchMoviesByTitle } from "@/lib/tmdb";
 import { requireOwnerOrResponse } from "@/lib/require-member";
+import { prisma } from "@/lib/db";
 
 export async function POST(req: NextRequest) {
   const member = await requireOwnerOrResponse();
@@ -29,7 +30,26 @@ export async function POST(req: NextRequest) {
 
   try {
     const results = await searchMoviesByTitle(title, year);
-    return NextResponse.json({ results });
+
+    // Mark which hits are already in the library — same owned definition as
+    // scan-resolve.ts's resolveMovie (owned:true OR a physical copy logged),
+    // so the "Search by title" panel doesn't leave the user guessing.
+    const tmdbIds = results.map((r) => r.tmdbId);
+    const films = tmdbIds.length
+      ? await prisma.film.findMany({
+          where: { tmdbId: { in: tmdbIds } },
+          include: { physicalCopies: { select: { id: true } } },
+        })
+      : [];
+    const filmByTmdbId = new Map(films.map((f) => [f.tmdbId, f]));
+
+    const enriched = results.map((r) => {
+      const film = filmByTmdbId.get(r.tmdbId);
+      const owned = Boolean(film && (film.owned || film.physicalCopies.length > 0));
+      return { ...r, owned, filmId: owned ? film!.id : undefined };
+    });
+
+    return NextResponse.json({ results: enriched });
   } catch (err) {
     return NextResponse.json(
       { error: `TMDB search failed: ${err instanceof Error ? err.message : String(err)}` },

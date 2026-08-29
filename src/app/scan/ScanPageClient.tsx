@@ -22,6 +22,12 @@ interface FilmCandidate {
   title: string;
   year: number | null;
   posterPath: string | null;
+  // Set only by /api/barcode/search-movie — whether this hit is already in
+  // the library (owned or a physical copy logged). Absent (barcode-lookup's
+  // NotOwnedFilm candidates) implies false — those are only ever surfaced
+  // when the barcode's own lookup already came back not-owned.
+  owned?: boolean;
+  filmId?: number;
 }
 interface AlbumCandidate {
   mbid: string;
@@ -30,6 +36,9 @@ interface AlbumCandidate {
   year: number | null;
   format: string | null;
   coverArtUrl: string;
+  // Set only by /api/barcode/search-album — see FilmCandidate.owned.
+  owned?: boolean;
+  albumId?: number;
 }
 interface NotOwnedFilm {
   status: "not_owned";
@@ -305,14 +314,33 @@ function TitleSearchWidget({
                   : null
                 : r.candidate.coverArtUrl;
 
+            const libraryHref = r.candidate.owned
+              ? r.kind === "film"
+                ? `/film/${r.candidate.filmId}`
+                : `/music/album/${r.candidate.albumId}`
+              : null;
+
             return (
               <div key={key} className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2">
                 <div className="flex items-center gap-2">
                   <Thumb src={thumbSrc} title={r.candidate.title} year={r.candidate.year} aspect={r.kind === "film" ? "poster" : "square"} />
-                  <span className="text-sm text-text">
-                    {r.kind === "album" ? `${r.candidate.artistName} — ` : ""}
-                    {r.candidate.title} {r.candidate.year ? `(${r.candidate.year})` : ""}
-                  </span>
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-sm text-text">
+                      {r.kind === "album" ? `${r.candidate.artistName} — ` : ""}
+                      {r.candidate.title} {r.candidate.year ? `(${r.candidate.year})` : ""}
+                    </span>
+                    {r.candidate.owned && (
+                      <span className="inline-flex w-fit items-center rounded-full border border-accent-border bg-accent-dim px-2 py-0.5 text-[10px] font-medium tracking-wide text-accent">
+                        {libraryHref ? (
+                          <Link href={libraryHref} className="hover:underline">
+                            In library
+                          </Link>
+                        ) : (
+                          "In library"
+                        )}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 {rowAdded ? (
