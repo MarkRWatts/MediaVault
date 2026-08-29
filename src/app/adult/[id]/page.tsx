@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { requireAdultAccessOrRedirect } from "@/lib/require-member";
 import { resolutionTier, formatLabel, videoCodecLabel } from "@/lib/constants";
+import { getJellyfinServerInfo, jellyfinPlayUrl } from "@/lib/jellyfin";
 import AdultPlayButton from "@/components/AdultPlayButton";
 
 export default async function SceneDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -14,14 +15,20 @@ export default async function SceneDetailPage({ params }: { params: Promise<{ id
   const id = Number(idParam);
   if (!Number.isInteger(id)) notFound();
 
-  const scene = await prisma.scene.findUnique({
-    where: { id },
-    include: {
-      studio: { select: { name: true } },
-      performers: { include: { performer: { select: { id: true, name: true, imagePath: true } } } },
-    },
-  });
+  const [scene, jellyfinServer] = await Promise.all([
+    prisma.scene.findUnique({
+      where: { id },
+      include: {
+        studio: { select: { name: true } },
+        performers: { include: { performer: { select: { id: true, name: true, imagePath: true } } } },
+      },
+    }),
+    getJellyfinServerInfo(),
+  ]);
   if (!scene) notFound();
+
+  const jellyfinHref =
+    scene.jellyfinId && jellyfinServer ? jellyfinPlayUrl(scene.jellyfinId, jellyfinServer.serverId) : null;
 
   const tier = resolutionTier(scene.width, scene.height);
 
@@ -77,8 +84,21 @@ export default async function SceneDetailPage({ params }: { params: Promise<{ id
             <p className="text-xs text-text-faint">Not matched to ThePornDB yet — showing filename-derived info only.</p>
           )}
 
-          <div>
+          <div className="flex items-center gap-2">
             <AdultPlayButton sceneId={scene.id} title={scene.title} />
+            {jellyfinHref && (
+              <a
+                href={jellyfinHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-[11px] font-medium tracking-wide text-text-muted transition-colors hover:border-accent-border hover:text-accent-bright"
+              >
+                <svg aria-hidden viewBox="0 0 12 12" className="h-2.5 w-2.5 fill-current">
+                  <path d="M2.5 1.2c0-.55.6-.9 1.08-.62l6.2 3.8c.46.28.46.94 0 1.22l-6.2 3.8c-.48.28-1.08-.07-1.08-.62V1.2z" />
+                </svg>
+                Play in Jellyfin
+              </a>
+            )}
           </div>
         </div>
       </div>
