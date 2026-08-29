@@ -5,7 +5,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { PhysicalFields, PhysicalMedium, physicalCopyData } from "@/lib/musicbrainz";
+import { PhysicalFields, PhysicalMedium, physicalCopyData, attachPhysicalRelease } from "@/lib/musicbrainz";
 import { requireOwnerOrResponse } from "@/lib/require-member";
 
 function parseMedium(value: unknown): PhysicalMedium | null {
@@ -52,7 +52,18 @@ export async function POST(req: NextRequest) {
     update: physicalCopyData(medium, fields),
   });
 
-  return NextResponse.json(result);
+  // Optional: link this copy to a specific MusicBrainz release, pulling in
+  // its pressing-specific tracklist/cover (see attachPhysicalRelease). Kept
+  // separate from the fields above and reported as a non-fatal error — the
+  // metadata save above already succeeded either way.
+  const releaseMb = typeof body.releaseMb === "string" ? body.releaseMb.trim() : "";
+  let trackImportError: string | undefined;
+  if (releaseMb) {
+    const attached = await attachPhysicalRelease(albumId, medium, releaseMb);
+    if (!attached.ok) trackImportError = attached.error;
+  }
+
+  return NextResponse.json({ ...result, trackImportError });
 }
 
 export async function DELETE(req: NextRequest) {

@@ -147,19 +147,30 @@ export default async function AlbumPage({
             <AudioCodecBadge codec={codec} quality={quality} />
           </div>
           {album.copies.map((copy) => (
-            <div key={copy.medium} className="mt-2 text-xs text-text-faint">
-              {[
-                copy.format,
-                copy.discs && copy.discs > 1 && `${copy.discs} discs`,
-                copy.catalogNo && `Cat# ${copy.catalogNo}`,
-                copy.label,
-                copy.pressYear,
-                copy.condition,
-                copy.inferred && "inferred from rip",
-                copy.notes,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
+            <div key={copy.medium} className="mt-2 flex items-center gap-2 text-xs text-text-faint">
+              {copy.hasCover && (
+                // Small inline badge, not worth next/image's fill/layout machinery.
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={`/api/physical-cover/${copy.id}`}
+                  alt={`${copy.medium} cover art`}
+                  className="h-8 w-8 shrink-0 rounded border border-border-strong object-cover"
+                />
+              )}
+              <span>
+                {[
+                  copy.format,
+                  copy.discs && copy.discs > 1 && `${copy.discs} discs`,
+                  copy.catalogNo && `Cat# ${copy.catalogNo}`,
+                  copy.label,
+                  copy.pressYear,
+                  copy.condition,
+                  copy.inferred && "inferred from rip",
+                  copy.notes,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </span>
             </div>
           ))}
           {album.owned && album.digitalSource && (
@@ -224,6 +235,51 @@ export default async function AlbumPage({
           ))
         )}
       </div>
+
+      {album.copies
+        .filter((copy) => copy.tracks.length > 0)
+        .map((copy) => {
+          const copyMultiDisc = new Set(copy.tracks.map((t) => t.disc)).size > 1;
+          const byDisc = new Map<number, typeof copy.tracks>();
+          for (const t of copy.tracks) {
+            const arr = byDisc.get(t.disc);
+            if (arr) arr.push(t);
+            else byDisc.set(t.disc, [t]);
+          }
+          return (
+            <div key={copy.medium} className="flex flex-col gap-3">
+              <h2 className="font-mono text-xs uppercase tracking-widest text-text-faint">
+                {copy.medium === "VINYL" ? "Vinyl" : copy.medium} tracklist
+              </h2>
+              <div className="flex flex-col gap-6">
+                {Array.from(byDisc.entries())
+                  .sort(([a], [b]) => a - b)
+                  .map(([disc, tracks]) => (
+                    <div key={disc} className="flex flex-col gap-2">
+                      {copyMultiDisc && (
+                        <h3 className="font-mono text-xs uppercase tracking-widest text-text-faint">
+                          Side/Disc {disc}
+                        </h3>
+                      )}
+                      <ul className="flex flex-col divide-y divide-border rounded-lg border border-border bg-bg-elevated">
+                        {tracks.map((t, i) => (
+                          <li key={i} className="flex items-center gap-3 px-3 py-2">
+                            <span className="w-6 shrink-0 text-right font-mono text-xs text-text-faint">
+                              {t.trackNumber != null ? t.trackNumber.toString().padStart(2, "0") : "—"}
+                            </span>
+                            <span className="min-w-0 flex-1 truncate text-sm text-text">{t.title}</span>
+                            <span className="shrink-0 font-mono text-xs text-text-faint">
+                              {formatDuration(t.durationSecs)}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          );
+        })}
     </div>
   );
 }

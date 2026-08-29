@@ -57,9 +57,9 @@ export interface CoverResult {
   source: CoverSource;
 }
 
-async function fetchCaaCover(mbid: string): Promise<Buffer | null> {
+async function fetchCaaCoverAt(url: string): Promise<Buffer | null> {
   try {
-    const res = await fetch(`${CAA_BASE}/release-group/${mbid}/front-250`, {
+    const res = await fetch(url, {
       headers: { "User-Agent": USER_AGENT },
       redirect: "follow",
       // No default fetch timeout in Node — a hung CAA socket can freeze the
@@ -73,6 +73,20 @@ async function fetchCaaCover(mbid: string): Promise<Buffer | null> {
   } catch {
     return null;
   }
+}
+
+function fetchCaaCover(mbid: string): Promise<Buffer | null> {
+  return fetchCaaCoverAt(`${CAA_BASE}/release-group/${mbid}/front-250`);
+}
+
+/**
+ * Cover art for one specific *release* (pressing), as opposed to the
+ * release-group's generic art — a vinyl reissue can have different cover
+ * art than the CD it shares a release-group with. Used for PhysicalCopy
+ * rows that have a releaseMbid (see attachPhysicalRelease in musicbrainz.ts).
+ */
+function fetchReleaseCaaCover(releaseMbid: string): Promise<Buffer | null> {
+  return fetchCaaCoverAt(`${CAA_BASE}/release/${releaseMbid}/front-250`);
 }
 
 // Cheap token-overlap similarity in [0, 1] — no need for a real string-
@@ -317,6 +331,36 @@ export async function fetchCover(album: CoverTarget): Promise<CoverResult | null
     await fs.mkdir(COVERS_DIR, { recursive: true });
     await fs.writeFile(path.join(COVERS_DIR, fileName), buf);
     return { fileName, source };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch + cache cover art for one specific pressing (PhysicalCopy), keyed by
+ * its own file name so it never collides with — or overwrites — the album's
+ * main cover. CAA-only (no embedded/iTunes fallback: there's no ripped file
+ * to pull embedded art from, and iTunes has no notion of "which pressing").
+ * A miss is a normal outcome, not an error — the album's own cover still
+ * shows for this copy. Refuses outright when coverSource is already
+ * "manual", same convention as fetchCover.
+ */
+export async function fetchPhysicalCopyCover(copy: {
+  albumId: number;
+  medium: string;
+  releaseMbid: string;
+  coverSource: string | null;
+}): Promise<CoverResult | null> {
+  if (copy.coverSource === "manual") return null;
+
+  const buf = await fetchReleaseCaaCover(copy.releaseMbid);
+  if (!buf) return null;
+
+  const fileName = `${copy.albumId}-${copy.medium.toLowerCase()}.jpg`;
+  try {
+    await fs.mkdir(COVERS_DIR, { recursive: true });
+    await fs.writeFile(path.join(COVERS_DIR, fileName), buf);
+    return { fileName, source: "caa" };
   } catch {
     return null;
   }

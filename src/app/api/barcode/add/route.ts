@@ -8,7 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { findOrCreateFilmByTmdbId } from "@/lib/tmdb";
-import { createPhysicalOnlyAlbum, type PhysicalMedium } from "@/lib/musicbrainz";
+import { createPhysicalOnlyAlbum, attachPhysicalRelease, type PhysicalMedium } from "@/lib/musicbrainz";
 import { requireOwnerOrResponse } from "@/lib/require-member";
 
 const FILM_MEDIA = new Set(["DVD", "BLURAY", "UHD"]);
@@ -70,6 +70,16 @@ export async function POST(req: NextRequest) {
     if (!result.ok) {
       return NextResponse.json({ error: result.error }, { status: result.status });
     }
+
+    // The barcode search already resolved a specific release (see
+    // searchReleaseByBarcode) — attach its tracklist/cover on top of the
+    // release-group-level add above. Best-effort: a failure here doesn't
+    // undo the add, it just means no pressing-specific tracks/cover.
+    const releaseMbid = typeof body.releaseMbid === "string" ? body.releaseMbid : "";
+    if (releaseMbid) {
+      await attachPhysicalRelease(result.album.id, medium, releaseMbid);
+    }
+
     return NextResponse.json({ album: result.album });
   }
 

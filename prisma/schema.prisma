@@ -315,8 +315,36 @@ model PhysicalCopy {
   barcode   String?
   addedAt   DateTime @default(now())
 
+  // The specific MusicBrainz *release* (a particular pressing) this copy
+  // corresponds to — distinct from Album.mbid, which is the abstract
+  // release-group. A pressing can have its own tracklist and cover art (an
+  // LP with a different running order/art than the CD), which is why these
+  // live per-PhysicalCopy rather than on Album. Null until the owner links a
+  // specific release (see attachPhysicalRelease in musicbrainz.ts) —
+  // metadata-only copies work fine without it.
+  releaseMbid String?
+  coverPath   String? // cached cover art specific to this pressing, relative to POSTER_CACHE_DIR/covers/
+  coverSource String? // caa | manual — "manual" is never overwritten, same convention as Album.coverSource
+  tracks      PhysicalTrack[]
+
   @@unique([albumId, medium])
   @@index([barcode])
+}
+
+// A pressing-specific tracklist, populated from a MusicBrainz release (see
+// PhysicalCopy.releaseMbid) — never backed by a file, unlike Track. Only
+// exists when the owner has linked a specific release; most PhysicalCopy
+// rows have none.
+model PhysicalTrack {
+  id             Int          @id @default(autoincrement())
+  physicalCopyId Int
+  physicalCopy   PhysicalCopy @relation(fields: [physicalCopyId], references: [id], onDelete: Cascade)
+  disc           Int          @default(1)
+  trackNumber    Int?
+  title          String
+  durationSecs   Float?
+
+  @@index([physicalCopyId])
 }
 
 model Track {

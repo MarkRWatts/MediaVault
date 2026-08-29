@@ -15,16 +15,23 @@ import type { Artist } from "@/generated/prisma/client";
 import type { AlbumKind } from "@/lib/constants";
 import { MUSIC_GAP_MIN_OWNED, MUSIC_GAP_MIN_PCT } from "@/lib/constants";
 import { guardAndCreateRun, updateProgress, finishRun, failRun } from "@/lib/runs";
-import { fetchCover } from "@/lib/cover-art";
+import { fetchCover, fetchPhysicalCopyCover } from "@/lib/cover-art";
 
-const MB_BASE = "https://musicbrainz.org/ws/2";
+// Defaults to the public API; set MUSICBRAINZ_BASE_URL (e.g.
+// http://localhost:15000/ws/2) to point at a local musicbrainz-docker mirror
+// instead — same Lucene search syntax and JSON shape, so nothing else here
+// needs to change. Falls back automatically if unset, so nothing breaks when
+// the local mirror isn't running.
+const MB_BASE = process.env.MUSICBRAINZ_BASE_URL || "https://musicbrainz.org/ws/2";
 const USER_AGENT = "MediaVault/1.4 (https://github.com/MarkRWatts/MediaVault)";
 // MusicBrainz's API ToS caps unauthenticated clients at 1 request/second,
 // enforced globally (not per-endpoint) — every ws/2 call funnels through
 // mbFetch, which gates on a shared "earliest next call" clock rather than a
 // flat post-call sleep (tmdb.ts's approach): TMDB has no stated hard cap, but
 // MusicBrainz does, so a fixed-interval scheduler is the safer choice here.
-const MIN_INTERVAL_MS = 1000;
+// A self-hosted mirror has no such cap, so the throttle is skipped entirely
+// when MB_BASE isn't the public API.
+const MIN_INTERVAL_MS = MB_BASE.includes("musicbrainz.org") ? 1000 : 0;
 const RG_PAGE_LIMIT = 100;
 const PROGRESS_UPDATE_EVERY = 3;
 // A transient 503 (MusicBrainz under load) or 429 (rate-limit blip) left the
@@ -170,6 +177,45 @@ export function parseReleaseDate(dateStr: string | null | undefined): ParsedRele
   return { year, releaseDate: new Date(Date.UTC(year, month, day)) };
 }
 
+export interface ParsedReleaseTrack {
+  disc: number;
+  trackNumber: number | null;
+  title: string;
+  durationSecs: number | null;
+}
+
+/**
+ * Flatten a MusicBrainz release's "media" (inc=recordings+media) into a
+ * disc-ordered tracklist. A track's own title can differ from its
+ * recording's canonical title (a pressing-specific edit/remaster credit) —
+ * prefer the track title, falling back to the recording's.
+ */
+export function parseReleaseMedia(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  media: any[] | null | undefined,
+): ParsedReleaseTrack[] {
+  const out: ParsedReleaseTrack[] = [];
+  for (const medium of media ?? []) {
+    const disc = Number(medium.position) || 1;
+    for (const t of medium.tracks ?? []) {
+      const trackNumber = Number.isFinite(Number(t.number)) ? Number(t.number) : (t.position ?? null);
+      out.push({
+        disc,
+        trackNumber,
+        title: t.title || t.recording?.title || "Untitled",
+        durationSecs: typeof t.length === "number" ? t.length / 1000 : null,
+      });
+    }
+  }
+  return out;
+}
+
+/** Fetch one release's full tracklist, disc-ordered. */
+async function fetchReleaseTrackList(releaseMbid: string): Promise<ParsedReleaseTrack[]> {
+  const release = await mbFetch(`/release/${releaseMbid}`, { inc: "recordings+media" });
+  return parseReleaseMedia(release.media);
+}
+
 // --- Artist matching ---
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -253,6 +299,11 @@ async function searchReleaseGroups(artistMbid: string): Promise<any[]> {
 
 export interface BarcodeReleaseMatch {
   releaseGroupMbid: string;
+  /** The specific release (pressing) the barcode matched — distinct from
+   *  releaseGroupMbid. Carries this pressing's own tracklist/cover, which
+   *  can differ from other pressings of the same release-group (a vinyl
+   *  reissue with a different running order/art than the CD). */
+  releaseMbid: string;
   title: string;
   artistName: string;
   year: number | null;
@@ -288,6 +339,7 @@ export async function searchReleaseByBarcode(barcode: string): Promise<BarcodeRe
 
   return {
     releaseGroupMbid: hit["release-group"].id,
+    releaseMbid: hit.id,
     title: hit["release-group"].title ?? hit.title,
     artistName,
     year: Number.isFinite(year) ? year : null,
@@ -900,6 +952,95 @@ export function physicalCopyData(medium: PhysicalMedium, v: PhysicalFields) {
 }
 
 /**
+ * Populate one PhysicalCopy's pressing-specific tracklist and cover art from
+ * a known release id — best-effort throughout (mirrors fetchCover's
+ * never-throws contract): a failed track/cover fetch just leaves the copy
+ * without them, it never fails the caller's larger operation (adding the
+ * copy, matching a release). Replaces any existing PhysicalTrack rows
+ * outright rather than diffing, since a re-attach means the owner is
+ * correcting which pressing this copy actually is.
+ */
+async function populatePhysicalRelease(
+  copy: { id: number; albumId: number; medium: string; coverSource: string | null },
+  releaseMbid: string,
+): Promise<void> {
+  try {
+    const tracks = await fetchReleaseTrackList(releaseMbid);
+    await prisma.physicalTrack.deleteMany({ where: { physicalCopyId: copy.id } });
+    if (tracks.length > 0) {
+      await prisma.physicalTrack.createMany({
+        data: tracks.map((t) => ({ physicalCopyId: copy.id, ...t })),
+      });
+    }
+  } catch {
+    // best-effort — leave whatever tracks were there before untouched isn't
+    // possible once deleteMany has run, but a fetch failure throws before
+    // that call, so this just means "no tracks", not partial data.
+  }
+
+  try {
+    const result = await fetchPhysicalCopyCover({
+      albumId: copy.albumId,
+      medium: copy.medium,
+      releaseMbid,
+      coverSource: copy.coverSource,
+    });
+    if (result) {
+      await prisma.physicalCopy.update({
+        where: { id: copy.id },
+        data: { coverPath: result.fileName, coverSource: result.source },
+      });
+    }
+  } catch {
+    // best-effort — no cover for this pressing, the album's own still shows
+  }
+}
+
+/**
+ * Link an existing PhysicalCopy (album already in the library, digitally
+ * ripped or not) to a specific MusicBrainz release — pulling in that
+ * pressing's own tracklist and cover art, which can differ from the
+ * release-group's (a vinyl reissue with a different running order/art than
+ * the CD it shares an Album row with). Unlike createPhysicalOnlyAlbum and
+ * applyManualAlbumMatch, a bare UUID here is a *release* id, not a
+ * release-group id — this function only exists to attach release-level
+ * data, so accepting a release-group id would be a silent no-op.
+ */
+export async function attachPhysicalRelease(
+  albumId: number,
+  medium: PhysicalMedium,
+  mb: string,
+): Promise<{ ok: true; trackCount: number } | { ok: false; status: number; error: string }> {
+  const urlMatch = MB_URL_RE.exec(mb);
+  let releaseMbid: string;
+  if (urlMatch) {
+    if (urlMatch[1].toLowerCase() !== "release") {
+      return {
+        ok: false,
+        status: 400,
+        error: "expected a specific release URL (musicbrainz.org/release/...), not a release-group — a release-group has no fixed tracklist or cover",
+      };
+    }
+    releaseMbid = urlMatch[2].toLowerCase();
+  } else if (MB_UUID_RE.test(mb.trim())) {
+    releaseMbid = mb.trim().toLowerCase();
+  } else {
+    return { ok: false, status: 400, error: "expected a musicbrainz.org release URL or a release UUID" };
+  }
+
+  const copy = await prisma.physicalCopy.findUnique({ where: { albumId_medium: { albumId, medium } } });
+  if (!copy) {
+    return { ok: false, status: 404, error: "no physical copy on this medium for this album yet — add one first" };
+  }
+
+  await prisma.physicalCopy.update({ where: { id: copy.id }, data: { releaseMbid } });
+  await populatePhysicalRelease(copy, releaseMbid);
+
+  const trackCount = await prisma.physicalTrack.count({ where: { physicalCopyId: copy.id } });
+  return { ok: true, trackCount };
+}
+
+/**
  * Add a physical-only album from a MusicBrainz release/release-group URL —
  * for LPs (or unripped CDs) with no digital rip at all, so there's no
  * existing Album row (and possibly no existing Artist row) to attach to the
@@ -946,6 +1087,10 @@ export async function createPhysicalOnlyAlbum(
     const message = err instanceof Error ? err.message : String(err);
     return { ok: false, status: 502, error: `MusicBrainz lookup failed: ${message}` };
   }
+  // Only a release URL identifies a specific pressing — a release-group URL
+  // or bare UUID (both handled above by falling into the release-group
+  // branch) doesn't, so there's no tracklist/cover to attach in that case.
+  const releaseMbid = entity === "release" ? mbId : null;
 
   const credit = rg["artist-credit"]?.[0]?.artist;
   if (!credit?.id || !credit?.name) {
@@ -954,11 +1099,12 @@ export async function createPhysicalOnlyAlbum(
 
   const existingAlbum = await prisma.album.findUnique({ where: { mbid: rg.id } });
   if (existingAlbum) {
-    await prisma.physicalCopy.upsert({
+    const copy = await prisma.physicalCopy.upsert({
       where: { albumId_medium: { albumId: existingAlbum.id, medium } },
-      create: { albumId: existingAlbum.id, medium, ...physicalCopyData(medium, fields) },
-      update: physicalCopyData(medium, fields),
+      create: { albumId: existingAlbum.id, medium, releaseMbid, ...physicalCopyData(medium, fields) },
+      update: { releaseMbid, ...physicalCopyData(medium, fields) },
     });
+    if (releaseMbid) await populatePhysicalRelease(copy, releaseMbid);
     const artist = await prisma.artist.findUnique({ where: { id: existingAlbum.artistId } });
     return {
       ok: true,
@@ -1001,7 +1147,10 @@ export async function createPhysicalOnlyAlbum(
       folder: null,
     },
   });
-  await prisma.physicalCopy.create({ data: { albumId: album.id, medium, ...physicalCopyData(medium, fields) } });
+  const copy = await prisma.physicalCopy.create({
+    data: { albumId: album.id, medium, releaseMbid, ...physicalCopyData(medium, fields) },
+  });
+  if (releaseMbid) await populatePhysicalRelease(copy, releaseMbid);
 
   // Best-effort cover fetch, same shape as fetchMissingCoversForArtist's
   // per-album try/catch — must never fail the add.

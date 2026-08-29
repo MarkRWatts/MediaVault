@@ -6,6 +6,7 @@ import {
   normalizeAlbumTitle,
   normalizeBarcode,
   parseReleaseDate,
+  parseReleaseMedia,
 } from "./musicbrainz";
 
 describe("normalizeBarcode", () => {
@@ -118,6 +119,45 @@ describe("parseReleaseDate", () => {
     expect(parseReleaseDate(undefined)).toEqual({ year: null, releaseDate: null });
     expect(parseReleaseDate("")).toEqual({ year: null, releaseDate: null });
     expect(parseReleaseDate("not-a-date")).toEqual({ year: null, releaseDate: null });
+  });
+});
+
+describe("parseReleaseMedia", () => {
+  it("flattens multi-disc media into a disc-ordered tracklist", () => {
+    const media = [
+      {
+        position: 1,
+        tracks: [
+          { number: "1", title: "Side A, Track 1", length: 180000 },
+          { number: "2", title: "Side A, Track 2", length: 210500 },
+        ],
+      },
+      {
+        position: 2,
+        tracks: [{ number: "1", title: "Side B, Track 1", length: null }],
+      },
+    ];
+    expect(parseReleaseMedia(media)).toEqual([
+      { disc: 1, trackNumber: 1, title: "Side A, Track 1", durationSecs: 180 },
+      { disc: 1, trackNumber: 2, title: "Side A, Track 2", durationSecs: 210.5 },
+      { disc: 2, trackNumber: 1, title: "Side B, Track 1", durationSecs: null },
+    ]);
+  });
+
+  it("falls back to position when a vinyl side uses letter+number track numbering", () => {
+    const media = [{ position: 1, tracks: [{ number: "A1", position: 1, title: "Intro", length: null }] }];
+    expect(parseReleaseMedia(media)).toEqual([{ disc: 1, trackNumber: 1, title: "Intro", durationSecs: null }]);
+  });
+
+  it("falls back to the recording's title when the track has none", () => {
+    const media = [{ position: 1, tracks: [{ number: "1", recording: { title: "Recording Title" }, length: null }] }];
+    expect(parseReleaseMedia(media)[0].title).toBe("Recording Title");
+  });
+
+  it("null/undefined/empty media yields an empty tracklist", () => {
+    expect(parseReleaseMedia(null)).toEqual([]);
+    expect(parseReleaseMedia(undefined)).toEqual([]);
+    expect(parseReleaseMedia([])).toEqual([]);
   });
 });
 

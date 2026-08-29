@@ -247,7 +247,15 @@ export interface AlbumDiscView {
   tracks: AlbumTrackView[];
 }
 
+export interface PhysicalCopyTrackView {
+  disc: number;
+  trackNumber: number | null;
+  title: string;
+  durationSecs: number | null;
+}
+
 export interface PhysicalCopyView {
+  id: number;
   medium: string; // "VINYL" | "CD" | ...
   format: string;
   inferred: boolean;
@@ -257,6 +265,12 @@ export interface PhysicalCopyView {
   pressYear: number | null;
   condition: string | null;
   notes: string | null;
+  /** Set once this copy is linked to a specific MusicBrainz release. */
+  releaseMbid: string | null;
+  /** True when this pressing has its own cover art — served at /api/physical-cover/<id>. */
+  hasCover: boolean;
+  /** Pressing-specific tracklist (see PhysicalTrack) — empty unless linked to a release. */
+  tracks: PhysicalCopyTrackView[];
 }
 
 export interface AlbumDetail {
@@ -283,7 +297,7 @@ export async function getAlbumDetail(id: number): Promise<AlbumDetail | null> {
     include: {
       artist: { select: { id: true, name: true, various: true } },
       tracks: true,
-      physicalCopies: true,
+      physicalCopies: { include: { tracks: true } },
     },
   });
   if (!album) return null;
@@ -330,6 +344,7 @@ export async function getAlbumDetail(id: number): Promise<AlbumDetail | null> {
       .slice()
       .sort((a, b) => a.medium.localeCompare(b.medium))
       .map((c) => ({
+        id: c.id,
         medium: c.medium,
         format: c.format,
         inferred: c.inferred,
@@ -339,6 +354,12 @@ export async function getAlbumDetail(id: number): Promise<AlbumDetail | null> {
         pressYear: c.pressYear,
         condition: c.condition,
         notes: c.notes,
+        releaseMbid: c.releaseMbid,
+        hasCover: c.coverPath != null,
+        tracks: c.tracks
+          .slice()
+          .sort((a, b) => a.disc - b.disc || (a.trackNumber ?? 0) - (b.trackNumber ?? 0))
+          .map((t) => ({ disc: t.disc, trackNumber: t.trackNumber, title: t.title, durationSecs: t.durationSecs })),
       })),
     digitalSource: album.digitalSource,
     hasCover: album.coverPath != null,

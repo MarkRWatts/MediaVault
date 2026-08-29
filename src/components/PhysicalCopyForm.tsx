@@ -26,6 +26,7 @@ export default function PhysicalCopyForm({
   const [pressYear, setPressYear] = useState(initial?.pressYear?.toString() ?? "");
   const [condition, setCondition] = useState(initial?.condition ?? "");
   const [notes, setNotes] = useState(initial?.notes ?? "");
+  const [releaseMb, setReleaseMb] = useState("");
 
   const mediumLabel = MEDIUM_LABEL[medium] ?? medium.toLowerCase();
 
@@ -47,6 +48,7 @@ export default function PhysicalCopyForm({
           pressYear: pressYear ? Number(pressYear) : undefined,
           condition: condition || undefined,
           notes: notes || undefined,
+          releaseMb: releaseMb || undefined,
         }),
       });
 
@@ -55,7 +57,13 @@ export default function PhysicalCopyForm({
         throw new Error(data.error || `HTTP ${res.status}`);
       }
 
-      setIsOpen(false);
+      const data = await res.json();
+      if (data.trackImportError) {
+        setError(`Saved, but couldn't link that release: ${data.trackImportError}`);
+      } else {
+        setIsOpen(false);
+      }
+      setReleaseMb("");
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save");
@@ -177,6 +185,25 @@ export default function PhysicalCopyForm({
             onChange={(e) => setNotes(e.target.value)}
             className="rounded border border-border bg-bg px-2 py-1 text-sm text-text placeholder-text-faint"
           />
+        </div>
+
+        <div className="flex flex-col gap-1 border-t border-border pt-3">
+          <label className="text-xs font-medium uppercase tracking-widest text-text-muted">
+            Link a specific pressing (optional)
+          </label>
+          <input
+            type="text"
+            value={releaseMb}
+            onChange={(e) => setReleaseMb(e.target.value)}
+            placeholder="musicbrainz.org/release/... — pulls this pressing's own tracklist & cover"
+            className="rounded border border-border bg-bg px-2 py-1 text-sm text-text placeholder-text-faint"
+          />
+          {initial && initial.tracks.length > 0 && (
+            <p className="text-xs text-text-faint">
+              Linked: {initial.tracks.length} track{initial.tracks.length === 1 ? "" : "s"}
+              {initial.hasCover ? ", own cover art" : ""}
+            </p>
+          )}
         </div>
 
         {error && <p className="text-xs text-missing">{error}</p>}

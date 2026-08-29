@@ -38,6 +38,7 @@ export async function resolveMusic(barcode: string): Promise<LookupResult | null
       type: "album",
       candidate: {
         mbid: mbHit.releaseGroupMbid,
+        releaseMbid: mbHit.releaseMbid,
         title: mbHit.title,
         artistName: mbHit.artistName,
         year: mbHit.year,

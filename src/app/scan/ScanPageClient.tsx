@@ -31,6 +31,10 @@ interface FilmCandidate {
 }
 interface AlbumCandidate {
   mbid: string;
+  // Set only by a barcode-resolved hit (resolveMusic) — the specific
+  // pressing's release id, carrying its own tracklist/cover. Absent from a
+  // title-search pick (searchReleaseGroupsByTitle only knows release-groups).
+  releaseMbid?: string;
   title: string;
   artistName: string;
   year: number | null;
@@ -148,7 +152,15 @@ async function addCandidate(
   const body =
     candidate.kind === "film"
       ? { type: "film", tmdbId: candidate.candidate.tmdbId, medium, barcode }
-      : { type: "album", mbid: candidate.candidate.mbid, medium, barcode };
+      : {
+          type: "album",
+          mbid: candidate.candidate.mbid,
+          // Only present for a barcode-resolved hit (not a title-search
+          // pick) — carries the specific pressing's tracklist/cover.
+          releaseMbid: candidate.candidate.releaseMbid,
+          medium,
+          barcode,
+        };
   const res = await fetch("/api/barcode/add", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
