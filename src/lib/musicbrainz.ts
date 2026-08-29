@@ -418,6 +418,28 @@ const ANCHOR_MAX_SIDE_OVERLAP_THRESHOLD = 0.25;
 // applies there.
 const ANCHOR_COMP_YEAR_TOLERANCE = 2;
 
+// Deliberately NOT raised past MusicBrainz's own top few results, tempting
+// as that looks for cases like "Greatest Hits, Volume Two" ranking below
+// the wrong, no-volume-number "Greatest Hits" — tried it, and the wider net
+// pulled in more wrong matches than it fixed (a Marvin Hamlisch soundtrack
+// query gained "Sophie's Choice: Original Motion Picture Soundtrack" as a
+// false positive purely from shared boilerplate wording, and a Various-
+// Artists "The Rock Album" query gained a same-year but differently-branded
+// "The Hits Album: The Rock Album" inside the year-tolerance window). A
+// too-small pool misses some correct matches; a too-large one trusts
+// MusicBrainz's relevance ranking further than it holds up. 5 is the
+// narrower, safer side of that trade — see the module's own test cases.
+const ANCHOR_FETCH_LIMIT = 5;
+// Minimum word-overlap (see sharedTitleWordCount) between the searched
+// artist and a candidate's own artist-credit before it's trusted. Needed
+// because MusicBrainz's `artist:` search field matches contributor
+// relationships (composer, arranger, performer), not just the release-
+// group's own artist-credit — a search for "Marvin Hamlisch" (The Sting
+// soundtrack's arranger) can come back with a release-group credited
+// outright to "Scott Joplin", whose ragtime pieces the soundtrack uses,
+// which is a real MusicBrainz link but the wrong Album artist entirely.
+const ANCHOR_ARTIST_OVERLAP_THRESHOLD = 0.5;
+
 /**
  * Anchor search for a Discogs-only release — the barcode->Discogs fallback
  * and the Scan page's "paste Discogs links" tool (see scan-resolve.ts's
@@ -427,29 +449,44 @@ const ANCHOR_COMP_YEAR_TOLERANCE = 2;
  * recall: title terms go in unquoted (MusicBrainz's own title for the same
  * record often differs from Discogs' — spelled-out numbers, a dropped
  * subtitle, a translated title for a non-English release — see this
- * function's test cases in the "paste Discogs links" work), and the
- * artist stays an exact quoted match, same as before. The recall trade is
- * only safe because of the two word-overlap ratios (ANCHOR_OVERLAP_THRESHOLD,
- * ANCHOR_MAX_SIDE_OVERLAP_THRESHOLD) checked below: without them, a search
- * that matches on artist alone but has no real title hit — or a short/
- * generic searched title that merely appears inside an unrelated longer
- * one — would still hand back a wrong release and get silently anchored
- * to it.
+ * function's test cases in the "paste Discogs links" work). The recall
+ * trade is only safe because of what filters and orders the results below:
  *
- * A third, narrower guard covers a failure mode the word-overlap ratios
- * can't catch at all: a generic "Various Artists" compilation title ("The Rock Album",
- * "80s") is reused verbatim by many unrelated budget-label compilations
- * across different years — MusicBrainz's relevance ranking has no reason to
- * prefer the one that's actually this pressing, so a 100%-overlap title
- * match can still be the wrong release entirely. `year`, when known,
- * disambiguates: reject a Various-Artists-credited candidate whose own
- * first-release-date is more than a couple of years off. This is
- * deliberately scoped to Various-Artists credits only — a *named* artist's
- * release-group legitimately spans decades of reissues (Alan Stivell's 1971
- * "Renaissance de la harpe celtique", anchoring a 1983 reissue pressing —
- * an artist's own back-catalogue, unlike an anonymous compilation, really
- * is one continuous work), and requiring year proximity there would throw
- * away exactly the matches this function exists to widen the net for.
+ * - Two word-overlap ratios (ANCHOR_OVERLAP_THRESHOLD,
+ *   ANCHOR_MAX_SIDE_OVERLAP_THRESHOLD) reject a candidate that shares
+ *   nothing with the searched title, or a short/generic searched title that
+ *   merely appears inside an unrelated longer one.
+ * - ANCHOR_ARTIST_OVERLAP_THRESHOLD verifies the candidate's own
+ *   artist-credit, not just that the artist: field matched somehow (see its
+ *   own comment above).
+ * - A narrower guard for "Various Artists" compilations: a generic title
+ *   ("The Rock Album", "80s") is reused verbatim by unrelated budget-label
+ *   comps across decades, and MusicBrainz's relevance ranking has no reason
+ *   to prefer the one that's actually this pressing — `year`, when known,
+ *   disambiguates by rejecting a candidate whose own first-release-date is
+ *   more than a couple of years off. Scoped to Various-Artists credits only:
+ *   a *named* artist's release-group legitimately spans decades of reissues
+ *   (Alan Stivell's 1971 "Renaissance de la harpe celtique", anchoring a
+ *   1983 reissue pressing — an artist's own back-catalogue, unlike an
+ *   anonymous compilation, really is one continuous work), so rejecting on
+ *   year there would throw away exactly the matches this function exists to
+ *   widen the net for.
+ * - Finally, surviving candidates are sorted by year proximity to the
+ *   searched year (closest first, unknown-year candidates last) rather than
+ *   left in MusicBrainz's own relevance order, which has no notion of "this
+ *   is a numbered edition and the number matters" — a harmless, sometimes-
+ *   helpful tie-break among the already-filtered small pool below.
+ *
+ * Known residual gaps, deliberately not chased further after ANCHOR_FETCH_
+ * LIMIT's own comment: a numbered edition/volume ("Greatest Hits, Volume
+ * Two") can rank below an unnumbered sibling release in MusicBrainz's own
+ * top few results and never reach this function's filters at all; two
+ * different couplings of the same famous classical work(s) under a near-
+ * identical title, with no year to disambiguate, can tie. Both need either
+ * a wider fetch (shown above to cost more false positives than it's worth)
+ * or actual tracklist comparison to fix properly — for now they resolve to
+ * a plausible-but-wrong anchor rather than "unknown", same as before this
+ * function existed.
  */
 export async function searchReleaseGroupAnchor(
   title: string,
@@ -457,7 +494,7 @@ export async function searchReleaseGroupAnchor(
   year?: number | null,
 ): Promise<TitleSearchAlbum[]> {
   const query = `releasegroup:(${normalizeTitle(title)}) AND artist:"${escapeLucene(artist)}"`;
-  const data = await mbFetch("/release-group", { query, limit: "5" });
+  const data = await mbFetch("/release-group", { query, limit: String(ANCHOR_FETCH_LIMIT) });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const groups: any[] = data["release-groups"] ?? [];
 
@@ -466,10 +503,15 @@ export async function searchReleaseGroupAnchor(
   return groups
     .map((rg) => {
       const rgYear = rg["first-release-date"] ? Number(rg["first-release-date"].slice(0, 4)) : null;
+      const credits: string[] = (rg["artist-credit"] ?? [])
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .map((ac: any) => ac?.artist?.name ?? ac?.name)
+        .filter((name: unknown): name is string => typeof name === "string" && name.length > 0);
       return {
         mbid: rg.id,
         title: rg.title,
-        artistName: rg["artist-credit"]?.[0]?.artist?.name ?? rg["artist-credit"]?.[0]?.name ?? "Unknown Artist",
+        artistName: credits[0] ?? "Unknown Artist",
+        artistCredits: credits,
         year: Number.isFinite(rgYear) ? rgYear : null,
         coverArtUrl: `https://coverartarchive.org/release-group/${rg.id}/front-250`,
       };
@@ -482,10 +524,32 @@ export async function searchReleaseGroupAnchor(
         shared / Math.max(sizeA, sizeB) >= ANCHOR_MAX_SIDE_OVERLAP_THRESHOLD
       );
     })
+    .filter((rg) =>
+      // Any credited artist, not just the first — a multi-artist credit
+      // (a soundtrack co-crediting the composer alongside the original
+      // material's own artist, say) can list the searched artist second
+      // while [0] is someone else entirely (see this function's own
+      // doc comment: Marvin Hamlisch's "The Sting" soundtrack credits
+      // ['Scott Joplin', 'Marvin Hamlisch'] — Joplin's ragtime pieces
+      // dominate it, so he's listed first even though Hamlisch, the
+      // searched artist, is right there too).
+      rg.artistCredits.some((name) => {
+        const { shared, sizeA, sizeB } = sharedTitleWordCount(artist, name);
+        if (sizeA === 0 || sizeB === 0) return false;
+        return shared / Math.min(sizeA, sizeB) >= ANCHOR_ARTIST_OVERLAP_THRESHOLD;
+      }),
+    )
     .filter((rg) => {
       if (!isVariousArtists || year == null || rg.year == null) return true;
       return Math.abs(rg.year - year) <= ANCHOR_COMP_YEAR_TOLERANCE;
-    });
+    })
+    .sort((a, b) => {
+      if (year == null) return 0;
+      const da = a.year == null ? Infinity : Math.abs(a.year - year);
+      const db = b.year == null ? Infinity : Math.abs(b.year - year);
+      return da - db;
+    })
+    .map((rg) => ({ mbid: rg.mbid, title: rg.title, artistName: rg.artistName, year: rg.year, coverArtUrl: rg.coverArtUrl }));
 }
 
 /**
