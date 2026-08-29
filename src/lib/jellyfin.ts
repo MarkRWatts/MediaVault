@@ -391,7 +391,40 @@ interface JellyfinUser {
   Policy: JellyfinPolicy;
 }
 
+// jellyfin-plugin-sso's own identity map (see HOUSEHOLDS_PLAN.md "Jellyfin
+// SSO") — keyed by provider name, each provider's CanonicalLinks maps a
+// MediaVault email straight to the Jellyfin user id it was linked to. This
+// is the authoritative source: an account linked to a pre-existing Jellyfin
+// user (e.g. via a manual CanonicalLinks fix, same as this app's own SSO
+// setup) will have a Jellyfin username that has nothing to do with their
+// email, so matching by username (below) would never find it.
+interface SsoProviderConfig {
+  CanonicalLinks?: Record<string, string>;
+}
+
+async function resolveViaCanonicalLinks(email: string): Promise<string | null> {
+  try {
+    const providers: Record<string, SsoProviderConfig> = await jellyfinRequest("GET", "/SSO/OID/Get");
+    const wanted = email.toLowerCase();
+    for (const config of Object.values(providers)) {
+      for (const [linkedEmail, userId] of Object.entries(config.CanonicalLinks ?? {})) {
+        if (linkedEmail.toLowerCase() === wanted) return userId;
+      }
+    }
+  } catch {
+    // jellyfin-plugin-sso not installed, or no provider configured yet —
+    // fall through to the username heuristic below.
+  }
+  return null;
+}
+
 async function resolveJellyfinUserId(email: string): Promise<string | null> {
+  const viaCanonicalLink = await resolveViaCanonicalLinks(email);
+  if (viaCanonicalLink) return viaCanonicalLink;
+
+  // Fallback for an account that hasn't done its first SSO sign-in yet (no
+  // CanonicalLinks entry) but was auto-provisioned with DefaultUsernameClaim
+  // "email" — its Jellyfin username genuinely is the email in that case.
   const users: JellyfinUserSummary[] = await jellyfinRequest("GET", "/Users");
   const match = users.find((u) => u.Name?.toLowerCase() === email.toLowerCase());
   return match?.Id ?? null;
