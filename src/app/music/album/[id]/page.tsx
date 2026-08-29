@@ -144,7 +144,7 @@ export default async function AlbumPage({
                 {copy.inferred ? "?" : ""}
               </span>
             ))}
-            <AudioCodecBadge codec={codec} quality={quality} />
+            {codec != null && <AudioCodecBadge codec={codec} quality={quality} />}
           </div>
           {album.copies.map((copy) => (
             <div key={copy.medium} className="mt-2 flex items-center gap-2 text-xs text-text-faint">
@@ -204,7 +204,11 @@ export default async function AlbumPage({
 
       <div className="flex flex-col gap-6">
         {album.discs.length === 0 ? (
-          <p className="py-8 text-center text-sm text-text-faint">No track data for this album yet.</p>
+          // A physical copy's own tracklist (rendered below) can stand in for
+          // this — only claim "no track data" when there's truly none to show.
+          album.copies.every((c) => c.tracks.length === 0) && (
+            <p className="py-8 text-center text-sm text-text-faint">No track data for this album yet.</p>
+          )
         ) : (
           album.discs.map((disc) => (
             <div key={disc.disc} className="flex flex-col gap-2">

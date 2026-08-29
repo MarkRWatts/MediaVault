@@ -27,13 +27,22 @@ function byArtistOrder<T extends { various: boolean; sortName: string }>(a: T, b
   return a.sortName.localeCompare(b.sortName);
 }
 
-// The artist grid's square cover: the earliest-year owned album that has a
-// cached cover image. Missing albums and owned albums with no cover art yet
-// (enrichment hasn't run, or CAA/iTunes had nothing) are never picked.
+// The artist grid's square cover: the earliest-year album you actually have
+// — digitally (owned) or physically (a logged PhysicalCopy, e.g. a
+// vinyl-only pressing with no rip) — that has a cached cover image. A pure
+// gap-tracking placeholder (owned=false, no physical copy) is never picked,
+// same as one with no cover art yet (enrichment hasn't run, or CAA/iTunes
+// had nothing).
 function pickCoverAlbumId(
-  albums: { id: number; year: number | null; owned: boolean; coverPath: string | null }[],
+  albums: {
+    id: number;
+    year: number | null;
+    owned: boolean;
+    coverPath: string | null;
+    physicalCopies: { id: number }[];
+  }[],
 ): number | null {
-  const candidates = albums.filter((a) => a.owned && a.coverPath != null);
+  const candidates = albums.filter((a) => (a.owned || a.physicalCopies.length > 0) && a.coverPath != null);
   if (candidates.length === 0) return null;
   return candidates.slice().sort(byYearAsc)[0].id;
 }
@@ -81,7 +90,17 @@ export async function getMusicIndex(): Promise<MusicIndexData> {
         sortName: true,
         various: true,
         studioTotal: true,
-        albums: { select: { id: true, kind: true, owned: true, year: true, coverPath: true, updatedAt: true } },
+        albums: {
+          select: {
+            id: true,
+            kind: true,
+            owned: true,
+            year: true,
+            coverPath: true,
+            updatedAt: true,
+            physicalCopies: { select: { id: true } },
+          },
+        },
       },
     }),
     prisma.album.count({ where: { owned: true } }),
