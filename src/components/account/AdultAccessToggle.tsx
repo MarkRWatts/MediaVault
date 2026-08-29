@@ -48,7 +48,7 @@ export function AdultAccessToggle({
       </form>
       {state?.error && <p className="text-xs text-missing">{state.error}</p>}
       {waitingOnJellyfin && (
-        <p className="text-xs text-text-faint">
+        <div className="text-xs text-text-faint">
           Waiting for your first Jellyfin sign-in to grant access there too —{" "}
           <form action={retryAction} className="inline">
             <button
@@ -59,7 +59,7 @@ export function AdultAccessToggle({
               {retryPending ? "Retrying…" : "Retry"}
             </button>
           </form>
-        </p>
+        </div>
       )}
       {lastJellyfin?.status === "error" && (
         <p className="text-xs text-missing">Jellyfin sync failed: {lastJellyfin.message}</p>
