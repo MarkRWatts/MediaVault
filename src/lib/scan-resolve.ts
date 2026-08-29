@@ -4,8 +4,14 @@
 // rationale on why the music/movie paths are split and run concurrently.
 
 import { prisma } from "@/lib/db";
-import { searchReleaseByBarcode, searchReleaseGroupsByTitle, type TitleSearchAlbum } from "@/lib/musicbrainz";
-import { searchDiscogsByBarcode, fetchDiscogsRelease, DISCOGS_URL_RE } from "@/lib/discogs";
+import { searchReleaseByBarcode, searchReleaseGroupAnchor, type TitleSearchAlbum } from "@/lib/musicbrainz";
+import {
+  searchDiscogsByBarcode,
+  fetchDiscogsRelease,
+  fetchDiscogsMasterMainRelease,
+  DISCOGS_URL_RE,
+  DISCOGS_MASTER_URL_RE,
+} from "@/lib/discogs";
 import { searchMovieByTitleYear } from "@/lib/tmdb";
 import { lookupMovieByBarcode } from "@/lib/barcode-lookup";
 import { guessAlbumMedium } from "@/lib/album-medium";
@@ -124,7 +130,7 @@ export async function resolveMusic(barcode: string): Promise<LookupResult | null
     const discogsHit = await searchDiscogsByBarcode(barcode);
     if (!discogsHit) return null;
 
-    const anchors = await searchReleaseGroupsByTitle(discogsHit.title, discogsHit.artistName);
+    const anchors = await searchReleaseGroupAnchor(discogsHit.title, discogsHit.artistName);
     const anchor = await pickAnchor(anchors);
     if (!anchor) return null;
 
@@ -146,25 +152,36 @@ export async function resolveMusic(barcode: string): Promise<LookupResult | null
 }
 
 /**
- * Resolve a pasted Discogs release URL to "already owned" or a not-owned
- * candidate to add — the Scan page's "paste Discogs links" bulk-add tool.
- * Mirrors resolveMusic's own Discogs-fallback branch: a Discogs release has
- * no MusicBrainz release-group of its own, so one is found by title+artist
- * search to anchor the Album row the rest of this app's enrichment expects.
- * If MusicBrainz has never heard of this artist/album at all, there's
- * nothing safe to auto-create and this returns "unknown", same tier of miss
- * as an unresolvable barcode. Unlike resolveMusic, network failures are left
- * to propagate — a pasted-URL lookup is a one-off, explicit action, so the
- * caller should surface "Discogs lookup failed" rather than silently
- * swallowing it into a misleading "unknown".
+ * Resolve a pasted Discogs release (or master) URL to "already owned" or a
+ * not-owned candidate to add — the Scan page's "paste Discogs links"
+ * bulk-add tool. Mirrors resolveMusic's own Discogs-fallback branch: a
+ * Discogs release has no MusicBrainz release-group of its own, so one is
+ * found by title+artist search to anchor the Album row the rest of this
+ * app's enrichment expects. If MusicBrainz has never heard of this
+ * artist/album at all, there's nothing safe to auto-create and this returns
+ * "unknown", same tier of miss as an unresolvable barcode. Unlike
+ * resolveMusic, network failures are left to propagate — a pasted-URL
+ * lookup is a one-off, explicit action, so the caller should surface
+ * "Discogs lookup failed" rather than silently swallowing it into a
+ * misleading "unknown".
+ *
+ * A master URL has no tracklist/cover of its own tied to one physical item
+ * (see fetchDiscogsMasterMainRelease in discogs.ts) — resolved by following
+ * its main_release and continuing exactly as if that release URL had been
+ * pasted instead.
  */
 export async function resolveDiscogsUrl(url: string): Promise<LookupResult> {
-  const match = DISCOGS_URL_RE.exec(url.trim());
-  if (!match) return { status: "unknown" };
-  const discogsReleaseId = Number(match[1]);
+  const trimmed = url.trim();
+  const masterMatch = DISCOGS_MASTER_URL_RE.exec(trimmed);
+  const releaseMatch = masterMatch ? null : DISCOGS_URL_RE.exec(trimmed);
+  if (!masterMatch && !releaseMatch) return { status: "unknown" };
+
+  const discogsReleaseId = masterMatch
+    ? await fetchDiscogsMasterMainRelease(Number(masterMatch[1]))
+    : Number(releaseMatch![1]);
 
   const release = await fetchDiscogsRelease(discogsReleaseId);
-  const anchors = await searchReleaseGroupsByTitle(release.title, release.artistName);
+  const anchors = await searchReleaseGroupAnchor(release.title, release.artistName);
   const anchor = await pickAnchor(anchors);
   if (!anchor) return { status: "unknown" };
 

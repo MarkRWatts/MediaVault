@@ -358,6 +358,83 @@ export interface TitleSearchAlbum {
   coverArtUrl: string;
 }
 
+// A short stoplist for titleOverlap below — dropped from both sides before
+// comparing so a shared "the"/"of" doesn't inflate an otherwise-unrelated
+// match (see the Wombles case in titleOverlap's own comment).
+const TITLE_STOPWORDS = new Set(["the", "a", "an", "of", "and", "in", "on"]);
+
+function titleWords(title: string): string[] {
+  return normalizeTitle(title)
+    .split(" ")
+    .filter((w) => w.length > 0 && !TITLE_STOPWORDS.has(w));
+}
+
+/**
+ * Fraction of the shorter title's (stopword-stripped) words that also
+ * appear in the other title — same-or-prefix, length >= 4, so cross-catalog
+ * inflection/translation drift still counts as a match (Discogs "Renaissance
+ * Of The Celtic Harp" vs MusicBrainz's French "Renaissance de la harpe
+ * celtique": harp/harpe and celtic/celtique both prefix-match) without
+ * pulling in a real stemming library. Used only by searchReleaseGroupAnchor
+ * below, to reject a same-artist result that shares nothing with the
+ * searched title (e.g. "Sing Hits Of The Wombles" search that MusicBrainz
+ * has no entry for at all still hands back *some* top hit by that artist —
+ * "The Paris & Italian Suites" — which must not be silently accepted as the
+ * anchor just because the artist matched).
+ */
+function titleOverlap(a: string, b: string): number {
+  const wordsA = titleWords(a);
+  const wordsB = titleWords(b);
+  if (wordsA.length === 0 || wordsB.length === 0) return 0;
+  const [smaller, larger] = wordsA.length <= wordsB.length ? [wordsA, wordsB] : [wordsB, wordsA];
+
+  let shared = 0;
+  for (const w of smaller) {
+    if (larger.some((x) => w === x || (w.length >= 4 && x.startsWith(w)) || (x.length >= 4 && w.startsWith(x)))) {
+      shared++;
+    }
+  }
+  return shared / smaller.length;
+}
+
+const ANCHOR_OVERLAP_THRESHOLD = 0.5;
+
+/**
+ * Anchor search for a Discogs-only release — the barcode->Discogs fallback
+ * and the Scan page's "paste Discogs links" tool (see scan-resolve.ts's
+ * pickAnchor, which this feeds). Unlike searchReleaseGroupsByTitle's
+ * exact-phrase match (fine there — a human picks from the results), this
+ * anchor gets used with nobody checking it, so it trades exactness for
+ * recall: title terms go in unquoted (MusicBrainz's own title for the same
+ * record often differs from Discogs' — spelled-out numbers, a dropped
+ * subtitle, a translated title for a non-English release — see this
+ * function's test cases in the "paste Discogs links" work), and the
+ * artist stays an exact quoted match, same as before. The recall trade is
+ * only safe because of the titleOverlap check below: without it, a search
+ * that matches on artist alone but has no real title hit would still hand
+ * back that artist's top-ranked release and get silently, wrongly, anchored
+ * to it.
+ */
+export async function searchReleaseGroupAnchor(title: string, artist: string): Promise<TitleSearchAlbum[]> {
+  const query = `releasegroup:(${normalizeTitle(title)}) AND artist:"${escapeLucene(artist)}"`;
+  const data = await mbFetch("/release-group", { query, limit: "5" });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const groups: any[] = data["release-groups"] ?? [];
+
+  return groups
+    .map((rg) => {
+      const year = rg["first-release-date"] ? Number(rg["first-release-date"].slice(0, 4)) : null;
+      return {
+        mbid: rg.id,
+        title: rg.title,
+        artistName: rg["artist-credit"]?.[0]?.artist?.name ?? rg["artist-credit"]?.[0]?.name ?? "Unknown Artist",
+        year: Number.isFinite(year) ? year : null,
+        coverArtUrl: `https://coverartarchive.org/release-group/${rg.id}/front-250`,
+      };
+    })
+    .filter((rg) => titleOverlap(title, rg.title) >= ANCHOR_OVERLAP_THRESHOLD);
+}
+
 /**
  * Free-text release-group search for the scan page's "Search by title"
  * fallback — no barcode involved, so this is MusicBrainz's own relevance

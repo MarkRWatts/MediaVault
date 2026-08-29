@@ -15,6 +15,13 @@ const USER_AGENT = "MediaVault/1.4 (https://github.com/MarkRWatts/MediaVault)";
 
 export const DISCOGS_URL_RE = /discogs\.com\/release\/(\d+)/i;
 
+// A master groups every pressing of a release across editions/reissues —
+// it has no tracklist/cover of its own that corresponds to a specific
+// physical item, only a `main_release` pointer to the release Discogs
+// considers canonical. Resolving one just means resolving that release
+// instead (see resolveDiscogsUrl in scan-resolve.ts).
+export const DISCOGS_MASTER_URL_RE = /discogs\.com\/master\/(\d+)/i;
+
 async function discogsFetch(pathname: string, params: Record<string, string> = {}): Promise<unknown> {
   const url = new URL(`${DISCOGS_API_BASE}${pathname}`);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
@@ -148,6 +155,15 @@ export async function fetchDiscogsRelease(releaseId: number): Promise<DiscogsRel
     tracks: parseDiscogsTracklist(data.tracklist),
     coverUrl: cover?.uri ?? null,
   };
+}
+
+/** Resolve a Discogs master id to the release id Discogs considers
+ *  canonical for it (`main_release`) — a master itself has no single
+ *  tracklist/cover/format tied to one physical item, only this pointer. */
+export async function fetchDiscogsMasterMainRelease(masterId: number): Promise<number> {
+  const data = (await discogsFetch(`/masters/${masterId}`)) as { main_release?: number };
+  if (!data.main_release) throw new Error(`Discogs master ${masterId} has no main_release`);
+  return data.main_release;
 }
 
 export interface DiscogsBarcodeMatch {

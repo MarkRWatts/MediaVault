@@ -408,11 +408,12 @@ function TitleSearchWidget({
   );
 }
 
-// Match Discogs release URLs anywhere in a pasted blob of text — the client
-// mirrors the server's DISCOGS_URL_RE (src/lib/discogs.ts) rather than
-// importing it, since that module also pulls in the Discogs fetch helpers
-// (fine server-side, unnecessary to ship to the browser).
-const DISCOGS_URL_PATTERN = /discogs\.com\/release\/\d+[^\s,]*/gi;
+// Match Discogs release/master URLs anywhere in a pasted blob of text — the
+// client mirrors the server's DISCOGS_URL_RE/DISCOGS_MASTER_URL_RE
+// (src/lib/discogs.ts) rather than importing them, since that module also
+// pulls in the Discogs fetch helpers (fine server-side, unnecessary to ship
+// to the browser).
+const DISCOGS_URL_PATTERN = /discogs\.com\/(?:release|master)\/\d+[^\s,]*/gi;
 
 function parseDiscogsUrls(text: string): string[] {
   const matches = text.match(DISCOGS_URL_PATTERN) ?? [];
@@ -595,8 +596,8 @@ function DiscogsPasteWidget() {
       <div className="flex flex-col gap-1">
         <h2 className="text-sm font-semibold text-text">Paste Discogs links</h2>
         <p className="text-xs text-text-faint">
-          Paste one or more discogs.com/release/... URLs — a whole block of text works too, only the links in it are
-          picked out.
+          Paste one or more discogs.com/release/... or /master/... URLs — a whole block of text works too, only the
+          links in it are picked out.
         </p>
       </div>
 
