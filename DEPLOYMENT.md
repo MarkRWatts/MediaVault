@@ -247,6 +247,13 @@ works.
 - `POSTER_CACHE_DIR`: `/app/data/posters` (set in the base `docker-compose.yml`).
 - `MOVIES_SMB_HOST/SHARE/USERNAME/PASSWORD`: the CIFS named-volume credentials (see `.env.docker.example`); `MOVIES_HOST_PATH` points at an empty placeholder dir.
 - `TMDB_API_KEY`: Free key (optional; leave blank for scan-only).
+- `MUSICBRAINZ_BASE_URL`: Optional — points music lookups at a self-hosted
+  MusicBrainz mirror (metabrainz/musicbrainz-docker, run via OrbStack on the
+  Mac; see `src/lib/musicbrainz.ts`) instead of the public API, e.g.
+  `http://192.168.1.129:15000/ws/2` (the Mac's LAN IP — OrbStack exposes
+  container ports to the LAN by default). Must be started on the Mac before
+  a music scan/enrich on the VM, or lookups fail outright rather than
+  falling back to the public API. Leave unset to always use musicbrainz.org.
 
 No `FFPROBE_DOCKER_IMAGE` needed — the runner image installs ffmpeg.
 
