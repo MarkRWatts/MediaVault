@@ -15,8 +15,9 @@ const USER_AGENT = "MediaVault/1.4 (https://github.com/MarkRWatts/MediaVault)";
 
 export const DISCOGS_URL_RE = /discogs\.com\/release\/(\d+)/i;
 
-async function discogsFetch(pathname: string): Promise<unknown> {
+async function discogsFetch(pathname: string, params: Record<string, string> = {}): Promise<unknown> {
   const url = new URL(`${DISCOGS_API_BASE}${pathname}`);
+  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
   const token = process.env.DISCOGS_TOKEN;
   if (token) url.searchParams.set("token", token);
 
@@ -98,8 +99,22 @@ export function parseDiscogsTracklist(
   });
 }
 
+function formatDiscogsFormats(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  formats: any[] | null | undefined,
+): string | null {
+  if (!formats || formats.length === 0) return null;
+  return formats.map((f) => [f.name, ...(f.descriptions ?? [])].filter(Boolean).join(" ")).join(", ");
+}
+
 export interface DiscogsRelease {
   title: string;
+  artistName: string;
+  year: number | null;
+  /** Human-readable format, e.g. "Vinyl LP Album" — built from Discogs'
+   *  formats[].name + descriptions[]. Used only for display/medium-guessing,
+   *  same spirit as MusicBrainz's media[0].format elsewhere in this app. */
+  format: string | null;
   tracks: ParsedDiscogsTrack[];
   /** Full-size front cover URL, if Discogs has one — prefers the
    *  owner-submitted "primary" image, falling back to the first image of
@@ -112,7 +127,12 @@ export interface DiscogsRelease {
 export async function fetchDiscogsRelease(releaseId: number): Promise<DiscogsRelease> {
   const data = (await discogsFetch(`/releases/${releaseId}`)) as {
     title?: string;
+    year?: number;
     tracklist?: DiscogsTracklistEntry[];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    artists?: any[];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    formats?: any[];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     images?: any[];
   };
@@ -122,7 +142,66 @@ export async function fetchDiscogsRelease(releaseId: number): Promise<DiscogsRel
 
   return {
     title: data.title ?? "Untitled",
+    artistName: data.artists?.[0]?.name || "Unknown Artist",
+    year: data.year || null,
+    format: formatDiscogsFormats(data.formats),
     tracks: parseDiscogsTracklist(data.tracklist),
     coverUrl: cover?.uri ?? null,
+  };
+}
+
+export interface DiscogsBarcodeMatch {
+  discogsReleaseId: number;
+  title: string;
+  artistName: string;
+  year: number | null;
+  format: string | null;
+  coverUrl: string | null;
+}
+
+/**
+ * Resolve a barcode via Discogs' own database search — the fallback for
+ * when MusicBrainz's barcode index has nothing (see searchReleaseByBarcode
+ * in musicbrainz.ts), which happens often enough for smaller-run/newer
+ * vinyl that Mark specifically asked for this. A barcode can legitimately be
+ * shared by several colour-vinyl/regional variants of the same release
+ * (label barcode reuse, not a data error) — there's no reliable way to pick
+ * the "right" one from the barcode alone, so this takes the first result
+ * whose own barcode list actually contains an exact match. Track content is
+ * identical across such variants either way; only the cover art might not
+ * exactly match the specific one owned.
+ *
+ * IMPORTANT: Discogs' `barcode=` search parameter is NOT an exact-match
+ * filter — an unassigned/garbage barcode (verified against "0000000000000")
+ * still returns millions of loosely-relevant "hits" (it silently falls back
+ * to full-text search across matrix/runout numbers, label codes, etc. once
+ * nothing matches as a barcode). Blindly trusting the top result would
+ * misidentify almost every non-matching scan, so every candidate's own
+ * barcode array is checked here for an exact digit-normalized match before
+ * it's accepted — never trust an un-verified hit.
+ */
+export async function searchDiscogsByBarcode(barcode: string): Promise<DiscogsBarcodeMatch | null> {
+  const data = (await discogsFetch("/database/search", { barcode, type: "release" })) as {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    results?: any[];
+  };
+
+  const verified = (data.results ?? []).find((r) =>
+    (r.barcode ?? []).some((b: string) => b.replace(/\D/g, "") === barcode),
+  );
+  if (!verified) return null;
+
+  // The search endpoint's own fields are unreliable for a clean artist name
+  // (title is a combined "Artist - Title" string) and cover art (thumb/
+  // cover_image are often blank, as seen on this exact release) — the full
+  // release fetch has both properly.
+  const release = await fetchDiscogsRelease(verified.id);
+  return {
+    discogsReleaseId: verified.id,
+    title: release.title,
+    artistName: release.artistName,
+    year: release.year,
+    format: release.format,
+    coverUrl: release.coverUrl,
   };
 }

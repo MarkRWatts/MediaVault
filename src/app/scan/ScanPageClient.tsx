@@ -34,7 +34,11 @@ interface AlbumCandidate {
   // Set only by a barcode-resolved hit (resolveMusic) — the specific
   // pressing's release id, carrying its own tracklist/cover. Absent from a
   // title-search pick (searchReleaseGroupsByTitle only knows release-groups).
+  // Exactly one of releaseMbid/discogsReleaseId is ever set: a Discogs
+  // fallback kicks in only when MusicBrainz had no entry for this barcode
+  // at all (see resolveMusic in scan-resolve.ts).
   releaseMbid?: string;
+  discogsReleaseId?: number;
   title: string;
   artistName: string;
   year: number | null;
@@ -156,8 +160,10 @@ async function addCandidate(
           type: "album",
           mbid: candidate.candidate.mbid,
           // Only present for a barcode-resolved hit (not a title-search
-          // pick) — carries the specific pressing's tracklist/cover.
+          // pick) — carries the specific pressing's tracklist/cover, from
+          // whichever source resolveMusic found it through.
           releaseMbid: candidate.candidate.releaseMbid,
+          discogsReleaseId: candidate.candidate.discogsReleaseId,
           medium,
           barcode,
         };

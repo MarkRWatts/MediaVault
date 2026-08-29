@@ -4,51 +4,109 @@
 // rationale on why the music/movie paths are split and run concurrently.
 
 import { prisma } from "@/lib/db";
-import { searchReleaseByBarcode } from "@/lib/musicbrainz";
+import { searchReleaseByBarcode, searchReleaseGroupsByTitle } from "@/lib/musicbrainz";
+import { searchDiscogsByBarcode } from "@/lib/discogs";
 import { searchMovieByTitleYear } from "@/lib/tmdb";
 import { lookupMovieByBarcode } from "@/lib/barcode-lookup";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type LookupResult = any;
 
+interface MusicBarcodeHit {
+  releaseGroupMbid: string;
+  releaseMbid: string | null;
+  discogsReleaseId: number | null;
+  title: string;
+  artistName: string;
+  year: number | null;
+  format: string | null;
+  coverArtUrl: string;
+}
+
+async function buildMusicResult(hit: MusicBarcodeHit): Promise<LookupResult> {
+  const album = await prisma.album.findUnique({
+    where: { mbid: hit.releaseGroupMbid },
+    include: { physicalCopies: { select: { id: true } } },
+  });
+  if (album && (album.owned || album.physicalCopies.length > 0)) {
+    return {
+      status: "owned",
+      type: "album",
+      album: {
+        id: album.id,
+        title: album.title,
+        artistName: hit.artistName,
+        year: album.year,
+        coverPath: album.coverPath,
+      },
+    };
+  }
+  return {
+    status: "not_owned",
+    type: "album",
+    candidate: {
+      mbid: hit.releaseGroupMbid,
+      releaseMbid: hit.releaseMbid,
+      discogsReleaseId: hit.discogsReleaseId,
+      title: hit.title,
+      artistName: hit.artistName,
+      year: hit.year,
+      format: hit.format,
+      coverArtUrl: hit.coverArtUrl,
+    },
+  };
+}
+
 export async function resolveMusic(barcode: string): Promise<LookupResult | null> {
   try {
     const mbHit = await searchReleaseByBarcode(barcode);
-    if (!mbHit) return null;
-
-    const album = await prisma.album.findUnique({
-      where: { mbid: mbHit.releaseGroupMbid },
-      include: { physicalCopies: { select: { id: true } } },
-    });
-    if (album && (album.owned || album.physicalCopies.length > 0)) {
-      return {
-        status: "owned",
-        type: "album",
-        album: {
-          id: album.id,
-          title: album.title,
-          artistName: mbHit.artistName,
-          year: album.year,
-          coverPath: album.coverPath,
-        },
-      };
-    }
-    return {
-      status: "not_owned",
-      type: "album",
-      candidate: {
-        mbid: mbHit.releaseGroupMbid,
+    if (mbHit) {
+      return await buildMusicResult({
+        releaseGroupMbid: mbHit.releaseGroupMbid,
         releaseMbid: mbHit.releaseMbid,
+        discogsReleaseId: null,
         title: mbHit.title,
         artistName: mbHit.artistName,
         year: mbHit.year,
         format: mbHit.format,
         coverArtUrl: mbHit.coverArtUrl,
-      },
-    };
+      });
+    }
   } catch {
-    // MusicBrainz lookup failed (rate limit, network, timeout) — never fail
-    // the whole request over it, the movie path may still resolve.
+    // MusicBrainz lookup failed (rate limit, network, timeout) — fall
+    // through to the Discogs fallback below rather than giving up.
+  }
+
+  // MusicBrainz's barcode coverage skews toward CD/digital and misses a lot
+  // of newer/smaller-run vinyl (including plain colour-vinyl variants of an
+  // otherwise well-known release) — Discogs catches most of what MB misses.
+  // A Discogs hit has no MusicBrainz release-group of its own, so one is
+  // found by title+artist search to anchor the Album the rest of this app's
+  // enrichment/reconciliation machinery expects; if MusicBrainz has never
+  // heard of this artist/album at all (not just this pressing), there's
+  // nothing safe to auto-create and this falls through to "no match", same
+  // as today — same tier of miss as an untagged/obscure release always was.
+  try {
+    const discogsHit = await searchDiscogsByBarcode(barcode);
+    if (!discogsHit) return null;
+
+    const anchors = await searchReleaseGroupsByTitle(discogsHit.title, discogsHit.artistName);
+    const anchor = anchors[0];
+    if (!anchor) return null;
+
+    return await buildMusicResult({
+      releaseGroupMbid: anchor.mbid,
+      releaseMbid: null,
+      discogsReleaseId: discogsHit.discogsReleaseId,
+      title: discogsHit.title,
+      artistName: discogsHit.artistName,
+      year: discogsHit.year,
+      format: discogsHit.format,
+      coverArtUrl: discogsHit.coverUrl ?? anchor.coverArtUrl,
+    });
+  } catch {
+    // Discogs lookup failed — never fail the whole request over it, the
+    // movie path may still resolve.
     return null;
   }
 }

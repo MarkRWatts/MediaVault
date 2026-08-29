@@ -71,13 +71,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: result.error }, { status: result.status });
     }
 
-    // The barcode search already resolved a specific release (see
-    // searchReleaseByBarcode) — attach its tracklist/cover on top of the
-    // release-group-level add above. Best-effort: a failure here doesn't
-    // undo the add, it just means no pressing-specific tracks/cover.
+    // The barcode search already resolved a specific release — either a
+    // MusicBrainz one (see searchReleaseByBarcode) or, when MusicBrainz had
+    // no entry for this pressing, a Discogs fallback one (see
+    // searchDiscogsByBarcode in scan-resolve.ts's resolveMusic) — attach its
+    // tracklist/cover on top of the release-group-level add above.
+    // Best-effort: a failure here doesn't undo the add, it just means no
+    // pressing-specific tracks/cover.
     const releaseMbid = typeof body.releaseMbid === "string" ? body.releaseMbid : "";
-    if (releaseMbid) {
-      await attachPhysicalRelease(result.album.id, medium, releaseMbid);
+    const discogsReleaseId = Number.isInteger(body.discogsReleaseId) ? (body.discogsReleaseId as number) : null;
+    const pressingRef = releaseMbid || (discogsReleaseId != null ? String(discogsReleaseId) : "");
+    if (pressingRef) {
+      await attachPhysicalRelease(result.album.id, medium, pressingRef);
     }
 
     return NextResponse.json({ album: result.album });
