@@ -18,9 +18,16 @@ export async function decideConsent(formData: FormData): Promise<void> {
   // through the same machinery /oauth2/authorize uses) — an internal call
   // has none, so this goes over real HTTP instead, forwarding this
   // request's own session cookie (oauth2Consent requires a session).
+  //
+  // Connects to the app's own internal port, not process.env.BETTER_AUTH_URL
+  // — a container calling back into its own public HTTPS domain can't
+  // reach itself (hairpin NAT through the VM's edge proxy). The Origin
+  // header below still claims the real public URL: BetterAuth's CSRF
+  // check reads that header value, and doesn't care what the TCP
+  // connection's actual destination was.
   const reqHeaders = await headers();
   const base = (process.env.BETTER_AUTH_URL ?? "").replace(/\/$/, "");
-  const res = await fetch(`${base}/api/auth/oauth2/consent`, {
+  const res = await fetch(`http://localhost:3000/api/auth/oauth2/consent`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

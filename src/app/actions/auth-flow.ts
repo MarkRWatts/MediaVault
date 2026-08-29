@@ -162,11 +162,18 @@ export async function verifyOTP(
     // and forwards the response's Set-Cookie itself (nextCookies() only
     // forwards cookies from the internal-call path, not this one) using
     // the same parseSetCookieHeader/toCookieOptions it uses internally.
+    //
+    // Hits the app's own internal port, NOT process.env.BETTER_AUTH_URL —
+    // a container calling back into its own public HTTPS domain can't
+    // reach itself (hairpin NAT through the VM's edge proxy), which
+    // silently timed out here and got reported as "code didn't match" in
+    // production. BetterAuth still generates https://…/api/auth URLs
+    // regardless, since auth.ts configures baseURL explicitly rather than
+    // deriving it from this request's Host header.
     const reqHeaders = await headers();
-    const base = (process.env.BETTER_AUTH_URL ?? "").replace(/\/$/, "");
     let res: Response;
     try {
-      res = await fetch(`${base}/api/auth/sign-in/email-otp`, {
+      res = await fetch(`http://localhost:3000/api/auth/sign-in/email-otp`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
