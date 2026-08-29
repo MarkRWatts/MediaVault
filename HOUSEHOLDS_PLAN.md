@@ -345,12 +345,65 @@ layout (kept MediaVault's existing top nav) and its branded HTML email
 system (kept the minimal plain-text-first style already used for OTP
 emails).
 
+## Post-deploy addition: Jellyfin SSO
+
+The one item in "Explicitly deferred" below that named its own dependency
+(BetterAuth existing) is done: household members now sign into Jellyfin
+with their MediaVault account instead of a separate Jellyfin password.
+
+- Added `@better-auth/oauth-provider` (BetterAuth's OAuth 2.1/OIDC provider
+  plugin) and `jwt()` to `auth.ts`'s `plugins`, turning this app's own
+  BetterAuth instance into the OIDC provider that
+  [jellyfin-plugin-sso](https://github.com/9p4/jellyfin-plugin-sso)
+  authenticates against. OIDC discovery is at
+  `{BETTER_AUTH_URL}/api/auth/.well-known/openid-configuration` (the
+  `/api/auth` segment matters — BetterAuth's endpoints are only mounted
+  there, not at the domain root). No new MediaVault env vars: `BETTER_AUTH_URL`/
+  `BETTER_AUTH_SECRET` already cover the issuer and signing.
+- Jellyfin is registered as a single static, trusted OAuth client
+  (`skip_consent: true` — household members are already trusted, no
+  consent screen) from a new "Integrations" section on `/admin`
+  (`JellyfinClientForm.tsx`, `registerJellyfinClient` action). One-time
+  setup: paste Jellyfin's SSO-plugin redirect URI in, get back a
+  `client_id`/`client_secret` shown exactly once — those go into
+  jellyfin-plugin-sso's config, never into MediaVault's own `.env`.
+  Building this as an `/admin` action rather than a standalone script
+  turned out not to be optional: BetterAuth's admin-create-client endpoint
+  requires a real owner session, which only a request made through the app
+  itself carries.
+- `/consent` — a plain "Allow / Deny" page — exists because
+  `oauthProvider()`'s config requires a `consentPage` regardless of
+  whether any registered client actually uses it. It's never shown for
+  Jellyfin's `skip_consent` client; it's there for the plugin's sake, and
+  as a fallback if a future non-trusted client is ever added.
+- `/signin` (also BetterAuth's `loginPage`) now threads an `oauthQuery`
+  field through its two-step OTP form whenever it's reached via the OAuth
+  flow, carrying oauth-provider's *signed* query (client_id, scope,
+  redirect_uri, `sig`, …) untouched through the round-trip — it must never
+  be merged with `/signin`'s own `callbackURL`/`otp`/`error` params, or the
+  signature no longer verifies.
+- The harder-won discovery: BetterAuth's `auth.api.<endpoint>()` (an
+  in-process call, not a real HTTP request) skips both the oauth-provider
+  plugin's cross-plugin session-creation hook (used to resume the flow
+  after `signInEmailOTP`) and anything that calls back into
+  `/oauth2/authorize`'s own logic (`oauth2Consent` included) — both need a
+  genuine `ctx.request`, which an in-process call never has. `verifyOTP`
+  and `decideConsent` (`app/actions/auth-flow.ts`, `app/actions/consent.ts`)
+  therefore call BetterAuth over real HTTP (`fetch` to
+  `/api/auth/sign-in/email-otp` / `/api/auth/oauth2/consent`) instead of
+  `auth.api.*` whenever an OAuth flow is in play, forwarding the
+  session cookie themselves afterward (`parseSetCookieHeader`/
+  `toCookieOptions` from `better-auth/cookies` — the same helpers
+  `nextCookies()` uses internally, since that plugin only forwards cookies
+  from the `auth.api.*` path).
+- No change to `databaseHooks.session.create.before` (the web-of-trust
+  gate) — the OAuth flow still creates a session through the same path, so
+  a stranger can no more SSO into Jellyfin than they could sign into
+  MediaVault itself. Any signed-in household member can SSO into Jellyfin;
+  there's no finer-grained authorization layer on top of that.
+
 ## Explicitly deferred (not in this plan)
 
-- **Jellyfin SSO** (BetterAuth as an OIDC provider via `jellyfin-plugin-sso`,
-  so household members skip a separate Jellyfin login) — depends on
-  BetterAuth existing first, so it's a natural follow-on once this plan
-  ships, not part of it.
 - Public, code-free self-serve sign-up — every new household still needs an
   owner-minted access code, same posture as jinglejotter.com. Only the
   *invite-into-an-existing-household* path skips the code.

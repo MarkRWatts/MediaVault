@@ -6,8 +6,10 @@
 // hiding itself from non-owners is cosmetic, this is the enforcement.
 // Ported from the template app's app/actions/admin.ts.
 
+import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
+import { auth } from "@/lib/auth";
 import { requireOwner } from "@/lib/require-member";
 import { generateCode, formatCode } from "@/lib/access";
 import { sendAccessCodeEmail } from "@/lib/email";
@@ -16,6 +18,68 @@ import { isTooLong } from "@/lib/validation";
 import { MAX_ROWS, rowCapMessage } from "@/lib/limits";
 
 export type AdminActionState = { error?: string; minted?: string } | null;
+
+export type JellyfinClientState =
+  | { error: string }
+  | { clientId: string; clientSecret: string }
+  | null;
+
+/** Registers Jellyfin as a static, trusted OAuth client of this app's
+ *  BetterAuth instance, so jellyfin-plugin-sso can authenticate against
+ *  MediaVault as a generic OIDC provider — see HOUSEHOLDS_PLAN.md "Jellyfin
+ *  SSO". BetterAuth's admin-create-client endpoint requires a real owner
+ *  session (not just a server-only flag), which is why this is an /admin
+ *  action rather than a standalone script: `headers()` here carries this
+ *  request's own session cookie. skip_consent: true means household
+ *  members never see /consent for this client — they're already trusted.
+ *  The client_secret is returned once, here, and never stored in
+ *  MediaVault itself — paste both into jellyfin-plugin-sso's provider
+ *  config, not into MediaVault's .env. */
+export async function registerJellyfinClient(
+  _prevState: JellyfinClientState,
+  formData: FormData,
+): Promise<JellyfinClientState> {
+  const admin = await requireOwner();
+
+  const redirectUri = String(formData.get("redirectUri") ?? "").trim();
+  if (!redirectUri) return { error: "Enter Jellyfin's redirect URI." };
+  try {
+    const url = new URL(redirectUri);
+    if (url.protocol !== "https:") return { error: "Jellyfin's redirect URI must be https://." };
+  } catch {
+    return { error: "That doesn't look like a valid URL." };
+  }
+
+  const existing = await prisma.oauthClient.findFirst({
+    where: { redirectUris: { contains: redirectUri } },
+  });
+  if (existing) {
+    return {
+      error: `A client for this redirect URI already exists (client_id ${existing.clientId}). Its secret was only ever shown once, at creation — delete the client in the database and re-run this to issue a new one.`,
+    };
+  }
+
+  let client: { client_id: string; client_secret?: string };
+  try {
+    client = await auth.api.adminCreateOAuthClient({
+      body: {
+        client_name: "Jellyfin",
+        redirect_uris: [redirectUri],
+        token_endpoint_auth_method: "client_secret_post",
+        client_secret_expires_at: 0, // never expires — jellyfin-plugin-sso has no rotation flow
+        skip_consent: true,
+      },
+      headers: await headers(),
+    });
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Couldn't register the client." };
+  }
+  if (!client.client_secret) return { error: "Client was created but no secret came back — odd." };
+
+  await logAudit({ userId: admin.userId, action: "jellyfin-client.register", entityId: client.client_id });
+  revalidatePath("/admin");
+  return { clientId: client.client_id, clientSecret: client.client_secret };
+}
 
 async function adminDisplayName(userId: string, email: string): Promise<string> {
   const user = await prisma.user.findUnique({ where: { id: userId }, select: { name: true } });
