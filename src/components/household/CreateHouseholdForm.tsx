@@ -27,6 +27,7 @@ export function CreateHouseholdForm({
         maxLength={60}
         defaultValue={defaultName}
         placeholder="e.g. The Watts household"
+        onFocus={(e) => e.currentTarget.select()}
         className="w-full rounded-md border border-border bg-bg-elevated-2 px-4 py-2.5 text-sm text-text placeholder:text-text-faint focus-visible:outline-none"
       />
       {/* Server-side normalization (lib/access.ts) forgives case and
@@ -42,6 +43,7 @@ export function CreateHouseholdForm({
         autoCapitalize="characters"
         spellCheck={false}
         placeholder="Access code, e.g. MV-ABCD-2345"
+        onFocus={(e) => e.currentTarget.select()}
         className="w-full rounded-md border border-border bg-bg-elevated-2 px-4 py-2.5 text-sm text-text placeholder:text-text-faint focus-visible:outline-none"
       />
       <button

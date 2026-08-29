@@ -74,7 +74,9 @@ the Docker deployment reads `.env.docker` on the server (template:
 | `MOVIES_PATH` | Folder of movie files the scanner walks (e.g. `/Volumes/media/Movies` locally, `/media-share/Movies` in the container). |
 | `TVSHOWS_PATH` | Folder of TV shows (`Show (Year)/Season NN/Show SxxEyy.ext`). Optional — unset skips all TV features. |
 | `MUSIC_PATH` | Folder of a music library in iTunes layout (`Artist/Album/NN Track.m4a`). Optional — unset skips all music features. |
+| `ADULT_PATH` | Folder of an Adult library, one file per scene. Optional — unset skips all Adult features. |
 | `POSTER_CACHE_DIR` | Where downloaded TMDB artwork is cached. |
+| `ADULT_IMAGE_CACHE_DIR` | Where downloaded Adult artwork (ThePornDB) is cached. |
 | `DATABASE_URL` | SQLite location, e.g. `file:./data/mediavault.db`. |
 | `FFPROBE_DOCKER_IMAGE` | Dev-only fallback: run ffprobe via `docker run` when it isn't on PATH (the deploy image installs ffmpeg). |
 
@@ -97,6 +99,12 @@ dedicated read-only SMB account.
 | --- | --- |
 | `TMDB_API_KEY` | Free key or v4 read token from themoviedb.org → Settings → API. Optional — without it the app is scan-only (no posters, metadata, collections, or missing-content detection). |
 
+### ThePornDB (optional)
+
+| Variable | Meaning |
+| --- | --- |
+| `THEPORNDB_API_KEY` | Free key from theporndb.net → Account → API Tokens. Optional — without it the Adult scan is title/filename-only (no metadata or artwork). |
+
 ### Jellyfin (optional)
 
 | Variable | Meaning |
@@ -105,6 +113,7 @@ dedicated read-only SMB account.
 | `JELLYFIN_API_KEY` | Token from Dashboard → API Keys. Unset disables the integration gracefully. |
 | `JELLYFIN_MOVIES_PREFIX` | Path prefix Jellyfin's movie items carry before the relative file path (default `/media/Movies/`). |
 | `JELLYFIN_TV_PREFIX` | Same for TV episodes (default `/media/TV Shows/`). |
+| `ADULT_JELLYFIN_FOLDER_ID` | Folder id (GUID) of the Adult library in Jellyfin's dashboard. Required for the `/account` opt-in to grant/revoke that folder in Jellyfin. |
 
 A sync job matches Jellyfin items to files by path (Unicode-normalized, so
 macOS-scanned NFD paths match Linux NFC ones), runs automatically after every

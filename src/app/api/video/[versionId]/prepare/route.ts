@@ -12,7 +12,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ versionId: st
     return NextResponse.json({ error: "invalid version id" }, { status: 400 });
   }
 
-  const status = await triggerVideoPrepare(versionId);
+  const status = await triggerVideoPrepare("film", versionId);
   if (status.state === "not-found") {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }

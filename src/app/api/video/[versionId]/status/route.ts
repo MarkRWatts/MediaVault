@@ -12,7 +12,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ versionId: str
     return NextResponse.json({ error: "invalid version id" }, { status: 400 });
   }
 
-  const status = await getVideoStatus(versionId);
+  const status = await getVideoStatus("film", versionId);
   if (status.state === "not-found") {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }

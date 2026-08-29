@@ -55,6 +55,22 @@ async function jellyfinFetch(pathname: string, params: Record<string, string> = 
   return res.json();
 }
 
+// Generic authenticated request, method/body-flexible unlike jellyfinFetch
+// above (GET-only, query-params-only — sufficient for the library-sync job
+// it was written for). Added for syncJellyfinAdultAccess's User/Policy
+// read-modify-write below, which needs POST-with-JSON-body.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function jellyfinRequest(method: string, pathname: string, body?: unknown): Promise<any> {
+  const res = await fetch(`${baseUrl()}${pathname}`, {
+    method,
+    headers: { ...authHeaders(), ...(body !== undefined ? { "Content-Type": "application/json" } : {}) },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  });
+  if (!res.ok) throw new Error(`Jellyfin ${method} ${pathname} -> HTTP ${res.status}`);
+  if (res.status === 204) return null;
+  return res.json();
+}
+
 async function getMoviesLibraryId(): Promise<string> {
   const data = await jellyfinFetch("/Library/MediaFolders");
   const folders: MediaFolder[] = data.Items ?? [];
@@ -338,4 +354,80 @@ export async function getJellyfinServerInfo(): Promise<JellyfinServerInfo | null
 /** Deep link into the Jellyfin web client for a given item. */
 export function jellyfinPlayUrl(itemId: string, serverId: string): string {
   return `${baseUrl()}/web/#/details?id=${itemId}&serverId=${serverId}`;
+}
+
+// ---------------------------------------------------------------------------
+// Adult-library access sync — see /account's opt-in checkbox
+// (src/app/actions/adult.ts). Jellyfin has no user-facing library-visibility
+// toggle; this is the admin-delegate half of that opt-in, driving one
+// person's Policy.EnabledFolders on their behalf via ADULT_JELLYFIN_FOLDER_ID
+// (the folder's raw GUID — there's no CollectionType for adult content to
+// match on the way getMoviesLibraryId() matches "movies", so unlike that
+// function this can't discover the id programmatically; it's a one-time
+// paste from Jellyfin's dashboard, same posture as the SSO client's redirect
+// URI). jellyfin-plugin-sso's EnableAuthorization is deliberately off (see
+// HOUSEHOLDS_PLAN.md "Jellyfin SSO") — this sync path is the *only* thing
+// that should ever touch EnabledFolders for an existing account, which is
+// why every write here is read-full-policy / splice-one-field /
+// write-the-whole-thing-back, never a partial update.
+
+export type AdultSyncResult =
+  | { status: "synced" }
+  | { status: "not-linked" } // no Jellyfin account yet — their first SSO login hasn't happened
+  | { status: "error"; message: string };
+
+interface JellyfinUserSummary {
+  Id: string;
+  Name: string;
+}
+
+interface JellyfinPolicy {
+  EnabledFolders?: string[];
+  [key: string]: unknown;
+}
+
+interface JellyfinUser {
+  Id: string;
+  Policy: JellyfinPolicy;
+}
+
+async function resolveJellyfinUserId(email: string): Promise<string | null> {
+  const users: JellyfinUserSummary[] = await jellyfinRequest("GET", "/Users");
+  const match = users.find((u) => u.Name?.toLowerCase() === email.toLowerCase());
+  return match?.Id ?? null;
+}
+
+export async function syncJellyfinAdultAccess(
+  user: { id: string; email: string; jellyfinUserId: string | null },
+  enabled: boolean,
+): Promise<AdultSyncResult> {
+  if (!jellyfinConfigured()) return { status: "not-linked" };
+
+  const folderId = process.env.ADULT_JELLYFIN_FOLDER_ID;
+  if (!folderId) return { status: "error", message: "ADULT_JELLYFIN_FOLDER_ID is not set" };
+
+  try {
+    let jellyfinUserId = user.jellyfinUserId;
+    if (!jellyfinUserId) {
+      jellyfinUserId = await resolveJellyfinUserId(user.email);
+      if (!jellyfinUserId) return { status: "not-linked" };
+      await prisma.user.update({ where: { id: user.id }, data: { jellyfinUserId } });
+    }
+
+    const jfUser: JellyfinUser = await jellyfinRequest("GET", `/Users/${jellyfinUserId}`);
+    const policy = jfUser.Policy;
+    const current = new Set(policy.EnabledFolders ?? []);
+    if (enabled) current.add(folderId);
+    else current.delete(folderId);
+
+    await jellyfinRequest("POST", `/Users/${jellyfinUserId}/Policy`, {
+      ...policy,
+      EnabledFolders: [...current],
+    });
+    return { status: "synced" };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[jellyfin] adult-access sync failed:", message);
+    return { status: "error", message };
+  }
 }

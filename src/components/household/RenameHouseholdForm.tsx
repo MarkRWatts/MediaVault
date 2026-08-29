@@ -42,6 +42,7 @@ export function RenameHouseholdForm({ name }: { name: string }) {
         name="name"
         defaultValue={name}
         autoFocus
+        onFocus={(e) => e.currentTarget.select()}
         required
         maxLength={60}
         className="rounded-md border border-border bg-bg-elevated-2 px-3 py-1.5 text-sm text-text focus-visible:outline-none"
