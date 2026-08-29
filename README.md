@@ -113,11 +113,13 @@ dedicated read-only SMB account.
 | `JELLYFIN_API_KEY` | Token from Dashboard → API Keys. Unset disables the integration gracefully. |
 | `JELLYFIN_MOVIES_PREFIX` | Path prefix Jellyfin's movie items carry before the relative file path (default `/media/Movies/`). |
 | `JELLYFIN_TV_PREFIX` | Same for TV episodes (default `/media/TV Shows/`). |
+| `JELLYFIN_ADULT_PREFIX` | Same for Adult scenes (default `/media/Adult/`) — powers each scene's "Play in Jellyfin" link. |
 | `ADULT_JELLYFIN_FOLDER_ID` | Folder id (GUID) of the Adult library in Jellyfin's dashboard. Required for the `/account` opt-in to grant/revoke that folder in Jellyfin. |
 
 A sync job matches Jellyfin items to files by path (Unicode-normalized, so
 macOS-scanned NFD paths match Linux NFC ones), runs automatically after every
-scan, and powers the per-version/per-episode "Play in Jellyfin" links.
+scan, and powers the per-version/per-episode/per-scene "Play in Jellyfin"
+links.
 
 ### Jellyfin SSO (optional)
 

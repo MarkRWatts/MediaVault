@@ -39,6 +39,7 @@ services:
       JELLYFIN_API_KEY: ${JELLYFIN_API_KEY:-}
       JELLYFIN_MOVIES_PREFIX: ${JELLYFIN_MOVIES_PREFIX:-/media/Movies/}
       JELLYFIN_TV_PREFIX: ${JELLYFIN_TV_PREFIX:-/media/TV Shows/}
+      JELLYFIN_ADULT_PREFIX: ${JELLYFIN_ADULT_PREFIX:-/media/Adult/}
       # Folder id (GUID) of the Adult library in Jellyfin's dashboard —
       # required for the /account opt-in to grant/revoke that folder.
       ADULT_JELLYFIN_FOLDER_ID: ${ADULT_JELLYFIN_FOLDER_ID:-}
