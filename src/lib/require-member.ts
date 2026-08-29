@@ -113,3 +113,43 @@ export async function requireOwner(): Promise<Owner> {
   if (!owner) throw new Error("Only the app owner can do that.");
   return owner;
 }
+
+async function currentAdultAccessUserId(): Promise<string | null> {
+  const session = await auth.api.getSession({ headers: await headers() });
+  const userId = session?.user?.id;
+  if (!userId) return null;
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { adultLibraryAccess: true } });
+  return user?.adultLibraryAccess ? userId : null;
+}
+
+/** Gates the Adult media type — /adult pages and its streaming routes.
+ *  Checks the self-service User.adultLibraryAccess opt-in (see /account),
+ *  NOT household membership or app-ownership — this is a separate axis
+ *  from both. The nav link hiding in Nav.tsx/NavLinks.tsx is UX only; this
+ *  is the actual boundary, same distinction this file already draws for
+ *  owner-only links. Not signed in -> /signin; signed in but opted out ->
+ *  /account (where they can opt in, not a dead end). */
+export async function requireAdultAccessOrRedirect(): Promise<{ userId: string }> {
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session?.user?.id) redirect("/signin");
+
+  const userId = await currentAdultAccessUserId();
+  if (!userId) redirect("/account");
+  return { userId };
+}
+
+/** Route-handler variant, mirroring requireOwnerOrResponse — for the Adult
+ *  media type's image/streaming routes, which can't redirect the way a
+ *  page can. */
+export async function requireAdultAccessOrResponse(): Promise<{ userId: string } | NextResponse> {
+  const session = await auth.api.getSession({ headers: await headers() });
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  }
+
+  const userId = await currentAdultAccessUserId();
+  if (!userId) {
+    return NextResponse.json({ error: "Adult content access not enabled" }, { status: 403 });
+  }
+  return { userId };
+}

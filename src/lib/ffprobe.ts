@@ -142,7 +142,8 @@ function parseFfprobeJson(stdout: string): ProbeResult {
 /**
  * Probe a file given its absolute path on the local filesystem (or, when
  * falling back to Docker, a path under one of the media roots — MOVIES_PATH,
- * TVSHOWS_PATH, or MUSIC_PATH — so it can be translated to a container mount).
+ * TVSHOWS_PATH, MUSIC_PATH, or ADULT_PATH — so it can be translated to a
+ * container mount).
  */
 export async function probe(absPath: string): Promise<ProbeResult> {
   const hasLocal = await detectLocalFfprobe();
@@ -160,12 +161,15 @@ export async function probe(absPath: string): Promise<ProbeResult> {
   }
 
   // Translate the path against whichever media root contains it.
-  const roots = [process.env.MOVIES_PATH, process.env.TVSHOWS_PATH, process.env.MUSIC_PATH].filter(
-    (r): r is string => !!r,
-  );
+  const roots = [
+    process.env.MOVIES_PATH,
+    process.env.TVSHOWS_PATH,
+    process.env.MUSIC_PATH,
+    process.env.ADULT_PATH,
+  ].filter((r): r is string => !!r);
   if (roots.length === 0) {
     throw new Error(
-      "No media root (MOVIES_PATH/TVSHOWS_PATH/MUSIC_PATH) set; cannot translate path for dockerized ffprobe",
+      "No media root (MOVIES_PATH/TVSHOWS_PATH/MUSIC_PATH/ADULT_PATH) set; cannot translate path for dockerized ffprobe",
     );
   }
   let mountRoot: string | null = null;

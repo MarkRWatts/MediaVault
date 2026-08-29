@@ -10,6 +10,7 @@ import { RemoveMemberButton } from "@/components/household/RemoveMemberButton";
 import { RenameHouseholdForm } from "@/components/household/RenameHouseholdForm";
 import { DeleteAccountButton } from "@/components/account/DeleteAccountButton";
 import { EditNameForm } from "@/components/account/EditNameForm";
+import { AdultAccessToggle } from "@/components/account/AdultAccessToggle";
 
 // DB-backed, per-user page — must render per-request, not be frozen at
 // build time (the Docker image is built with no database present).
@@ -33,7 +34,7 @@ export default async function AccountPage() {
   const [user, household] = await Promise.all([
     prisma.user.findUniqueOrThrow({
       where: { id: userId },
-      select: { name: true, email: true, isAppOwner: true },
+      select: { name: true, email: true, isAppOwner: true, adultLibraryAccess: true, jellyfinUserId: true },
     }),
     // The household name and member list are visible to every member, not
     // just owners — only the pending-invitations query (and the invite/
@@ -76,6 +77,11 @@ export default async function AccountPage() {
             Admin
           </Link>
         )}
+      </section>
+
+      <section className="flex flex-col gap-4">
+        <h2 className="font-display text-xl tracking-wide text-text">Preferences</h2>
+        <AdultAccessToggle initialEnabled={user.adultLibraryAccess} initiallyLinked={user.jellyfinUserId !== null} />
       </section>
 
       <section className="flex flex-col gap-4">

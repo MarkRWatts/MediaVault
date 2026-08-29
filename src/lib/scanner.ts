@@ -909,24 +909,179 @@ async function doScanMusic(runId: number, force: boolean): Promise<void> {
   await finishRun(runId, log, `Scanned ${total} music file(s)`);
 }
 
-export type ScanMediaType = "FILM" | "TV" | "MUSIC";
+// --- Adult ---
+// One file = one Scene row, no identity/grouping step needed (unlike
+// Film/Show) — the confirmed layout is a subfolder per studio, so the
+// generic walk() above (already depth-bounded, already extension-filtered)
+// is reused as-is; the immediate parent folder name becomes Scene.folder, a
+// display/matching hint only. Title enrichment (real title, studio,
+// performers) is ThePornDB's job (theporndb.ts) — this pass only derives a
+// placeholder title so an unenriched Scene has something to display.
+
+interface SceneCandidate {
+  relPath: string;
+  absPath: string;
+  fileName: string;
+  folder: string | null;
+  size: number;
+  mtimeMs: number;
+}
+
+/** Light cleanup for a pre-enrichment placeholder title only — strips the
+ *  extension and swaps separator characters for spaces. Deliberately not
+ *  the aggressive noise-stripping theporndb.ts does to build its search
+ *  query (resolution tags, track-number prefixes, SITE.COM branding) —
+ *  that's tailored to what ThePornDB's parser needs, this is just "better
+ *  than the raw filename" for an interim display. */
+function placeholderSceneTitle(fileName: string): string {
+  const withoutExt = fileName.replace(/\.[^.]+$/, "");
+  return withoutExt.replace(/[._]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+async function processScene(file: SceneCandidate, log: string[], force: boolean): Promise<void> {
+  const { relPath, absPath, fileName, folder, size, mtimeMs } = file;
+  const existing = await prisma.scene.findUnique({ where: { filePath: relPath } });
+
+  const needProbe =
+    force || !existing || existing.sizeBytes === null || Number(existing.sizeBytes) !== size || existing.mtimeMs !== mtimeMs;
+
+  const baseData = { fileName, folder };
+
+  if (!needProbe) {
+    await prisma.scene.update({ where: { filePath: relPath }, data: baseData });
+    return;
+  }
+
+  const title = existing?.title ?? placeholderSceneTitle(fileName);
+
+  try {
+    const result = await probe(absPath);
+    const format = classifyFormat(result.width);
+    const videoRange = deriveVideoRange(result.colorTransfer, result.hasDolbyVision);
+    const sizeBytes = BigInt(Math.round(result.sizeBytes ?? size));
+
+    await prisma.scene.upsert({
+      where: { filePath: relPath },
+      create: {
+        ...baseData,
+        filePath: relPath,
+        title,
+        sortTitle: sortTitle(title),
+        width: result.width,
+        height: result.height,
+        videoCodec: result.videoCodec,
+        videoRange,
+        durationSecs: result.durationSecs,
+        sizeBytes,
+        mtimeMs,
+        format,
+        probedAt: new Date(),
+      },
+      update: {
+        ...baseData,
+        width: result.width,
+        height: result.height,
+        videoCodec: result.videoCodec,
+        videoRange,
+        durationSecs: result.durationSecs,
+        sizeBytes,
+        mtimeMs,
+        format,
+        probedAt: new Date(),
+      },
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log.push(`Probe failed for "${relPath}": ${message}`);
+    await prisma.scene.upsert({
+      where: { filePath: relPath },
+      create: { ...baseData, filePath: relPath, title, sortTitle: sortTitle(title) },
+      update: baseData,
+    });
+  }
+}
+
+async function doScanScenes(runId: number, force: boolean): Promise<void> {
+  const log: string[] = [];
+  const adultPath = process.env.ADULT_PATH;
+  if (!adultPath) throw new Error("ADULT_PATH is not set");
+
+  const relPaths: string[] = [];
+  await walk(adultPath, adultPath, 0, relPaths);
+
+  const candidates: SceneCandidate[] = [];
+  for (const relPath of relPaths) {
+    const absPath = path.join(adultPath, relPath);
+    let stat;
+    try {
+      stat = await fs.stat(absPath);
+    } catch (err) {
+      log.push(`Could not stat "${relPath}": ${err instanceof Error ? err.message : String(err)}`);
+      continue;
+    }
+    const segments = relPath.split(path.sep);
+    const folder = segments.length > 1 ? segments[0] : null;
+    candidates.push({
+      relPath,
+      absPath,
+      fileName: segments[segments.length - 1],
+      folder,
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+    });
+  }
+
+  const total = candidates.length;
+  await updateProgress(runId, { total, filesSeen: 0, progress: 0, message: `Found ${total} file(s)` });
+
+  let completed = 0;
+  async function reportProgress(message: string): Promise<void> {
+    completed++;
+    if (completed % PROGRESS_UPDATE_EVERY === 0 || completed === total) {
+      await updateProgress(runId, { progress: completed, filesSeen: completed, message });
+    }
+  }
+
+  await mapPool(candidates, PROBE_CONCURRENCY, async (file) => {
+    await processScene(file, log, force);
+    await reportProgress(`Probed ${completed}/${total}: ${file.fileName}`);
+  });
+
+  // Delete Scene rows for files no longer on disk — Scene *is* the file
+  // row (unlike Film/Show), so there's no separate "empty parent identity"
+  // cleanup step needed.
+  const seenPaths = new Set(candidates.map((c) => c.relPath));
+  const allScenes = await prisma.scene.findMany({ select: { id: true, filePath: true } });
+  const staleSceneIds = allScenes.filter((s) => !seenPaths.has(s.filePath)).map((s) => s.id);
+  if (staleSceneIds.length > 0) {
+    await prisma.scene.deleteMany({ where: { id: { in: staleSceneIds } } });
+    log.push(`Removed ${staleSceneIds.length} scene(s) for files no longer on disk`);
+  }
+
+  await finishRun(runId, log, `Scanned ${total} file(s)`);
+}
+
+export type ScanMediaType = "FILM" | "TV" | "MUSIC" | "SCENE";
 
 const SCAN_KIND: Record<ScanMediaType, RunKind> = {
   FILM: "SCAN_FILM",
   TV: "SCAN_TV",
   MUSIC: "SCAN_MUSIC",
+  SCENE: "SCAN_SCENE",
 };
 
 const SCAN_RUNNER: Record<ScanMediaType, (runId: number, force: boolean) => Promise<void>> = {
   FILM: doScanFilms,
   TV: doScanTv,
   MUSIC: doScanMusic,
+  SCENE: doScanScenes,
 };
 
 const SCAN_PATH_ENV: Record<ScanMediaType, string> = {
   FILM: "MOVIES_PATH",
   TV: "TVSHOWS_PATH",
   MUSIC: "MUSIC_PATH",
+  SCENE: "ADULT_PATH",
 };
 
 /**

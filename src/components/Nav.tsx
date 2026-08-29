@@ -24,9 +24,13 @@ export default async function Nav() {
   // while signed out (signin/signup/invite), so a signed-out visitor
   // should just see the non-owner nav, not an error.
   const user = session?.user
-    ? await prisma.user.findUnique({ where: { id: session.user.id }, select: { isAppOwner: true } })
+    ? await prisma.user.findUnique({ where: { id: session.user.id }, select: { isAppOwner: true, adultLibraryAccess: true } })
     : null;
   const isOwner = user?.isAppOwner ?? false;
+  // UX nicety only, same posture as isOwner above — the real boundary is
+  // requireAdultAccessOrRedirect() on /adult itself and its streaming
+  // routes (see require-member.ts).
+  const hasAdultAccess = user?.adultLibraryAccess ?? false;
 
   return (
     <header className="sticky top-0 z-50 bg-bg/90 backdrop-blur">
@@ -36,7 +40,7 @@ export default async function Nav() {
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logo.png" alt="MediaVault" className="h-8 w-auto sm:h-10" />
         </Link>
-        <NavLinks signedIn={Boolean(session?.user)} isOwner={isOwner} />
+        <NavLinks signedIn={Boolean(session?.user)} isOwner={isOwner} hasAdultAccess={hasAdultAccess} />
         <div className="flex w-full items-center justify-end gap-3 lg:ml-auto lg:w-auto">
           {session?.user && <SignOutButton />}
         </div>

@@ -46,3 +46,6 @@ next-env.d.ts
 .env
 /data
 /src/generated
+
+# Local-only design notes — never committed (see ADULT_PLAN.md's own header)
+/ADULT_PLAN.md

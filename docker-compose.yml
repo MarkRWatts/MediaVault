@@ -22,15 +22,26 @@ services:
       # plain passthrough, empty by default, which skips the music scan/enrich
       # phases entirely.
       MUSIC_PATH: ${MUSIC_PATH:-}
+      # Root of the Adult share. No bind mount in this base compose file
+      # (same /media-share volume as movies/music) — plain passthrough,
+      # empty by default, which skips the Adult scan/enrich phases entirely.
+      ADULT_PATH: ${ADULT_PATH:-}
+      ADULT_IMAGE_CACHE_DIR: /app/data/adult-images
       # TMDB API key (optional, free) — enables posters, metadata, and
       # collection/missing-film detection. Leave blank to scan-only.
       TMDB_API_KEY: ${TMDB_API_KEY:-}
+      # ThePornDB API key (optional, free) — enables Adult metadata/artwork
+      # enrichment. Leave blank to scan-only.
+      THEPORNDB_API_KEY: ${THEPORNDB_API_KEY:-}
       # Jellyfin integration (optional) — enables "Play in Jellyfin" links and
       # a post-scan library sync. Leave blank to disable.
       JELLYFIN_URL: ${JELLYFIN_URL:-}
       JELLYFIN_API_KEY: ${JELLYFIN_API_KEY:-}
       JELLYFIN_MOVIES_PREFIX: ${JELLYFIN_MOVIES_PREFIX:-/media/Movies/}
       JELLYFIN_TV_PREFIX: ${JELLYFIN_TV_PREFIX:-/media/TV Shows/}
+      # Folder id (GUID) of the Adult library in Jellyfin's dashboard —
+      # required for the /account opt-in to grant/revoke that folder.
+      ADULT_JELLYFIN_FOLDER_ID: ${ADULT_JELLYFIN_FOLDER_ID:-}
       # BetterAuth (see HOUSEHOLDS_PLAN.md) — session/cookie signing key.
       # Generate with `npx @better-auth/cli secret`; set in .env.docker on
       # the VM, never committed.
