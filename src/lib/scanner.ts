@@ -953,6 +953,13 @@ async function processScene(file: SceneCandidate, log: string[], force: boolean)
   }
 
   const title = existing?.title ?? placeholderSceneTitle(fileName);
+  // Same derivation as Film/Version's container (parse.ts) — the file
+  // extension, not ffprobe's format_name. Never set before this fix, which
+  // left every Scene's container null and defeated planVideoPlayback's
+  // MP4_LIKE_CONTAINERS check, forcing an unnecessary transcode (or worse)
+  // for every scene regardless of it already being a direct-playable MP4.
+  const dotIdx = fileName.lastIndexOf(".");
+  const container = dotIdx >= 0 ? fileName.slice(dotIdx + 1).toLowerCase() : null;
 
   try {
     const result = await probe(absPath);
@@ -971,6 +978,7 @@ async function processScene(file: SceneCandidate, log: string[], force: boolean)
         height: result.height,
         videoCodec: result.videoCodec,
         videoRange,
+        container,
         durationSecs: result.durationSecs,
         sizeBytes,
         mtimeMs,
@@ -983,6 +991,7 @@ async function processScene(file: SceneCandidate, log: string[], force: boolean)
         height: result.height,
         videoCodec: result.videoCodec,
         videoRange,
+        container,
         durationSecs: result.durationSecs,
         sizeBytes,
         mtimeMs,
