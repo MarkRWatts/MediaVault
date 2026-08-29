@@ -459,6 +459,13 @@ const ANCHOR_ARTIST_OVERLAP_THRESHOLD = 0.5;
  * - ANCHOR_ARTIST_OVERLAP_THRESHOLD verifies the candidate's own
  *   artist-credit, not just that the artist: field matched somehow (see its
  *   own comment above).
+ * - Surviving candidates are stably sorted Album/EP-primary-type first,
+ *   Single last (never dropped outright — a genuine single-only pressing
+ *   still needs to resolve) — a same-titled lead single ranks ahead of the
+ *   actual album by MusicBrainz's own relevance scoring often enough that
+ *   three different owned vinyl LPs (Duran Duran's "Notorious", Erasure's
+ *   "The Circus", Goldfrapp's "The Love Invention") anchored to the single
+ *   instead until this was added.
  * - A narrower guard for "Various Artists" compilations: a generic title
  *   ("The Rock Album", "80s") is reused verbatim by unrelated budget-label
  *   comps across decades, and MusicBrainz's relevance ranking has no reason
@@ -471,22 +478,29 @@ const ANCHOR_ARTIST_OVERLAP_THRESHOLD = 0.5;
  *   anonymous compilation, really is one continuous work), so rejecting on
  *   year there would throw away exactly the matches this function exists to
  *   widen the net for.
- * - Finally, surviving candidates are sorted by year proximity to the
- *   searched year (closest first, unknown-year candidates last) rather than
- *   left in MusicBrainz's own relevance order, which has no notion of "this
- *   is a numbered edition and the number matters" — a harmless, sometimes-
- *   helpful tie-break among the already-filtered small pool below.
+ * Surviving candidates are left in MusicBrainz's own relevance order — a
+ * year-proximity sort was tried and reverted (see ANCHOR_FETCH_LIMIT's own
+ * comment for the pattern: a plausible-looking improvement that cost more
+ * than it fixed). It helped the numbered-edition gap below, but actively
+ * broke the far more common case of a modern vinyl reissue of a classic
+ * album: the Discogs pressing's OWN year is naturally close to *other
+ * recent* releases (a remix, a deluxe reissue) and far from the correct
+ * decades-old original release-group's first-release-date — sorting by
+ * proximity to it picked "Paranoid (Kozilek remix)" (2012) over the correct
+ * plain "Paranoid" (1970) for a 2022 reissue pressing. Year proximity is a
+ * good filter for ruling a candidate OUT (the Various-Artists check above);
+ * it is not a good way to rank candidates IN.
  *
  * Known residual gaps, deliberately not chased further after ANCHOR_FETCH_
  * LIMIT's own comment: a numbered edition/volume ("Greatest Hits, Volume
  * Two") can rank below an unnumbered sibling release in MusicBrainz's own
  * top few results and never reach this function's filters at all; two
  * different couplings of the same famous classical work(s) under a near-
- * identical title, with no year to disambiguate, can tie. Both need either
- * a wider fetch (shown above to cost more false positives than it's worth)
- * or actual tracklist comparison to fix properly — for now they resolve to
- * a plausible-but-wrong anchor rather than "unknown", same as before this
- * function existed.
+ * identical title can tie with no year available to disambiguate. Both need
+ * either a wider fetch (shown above to cost more false positives than it's
+ * worth) or actual tracklist comparison to fix properly — for now they
+ * resolve to a plausible-but-wrong anchor rather than "unknown", same as
+ * before this function existed.
  */
 export async function searchReleaseGroupAnchor(
   title: string,
@@ -514,6 +528,7 @@ export async function searchReleaseGroupAnchor(
         artistCredits: credits,
         year: Number.isFinite(rgYear) ? rgYear : null,
         coverArtUrl: `https://coverartarchive.org/release-group/${rg.id}/front-250`,
+        isSingle: rg["primary-type"] === "Single",
       };
     })
     .filter((rg) => {
@@ -543,12 +558,7 @@ export async function searchReleaseGroupAnchor(
       if (!isVariousArtists || year == null || rg.year == null) return true;
       return Math.abs(rg.year - year) <= ANCHOR_COMP_YEAR_TOLERANCE;
     })
-    .sort((a, b) => {
-      if (year == null) return 0;
-      const da = a.year == null ? Infinity : Math.abs(a.year - year);
-      const db = b.year == null ? Infinity : Math.abs(b.year - year);
-      return da - db;
-    })
+    .sort((a, b) => Number(a.isSingle) - Number(b.isSingle))
     .map((rg) => ({ mbid: rg.mbid, title: rg.title, artistName: rg.artistName, year: rg.year, coverArtUrl: rg.coverArtUrl }));
 }
 
