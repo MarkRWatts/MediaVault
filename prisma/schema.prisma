@@ -422,6 +422,8 @@ model Scene {
   mtimeMs      Float?
   probedAt     DateTime?
 
+  jellyfinId String? // Jellyfin library item id (32-hex); set by the Jellyfin sync job
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

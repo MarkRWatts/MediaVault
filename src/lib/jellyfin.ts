@@ -14,6 +14,7 @@ import { guardAndCreateRun, updateProgress, finishRun, failRun } from "@/lib/run
 
 const DEFAULT_MOVIES_PREFIX = "/media/Movies/";
 const DEFAULT_TV_PREFIX = "/media/TV Shows/";
+const DEFAULT_ADULT_PREFIX = "/media/Adult/";
 const PROGRESS_UPDATE_EVERY = 25;
 
 interface MediaFolder {
@@ -109,6 +110,20 @@ async function getAllEpisodeItems(parentId: string): Promise<JellyfinItem[]> {
   return data.Items ?? [];
 }
 
+/** The Adult library is a plain "homevideos" collection (no CollectionType
+ * to discover it by, hence ADULT_JELLYFIN_FOLDER_ID being a manual paste —
+ * see syncJellyfinAdultAccess's comment) whose items come back as type
+ * "Video", not "Movie"/"Episode" — confirmed against the real library. */
+async function getAllSceneItems(parentId: string): Promise<JellyfinItem[]> {
+  const data = await jellyfinFetch("/Items", {
+    ParentId: parentId,
+    IncludeItemTypes: "Video",
+    Recursive: "true",
+    Fields: "Path",
+  });
+  return data.Items ?? [];
+}
+
 /** Fire the library refresh and return immediately — we don't wait for the
  * (potentially slow) scan to finish; the item list fetched right after may
  * be very slightly stale, which is an acceptable tradeoff here. */
@@ -136,6 +151,15 @@ function relativizePath(jellyfinPath: string): string | null {
  * `||`, same as the movies prefix). */
 function relativizeTvPath(jellyfinPath: string): string | null {
   const prefix = process.env.JELLYFIN_TV_PREFIX || DEFAULT_TV_PREFIX;
+  const idx = jellyfinPath.indexOf(prefix);
+  if (idx === -1) return null;
+  return jellyfinPath.slice(idx + prefix.length);
+}
+
+/** Same idea, for the Adult share (JELLYFIN_ADULT_PREFIX, falling back to
+ * DEFAULT_ADULT_PREFIX). */
+function relativizeAdultPath(jellyfinPath: string): string | null {
+  const prefix = process.env.JELLYFIN_ADULT_PREFIX || DEFAULT_ADULT_PREFIX;
   const idx = jellyfinPath.indexOf(prefix);
   if (idx === -1) return null;
   return jellyfinPath.slice(idx + prefix.length);
@@ -291,10 +315,71 @@ async function doJellyfinSync(runId: number): Promise<void> {
     log.push(`Unmatched TV in Jellyfin (${unmatchedInJellyfinTv.length}): ${unmatchedInJellyfinTv.join(", ")}`);
   }
 
+  // ---- Adult ----
+  // Best-effort, same posture as TV: no ADULT_JELLYFIN_FOLDER_ID (Adult
+  // feature not configured) shouldn't fail the rest of the sync. Unlike
+  // movies/TV there's no CollectionType to discover the library by, so this
+  // reuses the same folder id syncJellyfinAdultAccess already needs.
+  let sceneItems: JellyfinItem[] = [];
+  const adultFolderId = process.env.ADULT_JELLYFIN_FOLDER_ID;
+  if (adultFolderId) {
+    try {
+      sceneItems = await getAllSceneItems(adultFolderId);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log.push(`Failed to fetch Jellyfin Adult items: ${message}`);
+    }
+  }
+
+  const scenes = await prisma.scene.findMany({ select: { id: true, filePath: true, jellyfinId: true } });
+  const sceneByNormPath = new Map(scenes.map((s) => [s.filePath.normalize("NFC"), s]));
+  const matchedSceneIds = new Set<number>();
+
+  let sceneMatched = 0;
+  const unmatchedInJellyfinAdult: string[] = [];
+
+  for (const item of sceneItems) {
+    if (item.Path) {
+      const relPath = relativizeAdultPath(item.Path);
+      const normPath = relPath?.normalize("NFC");
+      const scene = normPath ? sceneByNormPath.get(normPath) : undefined;
+      if (scene) {
+        if (scene.jellyfinId !== item.Id) {
+          await prisma.scene.update({ where: { id: scene.id }, data: { jellyfinId: item.Id } });
+        }
+        matchedSceneIds.add(scene.id);
+        sceneMatched++;
+      } else {
+        unmatchedInJellyfinAdult.push(item.Name ?? item.Path);
+      }
+    } else {
+      unmatchedInJellyfinAdult.push(item.Name ?? `(item ${item.Id})`);
+    }
+  }
+
+  const unmatchedInMediaVaultAdult: string[] = [];
+  for (const s of scenes) {
+    if (matchedSceneIds.has(s.id)) continue;
+    unmatchedInMediaVaultAdult.push(s.filePath);
+    if (s.jellyfinId !== null) {
+      await prisma.scene.update({ where: { id: s.id }, data: { jellyfinId: null } });
+    }
+  }
+
+  if (adultFolderId) {
+    log.push(`Matched ${sceneMatched} of ${scenes.length} MediaVault scene(s) to Jellyfin items`);
+    if (unmatchedInMediaVaultAdult.length > 0) {
+      log.push(`Unmatched Adult in MediaVault (${unmatchedInMediaVaultAdult.length}): ${unmatchedInMediaVaultAdult.join(", ")}`);
+    }
+    if (unmatchedInJellyfinAdult.length > 0) {
+      log.push(`Unmatched Adult in Jellyfin (${unmatchedInJellyfinAdult.length}): ${unmatchedInJellyfinAdult.join(", ")}`);
+    }
+  }
+
   await finishRun(
     runId,
     log,
-    `Matched ${matched}/${versions.length} movie version(s), ${tvMatched}/${episodeFilesByNormPath.size} TV file(s)`,
+    `Matched ${matched}/${versions.length} movie version(s), ${tvMatched}/${episodeFilesByNormPath.size} TV file(s), ${sceneMatched}/${scenes.length} Adult scene(s)`,
   );
 }
 
