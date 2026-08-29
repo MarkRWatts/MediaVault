@@ -840,7 +840,13 @@ export async function runMusicEnrich(): Promise<{ runId: number; started: boolea
 
 // --- Manual matching (POST /api/album-match) ---
 
-const MB_URL_RE = /musicbrainz\.org\/(release|release-group)\/([0-9a-f-]{36})/i;
+// Domain-agnostic on purpose: a local musicbrainz-docker mirror (see
+// MUSICBRAINZ_BASE_URL) serves the same browsable pages at its own host —
+// e.g. http://localhost:15000/release/<uuid> — and pasting that URL should
+// work exactly like a musicbrainz.org one. The domain was never doing real
+// validation anyway; the actual check is the MusicBrainz API lookup that
+// follows a match.
+const MB_URL_RE = /\/(release|release-group)\/([0-9a-f-]{36})/i;
 const MB_UUID_RE = /^[0-9a-f-]{36}$/i;
 
 /**
