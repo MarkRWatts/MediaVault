@@ -11,9 +11,11 @@ export type RunKind =
   | "SCAN_FILM"
   | "SCAN_TV"
   | "SCAN_MUSIC"
+  | "SCAN_SCENE"
   | "ENRICH_FILM"
   | "ENRICH_TV"
   | "ENRICH_MUSIC"
+  | "ENRICH_SCENE"
   | "JELLYFIN";
 
 /**
@@ -121,9 +123,11 @@ const ALL_KINDS: RunKind[] = [
   "SCAN_FILM",
   "SCAN_TV",
   "SCAN_MUSIC",
+  "SCAN_SCENE",
   "ENRICH_FILM",
   "ENRICH_TV",
   "ENRICH_MUSIC",
+  "ENRICH_SCENE",
   "JELLYFIN",
 ];
 
@@ -131,9 +135,11 @@ export async function getLatestRuns(): Promise<{
   latestScanFilm: RunSummary | null;
   latestScanTv: RunSummary | null;
   latestScanMusic: RunSummary | null;
+  latestScanScene: RunSummary | null;
   latestEnrichFilm: RunSummary | null;
   latestEnrichTv: RunSummary | null;
   latestEnrichMusic: RunSummary | null;
+  latestEnrichScene: RunSummary | null;
   latestJellyfin: RunSummary | null;
   running: boolean;
 }> {
@@ -147,10 +153,12 @@ export async function getLatestRuns(): Promise<{
     latestScanFilm: toSummary(runs[0]),
     latestScanTv: toSummary(runs[1]),
     latestScanMusic: toSummary(runs[2]),
-    latestEnrichFilm: toSummary(runs[3]),
-    latestEnrichTv: toSummary(runs[4]),
-    latestEnrichMusic: toSummary(runs[5]),
-    latestJellyfin: toSummary(runs[6]),
+    latestScanScene: toSummary(runs[3]),
+    latestEnrichFilm: toSummary(runs[4]),
+    latestEnrichTv: toSummary(runs[5]),
+    latestEnrichMusic: toSummary(runs[6]),
+    latestEnrichScene: toSummary(runs[7]),
+    latestJellyfin: toSummary(runs[8]),
     running,
   };
 }

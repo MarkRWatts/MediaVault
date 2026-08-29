@@ -21,7 +21,15 @@ const OWNER_LINKS = [
   { href: "/report", label: "Report" },
 ] as const;
 
-export default function NavLinks({ signedIn = false, isOwner = false }: { signedIn?: boolean; isOwner?: boolean }) {
+export default function NavLinks({
+  signedIn = false,
+  isOwner = false,
+  hasAdultAccess = false,
+}: {
+  signedIn?: boolean;
+  isOwner?: boolean;
+  hasAdultAccess?: boolean;
+}) {
   const pathname = usePathname();
   // /stats and /account are only reachable (and useful) once signed in —
   // proxy.ts would bounce a signed-out visit to /signin anyway, so there's
@@ -29,9 +37,12 @@ export default function NavLinks({ signedIn = false, isOwner = false }: { signed
   // of HOUSEHOLDS_PLAN.md's "Watch history & stats") — any signed-in member,
   // not owner-only, unlike the OWNER_LINKS above. /account is the unified
   // account/household settings page (see HOUSEHOLDS_PLAN.md) — identity +
-  // household management in one place.
+  // household management in one place. /adult is gated on the self-service
+  // opt-in (see /account), not signedIn/isOwner — same UX-nicety-only
+  // posture as OWNER_LINKS.
   const links = [
     ...LINKS,
+    ...(hasAdultAccess ? [{ href: "/adult", label: "Adult" }] : []),
     ...(isOwner ? OWNER_LINKS : []),
     ...(signedIn ? [{ href: "/stats", label: "Stats" }, { href: "/account", label: "Account" }] : []),
   ];

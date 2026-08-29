@@ -17,9 +17,11 @@ interface RunsResponse {
   latestScanFilm: RunInfo | null;
   latestScanTv: RunInfo | null;
   latestScanMusic: RunInfo | null;
+  latestScanScene: RunInfo | null;
   latestEnrichFilm: RunInfo | null;
   latestEnrichTv: RunInfo | null;
   latestEnrichMusic: RunInfo | null;
+  latestEnrichScene: RunInfo | null;
   latestJellyfin: RunInfo | null;
   running: boolean;
 }
@@ -28,37 +30,52 @@ const EMPTY: RunsResponse = {
   latestScanFilm: null,
   latestScanTv: null,
   latestScanMusic: null,
+  latestScanScene: null,
   latestEnrichFilm: null,
   latestEnrichTv: null,
   latestEnrichMusic: null,
+  latestEnrichScene: null,
   latestJellyfin: null,
   running: false,
 };
 
-type OpKey = "scanFilm" | "scanTv" | "scanMusic" | "enrichFilm" | "enrichTv" | "enrichMusic";
+type OpKey =
+  | "scanFilm"
+  | "scanTv"
+  | "scanMusic"
+  | "scanScene"
+  | "enrichFilm"
+  | "enrichTv"
+  | "enrichMusic"
+  | "enrichScene";
 
 const OP_ENDPOINT: Record<OpKey, string> = {
   scanFilm: "/api/scan/film",
   scanTv: "/api/scan/tv",
   scanMusic: "/api/scan/music",
+  scanScene: "/api/scan/scene",
   enrichFilm: "/api/enrich/film",
   enrichTv: "/api/enrich/tv",
   enrichMusic: "/api/enrich-music",
+  enrichScene: "/api/enrich/scene",
 };
 
 const OP_RUN_KEY: Record<OpKey, Exclude<keyof RunsResponse, "running">> = {
   scanFilm: "latestScanFilm",
   scanTv: "latestScanTv",
   scanMusic: "latestScanMusic",
+  scanScene: "latestScanScene",
   enrichFilm: "latestEnrichFilm",
   enrichTv: "latestEnrichTv",
   enrichMusic: "latestEnrichMusic",
+  enrichScene: "latestEnrichScene",
 };
 
 const SECTIONS: { title: string; scan: OpKey; enrich: OpKey }[] = [
   { title: "Film", scan: "scanFilm", enrich: "enrichFilm" },
   { title: "TV Shows", scan: "scanTv", enrich: "enrichTv" },
   { title: "Music", scan: "scanMusic", enrich: "enrichMusic" },
+  { title: "Adult", scan: "scanScene", enrich: "enrichScene" },
 ];
 
 function relativeTime(iso: string | null): string {
@@ -176,6 +193,8 @@ export default function ScanControls() {
   const tmdbHint =
     (runs.latestEnrichFilm?.status === "FAILED" && runs.latestEnrichFilm.message?.includes("TMDB_API_KEY")) ||
     (runs.latestEnrichTv?.status === "FAILED" && runs.latestEnrichTv.message?.includes("TMDB_API_KEY"));
+  const theporndbHint =
+    runs.latestEnrichScene?.status === "FAILED" && runs.latestEnrichScene.message?.includes("THEPORNDB_API_KEY");
 
   return (
     <div className="flex flex-col gap-4">
@@ -184,6 +203,9 @@ export default function ScanControls() {
       )}
       {tmdbHint && (
         <p className="text-sm text-accent/80">Add TMDB_API_KEY to your environment to enable film/TV metadata fetching.</p>
+      )}
+      {theporndbHint && (
+        <p className="text-sm text-accent/80">Add THEPORNDB_API_KEY to your environment to enable Adult metadata fetching.</p>
       )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">

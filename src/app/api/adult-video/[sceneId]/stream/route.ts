@@ -1,20 +1,6 @@
-// GET /api/video/:versionId/stream — the actual video bytes.
-//
-// Self-starting: this alone is enough to play any file, regardless of tier.
-// A direct-playable file or an already-fully-prepared one is served with
-// normal byte-range support (full Content-Length, seeking works). A file
-// that needs preparing and hasn't been started yet gets kicked off right
-// here, and is streamed live as ffmpeg writes it (see video-cache.ts's
-// resolveVideoStream + tailing-stream.ts) rather than making the caller wait
-// for the whole thing — that wait was the entire problem with the previous
-// version of this route.
-//
-// Range requests are only honoured against a *complete* file. While a file
-// is still being generated, any Range header is ignored and the response
-// always starts from byte 0 with no Content-Length (chunked) — there's no
-// way to seek into video that doesn't exist yet, and the total length isn't
-// known until the write finishes. Once prepared, the normal fast path takes
-// over and full seeking works.
+// GET /api/adult-video/:sceneId/stream — see /api/video/:versionId/stream
+// for the full mechanism explanation; this is the scene-flavoured twin,
+// gated by requireAdultAccessOrResponse.
 
 import { NextResponse } from "next/server";
 import { promises as fsPromises, createReadStream } from "node:fs";
@@ -22,19 +8,23 @@ import { Readable } from "node:stream";
 import { resolveVideoStream, registerStreamReader } from "@/lib/video-cache";
 import { createTailingStream } from "@/lib/tailing-stream";
 import { parseRange } from "@/lib/http-range";
+import { requireAdultAccessOrResponse } from "@/lib/require-member";
 
 function fileToWebStream(readStream: Readable): ReadableStream<Uint8Array> {
   return Readable.toWeb(readStream) as ReadableStream<Uint8Array>;
 }
 
-export async function GET(req: Request, ctx: { params: Promise<{ versionId: string }> }) {
-  const { versionId: versionIdParam } = await ctx.params;
-  const versionId = Number(versionIdParam);
-  if (!Number.isInteger(versionId)) {
-    return NextResponse.json({ error: "invalid version id" }, { status: 400 });
+export async function GET(req: Request, ctx: { params: Promise<{ sceneId: string }> }) {
+  const gate = await requireAdultAccessOrResponse();
+  if (gate instanceof NextResponse) return gate;
+
+  const { sceneId: sceneIdParam } = await ctx.params;
+  const sceneId = Number(sceneIdParam);
+  if (!Number.isInteger(sceneId)) {
+    return NextResponse.json({ error: "invalid scene id" }, { status: 400 });
   }
 
-  const resolved = await resolveVideoStream("film", versionId);
+  const resolved = await resolveVideoStream("scene", sceneId);
 
   if (resolved.kind === "not-found") {
     return NextResponse.json({ error: "not found" }, { status: 404 });
@@ -43,8 +33,6 @@ export async function GET(req: Request, ctx: { params: Promise<{ versionId: stri
     return NextResponse.json({ error: resolved.message }, { status: 500 });
   }
   if (resolved.kind === "not-started") {
-    // ffmpeg hasn't even created its output file yet after a generous wait —
-    // essentially never expected in practice. Ask the client to retry.
     return NextResponse.json({ error: "not ready yet" }, { status: 503, headers: { "Retry-After": "2" } });
   }
 
@@ -53,10 +41,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ versionId: stri
       isDone: resolved.isDone,
       hasErrored: resolved.hasErrored,
     });
-    // Ties the underlying ffmpeg job's lifetime to whether anyone's actually
-    // still watching -- pausing doesn't fire this (the connection stays
-    // open), only a real disconnect does. See registerStreamReader.
-    nodeStream.once("close", registerStreamReader("film", versionId));
+    nodeStream.once("close", registerStreamReader("scene", sceneId));
     return new NextResponse(fileToWebStream(nodeStream), {
       status: 200,
       headers: {
