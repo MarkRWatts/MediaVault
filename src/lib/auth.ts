@@ -6,8 +6,9 @@
 // code. See HOUSEHOLDS_PLAN.md "Access codes & the web of trust" for the
 // full design — ported from jinglejotter.com's auth.ts.
 import { betterAuth } from "better-auth";
-import { emailOTP, organization } from "better-auth/plugins";
+import { emailOTP, jwt, organization } from "better-auth/plugins";
 import { nextCookies } from "better-auth/next-js";
+import { oauthProvider } from "@better-auth/oauth-provider";
 import { prismaAdapter } from "@better-auth/prisma-adapter";
 import { prisma } from "@/lib/db";
 import { isAllowedEmail } from "@/lib/allowed-email";
@@ -87,6 +88,20 @@ export const auth = betterAuth({
       // code involved.
       disableSignUp: false,
       sendVerificationOTP: sendSignInOTP,
+    }),
+    // Lets Jellyfin's jellyfin-plugin-sso authenticate against this
+    // BetterAuth instance as a generic OIDC provider, so household members
+    // sign into Jellyfin with their MediaVault account instead of a
+    // separate Jellyfin password — see HOUSEHOLDS_PLAN.md "Jellyfin SSO".
+    // jwt() is required by oauthProvider() for JWKS/ID-token signing.
+    // Jellyfin is registered once as a static, trusted OAuth client via
+    // scripts/register-jellyfin-client.ts (skip_consent: true), so
+    // /consent is never actually shown for it in practice — it's only
+    // wired up because oauthProvider() requires a consentPage regardless.
+    jwt(),
+    oauthProvider({
+      loginPage: "/signin",
+      consentPage: "/consent",
     }),
     // Required for the server-action sign-in/sign-out pattern Phase 4's
     // pages will use — without this, Set-Cookie headers from actions

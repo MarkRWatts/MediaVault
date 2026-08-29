@@ -17,6 +17,7 @@
 
 import { redirect } from "next/navigation";
 import { headers, cookies } from "next/headers";
+import { parseSetCookieHeader, toCookieOptions } from "better-auth/cookies";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { normalizeCode } from "@/lib/access";
@@ -60,7 +61,11 @@ export async function requestOTP(formData: FormData): Promise<void> {
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const name = String(formData.get("name") ?? "").trim().slice(0, 256);
   const callbackURL = safeCallbackURL(String(formData.get("callbackURL") ?? ""));
-  const params = `&callbackURL=${encodeURIComponent(callbackURL)}`;
+  // Present only for a Jellyfin-SSO-style sign-in (see /signin's own
+  // comment) — must ride every redirect this action makes back to /signin,
+  // or the OAuth flow silently drops back to a plain callbackURL sign-in.
+  const oauthQuery = String(formData.get("oauthQuery") ?? "");
+  const params = `&callbackURL=${encodeURIComponent(callbackURL)}${oauthQuery ? `&oauthQuery=${encodeURIComponent(oauthQuery)}` : ""}`;
   if (!email) redirect(`${page}?error=MissingEmail${params}`);
 
   try {
@@ -142,22 +147,79 @@ export async function verifyOTP(
   const otp = String(formData.get("otp") ?? "").trim();
   if (!otp) return { error: "Enter the code from your email." };
   const name = store.get(OTP_NAME_COOKIE)?.value;
+  // Present only when /signin was reached via BetterAuth's oauthProvider
+  // `loginPage` (a Jellyfin SSO sign-in, say) — see HOUSEHOLDS_PLAN.md
+  // "Jellyfin SSO".
+  const oauthQuery = String(formData.get("oauthQuery") ?? "") || undefined;
 
-  try {
-    await auth.api.signInEmailOTP({
-      // name only applies when this email has no account yet — an existing
-      // user's name is never touched by it.
-      body: { email, otp, name: name || undefined },
-      headers: await headers(),
+  let result: unknown;
+  if (oauthQuery) {
+    // oauthProvider's session-creation hook (the thing that turns
+    // oauth_query into a redirect back to the client) only runs for a
+    // request that actually goes through BetterAuth's HTTP handler —
+    // auth.api.signInEmailOTP() below calls the endpoint directly and
+    // silently skips it. So this one path goes over real HTTP instead,
+    // and forwards the response's Set-Cookie itself (nextCookies() only
+    // forwards cookies from the internal-call path, not this one) using
+    // the same parseSetCookieHeader/toCookieOptions it uses internally.
+    const reqHeaders = await headers();
+    const base = (process.env.BETTER_AUTH_URL ?? "").replace(/\/$/, "");
+    let res: Response;
+    try {
+      res = await fetch(`${base}/api/auth/sign-in/email-otp`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "user-agent": reqHeaders.get("user-agent") ?? "",
+        },
+        body: JSON.stringify({ email, otp, name: name || undefined, oauth_query: oauthQuery }),
+      });
+    } catch {
+      return { error: "That code didn't match — try again, or request a fresh one." };
+    }
+    if (!res.ok) return { error: "That code didn't match — try again, or request a fresh one." };
+
+    const setCookie = res.headers.getSetCookie?.().join(", ") ?? res.headers.get("set-cookie") ?? "";
+    const cookieStore = await cookies();
+    parseSetCookieHeader(setCookie).forEach((value, name) => {
+      if (!name) return;
+      cookieStore.set(name, value.value, toCookieOptions(value));
     });
-  } catch {
-    // Wrong, expired, too many attempts, or (for a stranger who was never
-    // actually emailed) no OTP at all — one message covers them all.
-    return { error: "That code didn't match — try again, or request a fresh one." };
+    result = await res.json();
+  } else {
+    try {
+      result = await auth.api.signInEmailOTP({
+        // name only applies when this email has no account yet — an
+        // existing user's name is never touched by it.
+        body: { email, otp, name: name || undefined },
+        headers: await headers(),
+      });
+    } catch {
+      // Wrong, expired, too many attempts, or (for a stranger who was
+      // never actually emailed) no OTP at all — one message covers them
+      // all.
+      return { error: "That code didn't match — try again, or request a fresh one." };
+    }
   }
 
   store.delete(OTP_EMAIL_COOKIE);
   store.delete(OTP_NAME_COOKIE);
+
+  // oauthProvider's session-creation hook replaces the normal response with
+  // a redirect (to the consent page, or straight to the client's
+  // redirect_uri) whenever oauth_query was supplied above — follow it
+  // instead of this app's own callbackURL/onboarding logic.
+  if (
+    result &&
+    typeof result === "object" &&
+    "redirect" in result &&
+    result.redirect === true &&
+    "url" in result &&
+    typeof result.url === "string"
+  ) {
+    redirect(result.url);
+  }
+
   const cameFromSignup = Boolean(store.get(SIGNUP_CODE_COOKIE)?.value);
   redirect(
     cameFromSignup ? "/onboarding" : safeCallbackURL(String(formData.get("callbackURL") ?? "")),

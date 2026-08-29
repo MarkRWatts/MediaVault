@@ -110,6 +110,29 @@ A sync job matches Jellyfin items to files by path (Unicode-normalized, so
 macOS-scanned NFD paths match Linux NFC ones), runs automatically after every
 scan, and powers the per-version/per-episode "Play in Jellyfin" links.
 
+### Jellyfin SSO (optional)
+
+Lets household members sign into Jellyfin with their MediaVault account
+instead of a separate Jellyfin password, via
+[jellyfin-plugin-sso](https://github.com/9p4/jellyfin-plugin-sso). No new
+env vars — `BETTER_AUTH_URL`/`BETTER_AUTH_SECRET` (below) already cover it.
+
+One-time setup, from `/admin`'s "Integrations" section (app owner only):
+
+1. Install jellyfin-plugin-sso on the Jellyfin server if it isn't already.
+2. In MediaVault's `/admin`, enter Jellyfin's SSO redirect URI — of the form
+   `https://<jellyfin-host>/sso/OID/redirect/<ProviderName>` — and submit.
+   You get back a `client_id`/`client_secret`, shown once.
+3. In jellyfin-plugin-sso's provider config, set the OIDC endpoint to
+   `{BETTER_AUTH_URL}/api/auth` (jellyfin-plugin-sso appends
+   `/.well-known/openid-configuration` itself) and paste in the
+   `client_id`/`client_secret` from step 2. Requires `BETTER_AUTH_URL` to be
+   a real, publicly reachable HTTPS URL — discovery won't work over plain
+   HTTP or `localhost`.
+
+See `HOUSEHOLDS_PLAN.md` "Post-deploy addition: Jellyfin SSO" for the
+implementation notes.
+
 ## Development
 
 ```bash

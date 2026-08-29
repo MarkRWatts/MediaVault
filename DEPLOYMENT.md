@@ -81,6 +81,12 @@ docker compose --env-file .env.docker -f docker-compose.yml -f docker-compose.pr
 
 Then scan the movie share and enrich with TMDB data from a browser on a LAN device (the `/report` page shows progress).
 
+### 6. Jellyfin SSO (optional, one-time)
+
+Only possible once the app is up and reachable over its real HTTPS URL —
+OIDC discovery requires that. See README.md "Jellyfin SSO (optional)" for
+the setup steps (a form on `/admin`, run once per Jellyfin instance).
+
 ## Updating the deployment
 
 On the VM:

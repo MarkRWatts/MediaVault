@@ -15,13 +15,48 @@ import { SubmitButton } from "./submit-button";
 // to MediaVault's dark, poster-forward palette instead of that app's
 // cream/berry Christmas chrome.
 
+// This is also BetterAuth's oauthProvider `loginPage` (see auth.ts) —
+// Jellyfin's SSO plugin sends an unauthenticated visitor here with a
+// *signed* query string (client_id, scope, redirect_uri, sig, ...) instead
+// of a plain callbackURL. That signed blob must round-trip through the OTP
+// flow byte-for-byte (any extra/missing key breaks its signature), so it's
+// kept in its own `oauthQuery` field the whole way, never merged with this
+// page's own params. See HOUSEHOLDS_PLAN.md "Jellyfin SSO".
+const OWN_PARAM_NAMES = new Set(["error", "otp", "callbackURL", "oauthQuery"]);
+
+function firstValue(v: string | string[] | undefined): string | undefined {
+  return Array.isArray(v) ? v[0] : v;
+}
+
+function serializeExcept(
+  params: Record<string, string | string[] | undefined>,
+  exclude: Set<string>,
+): string {
+  const out = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (exclude.has(key) || value === undefined) continue;
+    for (const v of Array.isArray(value) ? value : [value]) out.append(key, v);
+  }
+  return out.toString();
+}
+
 export default async function SignInPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string; otp?: string; callbackURL?: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const { error, otp, callbackURL: callbackURLRaw } = await searchParams;
-  const callbackURL = safeCallbackURL(callbackURLRaw);
+  const rawParams = await searchParams;
+  const error = firstValue(rawParams.error);
+  const otp = firstValue(rawParams.otp);
+  const callbackURL = safeCallbackURL(firstValue(rawParams.callbackURL));
+  // A fresh oauth-provider redirect (step 1) carries the signed query
+  // directly in the URL; step 2's reload carries it back out as the single
+  // `oauthQuery` field set below. `sig` is always present on a signed
+  // redirect and never a param MediaVault itself sets, so its presence is
+  // what distinguishes "fresh oauth redirect" from "plain sign-in".
+  const oauthQuery =
+    firstValue(rawParams.oauthQuery) ??
+    (rawParams.sig ? serializeExcept(rawParams, OWN_PARAM_NAMES) : undefined);
 
   // Real (database-validated) session check — a genuinely signed-in user
   // skips the sign-in page. Deliberately NOT done in proxy.ts: its
@@ -60,17 +95,20 @@ export default async function SignInPage({
               <span className="font-semibold text-text">{otpEmail}</span>. It expires in 10
               minutes.
             </p>
-            <OTPForm callbackURL={callbackURL} />
+            <OTPForm callbackURL={callbackURL} oauthQuery={oauthQuery} />
             <div className="flex items-center gap-4 text-xs text-text-faint">
               <form action={requestOTP}>
                 <input type="hidden" name="email" value={otpEmail} />
                 <input type="hidden" name="callbackURL" value={callbackURL} />
+                {oauthQuery !== undefined && (
+                  <input type="hidden" name="oauthQuery" value={oauthQuery} />
+                )}
                 <button type="submit" className="underline-offset-2 hover:text-text-muted hover:underline">
                   Resend the code
                 </button>
               </form>
               <Link
-                href={`/signin?callbackURL=${encodeURIComponent(callbackURL)}`}
+                href={`/signin?callbackURL=${encodeURIComponent(callbackURL)}${oauthQuery !== undefined ? `&oauthQuery=${encodeURIComponent(oauthQuery)}` : ""}`}
                 className="underline-offset-2 hover:text-text-muted hover:underline"
               >
                 Use a different email
@@ -81,6 +119,9 @@ export default async function SignInPage({
           <>
             <form action={requestOTP} className="flex w-full flex-col gap-3">
               <input type="hidden" name="callbackURL" value={callbackURL} />
+              {oauthQuery !== undefined && (
+                <input type="hidden" name="oauthQuery" value={oauthQuery} />
+              )}
               <input
                 type="email"
                 name="email"
