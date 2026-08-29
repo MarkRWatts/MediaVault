@@ -47,7 +47,8 @@ type OpKey =
   | "enrichFilm"
   | "enrichTv"
   | "enrichMusic"
-  | "enrichScene";
+  | "enrichScene"
+  | "jellyfinSync";
 
 const OP_ENDPOINT: Record<OpKey, string> = {
   scanFilm: "/api/scan/film",
@@ -58,6 +59,7 @@ const OP_ENDPOINT: Record<OpKey, string> = {
   enrichTv: "/api/enrich/tv",
   enrichMusic: "/api/enrich-music",
   enrichScene: "/api/enrich/scene",
+  jellyfinSync: "/api/jellyfin-sync",
 };
 
 const OP_RUN_KEY: Record<OpKey, Exclude<keyof RunsResponse, "running">> = {
@@ -69,6 +71,7 @@ const OP_RUN_KEY: Record<OpKey, Exclude<keyof RunsResponse, "running">> = {
   enrichTv: "latestEnrichTv",
   enrichMusic: "latestEnrichMusic",
   enrichScene: "latestEnrichScene",
+  jellyfinSync: "latestJellyfin",
 };
 
 const SECTIONS: { title: string; scan: OpKey; enrich: OpKey }[] = [
@@ -257,19 +260,29 @@ export default function ScanControls() {
         })}
       </div>
 
-      {runs.latestJellyfin && (
-        <p className="text-xs text-text-faint">
-          Jellyfin sync runs automatically after each scan — last run:{" "}
-          {runs.latestJellyfin.status === "RUNNING" ? (
-            "syncing…"
-          ) : (
-            <>
-              {runs.latestJellyfin.status === "FAILED" ? <span className="text-missing">failed</span> : "done"} ·{" "}
-              {relativeTime(runs.latestJellyfin.finishedAt ?? runs.latestJellyfin.startedAt)}
-            </>
-          )}
-        </p>
-      )}
+      <div className="flex flex-col gap-2 rounded-lg border border-border bg-bg-elevated p-4">
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <h3 className="font-display text-sm tracking-wide text-text">Jellyfin</h3>
+            <p className="mt-0.5 text-xs text-text-faint">
+              Matches films/episodes/scenes to Jellyfin library items by path — runs automatically
+              after each scan, or trigger it directly (e.g. after renaming files on the share, or
+              adding new Adult scenes) without a full rescan.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => trigger("jellyfinSync")}
+            disabled={runs.latestJellyfin?.status === "RUNNING" || pending === "jellyfinSync"}
+            className="inline-flex min-h-9 shrink-0 items-center justify-center rounded-md border border-border px-3 py-1.5 text-xs font-medium tracking-wide text-text-muted transition-colors hover:border-border-strong hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Relink Jellyfin
+          </button>
+        </div>
+        <div className="text-xs" aria-live="polite">
+          <StatusLine run={runs.latestJellyfin} activeLabel="Syncing" />
+        </div>
+      </div>
     </div>
   );
 }
