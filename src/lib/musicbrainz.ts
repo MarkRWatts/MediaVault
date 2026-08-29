@@ -358,9 +358,10 @@ export interface TitleSearchAlbum {
   coverArtUrl: string;
 }
 
-// A short stoplist for titleOverlap below — dropped from both sides before
-// comparing so a shared "the"/"of" doesn't inflate an otherwise-unrelated
-// match (see the Wombles case in titleOverlap's own comment).
+// A short stoplist for sharedTitleWordCount below — dropped from both sides
+// before comparing so a shared "the"/"of" doesn't inflate an otherwise-
+// unrelated match (see the Wombles case in sharedTitleWordCount's own
+// comment).
 const TITLE_STOPWORDS = new Set(["the", "a", "an", "of", "and", "in", "on"]);
 
 function titleWords(title: string): string[] {
@@ -370,22 +371,23 @@ function titleWords(title: string): string[] {
 }
 
 /**
- * Fraction of the shorter title's (stopword-stripped) words that also
- * appear in the other title — same-or-prefix, length >= 4, so cross-catalog
- * inflection/translation drift still counts as a match (Discogs "Renaissance
- * Of The Celtic Harp" vs MusicBrainz's French "Renaissance de la harpe
- * celtique": harp/harpe and celtic/celtique both prefix-match) without
- * pulling in a real stemming library. Used only by searchReleaseGroupAnchor
- * below, to reject a same-artist result that shares nothing with the
- * searched title (e.g. "Sing Hits Of The Wombles" search that MusicBrainz
- * has no entry for at all still hands back *some* top hit by that artist —
- * "The Paris & Italian Suites" — which must not be silently accepted as the
- * anchor just because the artist matched).
+ * How many (stopword-stripped) words two titles share — same-or-prefix,
+ * length >= 4, so cross-catalog inflection/translation drift still counts as
+ * a match (Discogs "Renaissance Of The Celtic Harp" vs MusicBrainz's French
+ * "Renaissance de la harpe celtique": harp/harpe and celtic/celtique both
+ * prefix-match) without pulling in a real stemming library. Used only by
+ * searchReleaseGroupAnchor below, whose two ratios built from this reject
+ * two different false-positive shapes: a same-artist result that shares
+ * nothing with the searched title at all (e.g. "Sing Hits Of The Wombles"
+ * search that MusicBrainz has no entry for still hands back *some* top hit
+ * by that artist — "The Paris & Italian Suites" — which must not be
+ * silently accepted just because the artist matched), and a short/generic
+ * searched title that coincidentally appears inside an unrelated longer one
+ * (see ANCHOR_MAX_SIDE_OVERLAP_THRESHOLD below).
  */
-function titleOverlap(a: string, b: string): number {
+function sharedTitleWordCount(a: string, b: string): { shared: number; sizeA: number; sizeB: number } {
   const wordsA = titleWords(a);
   const wordsB = titleWords(b);
-  if (wordsA.length === 0 || wordsB.length === 0) return 0;
   const [smaller, larger] = wordsA.length <= wordsB.length ? [wordsA, wordsB] : [wordsB, wordsA];
 
   let shared = 0;
@@ -394,10 +396,22 @@ function titleOverlap(a: string, b: string): number {
       shared++;
     }
   }
-  return shared / smaller.length;
+  return { shared, sizeA: wordsA.length, sizeB: wordsB.length };
 }
 
 const ANCHOR_OVERLAP_THRESHOLD = 0.5;
+// A second, looser-sounding but necessary bound on the SAME shared-word
+// count, this time relative to the LONGER title. Without it, a one- or
+// two-word searched title ("80s") trivially clears ANCHOR_OVERLAP_THRESHOLD
+// against any candidate that merely contains that word anywhere — e.g.
+// "80s Classics 80s Pop 80s Bangers 80s Songs", an unrelated multi-genre
+// compilation — since the ratio is computed against the *shorter* (1-word)
+// side. Requiring the shared words also cover a meaningful fraction of the
+// longer title rejects that kind of coincidental containment while still
+// passing every genuine match this module's tests cover (the tightest,
+// Vera Lynn's "Wonderful World Of Nursery Rhymes" -> "Nursery Rhymes Sung by
+// Vera Lynn", clears it at 2/6 ≈ 0.33).
+const ANCHOR_MAX_SIDE_OVERLAP_THRESHOLD = 0.25;
 // How many years apart a "Various Artists" anchor candidate's own
 // first-release-date may be from the searched item's year before it's
 // rejected — see the isVariousArtists branch below for why this only
@@ -415,13 +429,15 @@ const ANCHOR_COMP_YEAR_TOLERANCE = 2;
  * subtitle, a translated title for a non-English release — see this
  * function's test cases in the "paste Discogs links" work), and the
  * artist stays an exact quoted match, same as before. The recall trade is
- * only safe because of the titleOverlap check below: without it, a search
- * that matches on artist alone but has no real title hit would still hand
- * back that artist's top-ranked release and get silently, wrongly, anchored
+ * only safe because of the two word-overlap ratios (ANCHOR_OVERLAP_THRESHOLD,
+ * ANCHOR_MAX_SIDE_OVERLAP_THRESHOLD) checked below: without them, a search
+ * that matches on artist alone but has no real title hit — or a short/
+ * generic searched title that merely appears inside an unrelated longer
+ * one — would still hand back a wrong release and get silently anchored
  * to it.
  *
- * A second, narrower guard covers a failure mode titleOverlap can't catch
- * at all: a generic "Various Artists" compilation title ("The Rock Album",
+ * A third, narrower guard covers a failure mode the word-overlap ratios
+ * can't catch at all: a generic "Various Artists" compilation title ("The Rock Album",
  * "80s") is reused verbatim by many unrelated budget-label compilations
  * across different years — MusicBrainz's relevance ranking has no reason to
  * prefer the one that's actually this pressing, so a 100%-overlap title
@@ -458,7 +474,14 @@ export async function searchReleaseGroupAnchor(
         coverArtUrl: `https://coverartarchive.org/release-group/${rg.id}/front-250`,
       };
     })
-    .filter((rg) => titleOverlap(title, rg.title) >= ANCHOR_OVERLAP_THRESHOLD)
+    .filter((rg) => {
+      const { shared, sizeA, sizeB } = sharedTitleWordCount(title, rg.title);
+      if (sizeA === 0 || sizeB === 0) return false;
+      return (
+        shared / Math.min(sizeA, sizeB) >= ANCHOR_OVERLAP_THRESHOLD &&
+        shared / Math.max(sizeA, sizeB) >= ANCHOR_MAX_SIDE_OVERLAP_THRESHOLD
+      );
+    })
     .filter((rg) => {
       if (!isVariousArtists || year == null || rg.year == null) return true;
       return Math.abs(rg.year - year) <= ANCHOR_COMP_YEAR_TOLERANCE;
