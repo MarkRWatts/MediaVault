@@ -408,11 +408,247 @@ function TitleSearchWidget({
   );
 }
 
+// Match Discogs release URLs anywhere in a pasted blob of text — the client
+// mirrors the server's DISCOGS_URL_RE (src/lib/discogs.ts) rather than
+// importing it, since that module also pulls in the Discogs fetch helpers
+// (fine server-side, unnecessary to ship to the browser).
+const DISCOGS_URL_PATTERN = /discogs\.com\/release\/\d+[^\s,]*/gi;
+
+function parseDiscogsUrls(text: string): string[] {
+  const matches = text.match(DISCOGS_URL_PATTERN) ?? [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const m of matches) {
+    if (!seen.has(m)) {
+      seen.add(m);
+      out.push(m);
+    }
+  }
+  return out;
+}
+
+interface DiscogsRow {
+  url: string;
+  status: "pending" | "resolved" | "error";
+  result?: LookupResult;
+  error?: string;
+  // Only meaningful once result.status === "not_owned" — set alongside the
+  // result itself (see resolveAll) rather than derived in an effect, so the
+  // medium guess is a plain part of the row's state instead of a second
+  // render triggered off the first.
+  medium?: (typeof ALBUM_MEDIA)[number];
+}
+
+// One resolved (or resolving) pasted Discogs link — mirrors QueueRow's
+// not-owned-album branch, but scoped to albums only since a Discogs release
+// URL never refers to a film.
+function DiscogsRowView({
+  row,
+  onMediumChange,
+  onRemove,
+}: {
+  row: DiscogsRow;
+  onMediumChange: (medium: (typeof ALBUM_MEDIA)[number]) => void;
+  onRemove: () => void;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [added, setAdded] = useState<AddedRef | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleAdd = async () => {
+    if (row.result?.status !== "not_owned" || row.result.type !== "album") return;
+    setAdding(true);
+    setError(null);
+    try {
+      const ref = await addCandidate({ kind: "album", candidate: row.result.candidate }, row.medium ?? "VINYL");
+      setAdded(ref);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Add failed");
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const thumb = row.status === "resolved" && row.result && row.result.status !== "unknown" ? thumbFor(row.result) : null;
+
+  return (
+    <div className="flex items-start gap-3 rounded-md border border-border px-3 py-2">
+      {thumb ? (
+        <Thumb src={thumb.src} title={thumb.title} year={thumb.year} aspect={thumb.aspect} />
+      ) : (
+        <div className="flex aspect-square w-14 shrink-0 items-center justify-center rounded border border-border bg-bg text-text-faint">
+          <span className="text-[10px]">···</span>
+        </div>
+      )}
+
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <span className="truncate text-[11px] text-text-faint">{row.url}</span>
+
+        {row.status === "pending" && <p className="text-xs text-text-muted">Looking up…</p>}
+        {row.status === "error" && <p className="text-xs text-missing">{row.error ?? "Lookup failed"}</p>}
+
+        {row.status === "resolved" && row.result?.status === "owned" && row.result.type === "album" && (
+          <Link href={`/music/album/${row.result.album.id}`} className="text-sm text-accent hover:underline">
+            Already owned — {row.result.album.artistName} — {row.result.album.title}
+          </Link>
+        )}
+
+        {row.status === "resolved" && row.result?.status === "unknown" && (
+          <p className="text-xs text-text-faint">
+            No MusicBrainz match for this release — try &ldquo;Search by title&rdquo; in Single scan mode instead.
+          </p>
+        )}
+
+        {row.status === "resolved" && row.result?.status === "not_owned" && row.result.type === "album" && !added && (
+          <>
+            <span className="text-xs text-text">
+              {row.result.candidate.artistName} — {row.result.candidate.title}{" "}
+              {row.result.candidate.year ? `(${row.result.candidate.year})` : ""}
+            </span>
+            <div className="flex items-center gap-1.5">
+              <select
+                value={row.medium ?? "VINYL"}
+                onChange={(e) => onMediumChange(e.target.value as (typeof ALBUM_MEDIA)[number])}
+                className="rounded border border-border bg-bg px-1.5 py-1 text-xs text-text"
+              >
+                {ALBUM_MEDIA.map((m) => (
+                  <option key={m} value={m}>
+                    {m === "VINYL" ? "Vinyl" : "CD"}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={adding}
+                onClick={handleAdd}
+                className="rounded border border-accent px-2 py-1 text-xs font-medium text-accent transition-colors hover:bg-accent/10 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {adding ? "Adding…" : "Add"}
+              </button>
+            </div>
+          </>
+        )}
+
+        {added && (
+          <Link href={added.href} className="text-xs text-accent hover:underline">
+            Added — view {added.label}
+          </Link>
+        )}
+
+        {error && <p className="text-xs text-missing">{error}</p>}
+      </div>
+
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label={`Remove ${row.url}`}
+        className="shrink-0 text-text-faint hover:text-text"
+      >
+        ×
+      </button>
+    </div>
+  );
+}
+
+// Bulk-add tool: paste one or more Discogs release URLs (any mix of
+// newlines/spaces/surrounding text) and resolve each to "already owned" or
+// an addable candidate, same shape as a batch barcode scan. Resolved
+// sequentially rather than in parallel — Discogs' unauthenticated rate limit
+// is a modest 25/min (see discogs.ts), and a big paste shouldn't burst it.
+function DiscogsPasteWidget() {
+  const [text, setText] = useState("");
+  const [rows, setRows] = useState<DiscogsRow[]>([]);
+  const [resolving, setResolving] = useState(false);
+
+  const resolveAll = async () => {
+    const urls = parseDiscogsUrls(text).filter((u) => !rows.some((r) => r.url === u));
+    if (urls.length === 0) return;
+    setText("");
+    setRows((prev) => [...prev, ...urls.map((url) => ({ url, status: "pending" as const }))]);
+    setResolving(true);
+    for (const url of urls) {
+      try {
+        const res = await fetch("/api/barcode/discogs-lookup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        const result = data as LookupResult;
+        const medium =
+          result.status === "not_owned" && result.type === "album" ? guessAlbumMedium(result.candidate.format) : undefined;
+        setRows((prev) => prev.map((r) => (r.url === url ? { ...r, status: "resolved", result, medium } : r)));
+      } catch (err) {
+        setRows((prev) =>
+          prev.map((r) =>
+            r.url === url ? { ...r, status: "error", error: err instanceof Error ? err.message : "Lookup failed" } : r,
+          ),
+        );
+      }
+    }
+    setResolving(false);
+  };
+
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-border bg-bg-elevated p-4">
+      <div className="flex flex-col gap-1">
+        <h2 className="text-sm font-semibold text-text">Paste Discogs links</h2>
+        <p className="text-xs text-text-faint">
+          Paste one or more discogs.com/release/... URLs — a whole block of text works too, only the links in it are
+          picked out.
+        </p>
+      </div>
+
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          resolveAll();
+        }}
+        className="flex flex-col gap-2"
+      >
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="https://www.discogs.com/release/1366170-Pulp-This-Is-Hardcore"
+          rows={3}
+          className="rounded-md border border-border bg-bg px-3 py-1.5 text-sm text-text placeholder:text-text-faint focus-visible:outline-none"
+        />
+        <button
+          type="submit"
+          disabled={resolving || !text.trim()}
+          className="inline-flex min-h-10 items-center justify-center self-start rounded-md border border-border px-3 py-1 text-sm font-medium text-text-muted transition-colors hover:border-border-strong hover:text-text disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0"
+        >
+          {resolving ? "Resolving…" : "Resolve"}
+        </button>
+      </form>
+
+      {rows.length > 0 && (
+        <div className="flex flex-col gap-2">
+          {rows
+            .slice()
+            .reverse()
+            .map((row) => (
+              <DiscogsRowView
+                key={row.url}
+                row={row}
+                onMediumChange={(medium) =>
+                  setRows((prev) => prev.map((r) => (r.url === row.url ? { ...r, medium } : r)))
+                }
+                onRemove={() => setRows((prev) => prev.filter((r) => r.url !== row.url))}
+              />
+            ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function ScanPageClient() {
   const videoRef = useRef<HTMLVideoElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const controlsRef = useRef<any>(null);
-  const [mode, setMode] = useState<"single" | "batch">("single");
+  const [mode, setMode] = useState<"single" | "batch" | "discogs">("single");
   const [mediaType, setMediaType] = useState<MediaType>("auto");
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
@@ -712,6 +948,7 @@ export default function ScanPageClient() {
           [
             { key: "single", label: "Single scan" },
             { key: "batch", label: "Batch scan" },
+            { key: "discogs", label: "Paste Discogs links" },
           ] as const
         ).map((m) => (
           <button
@@ -733,6 +970,7 @@ export default function ScanPageClient() {
         )}
       </div>
 
+      {mode !== "discogs" && (
       <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="What are you adding?">
         <span className="text-xs text-text-faint">Adding:</span>
         {(
@@ -762,6 +1000,7 @@ export default function ScanPageClient() {
           </span>
         )}
       </div>
+      )}
 
       {mode === "single" && !barcode && (
         <div className="flex flex-col gap-3">
@@ -1007,6 +1246,8 @@ export default function ScanPageClient() {
       )}
 
       {mode === "single" && <TitleSearchWidget defaultType="film" />}
+
+      {mode === "discogs" && <DiscogsPasteWidget />}
     </div>
   );
 }

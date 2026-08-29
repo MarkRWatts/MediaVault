@@ -4,8 +4,8 @@
 // rationale on why the music/movie paths are split and run concurrently.
 
 import { prisma } from "@/lib/db";
-import { searchReleaseByBarcode, searchReleaseGroupsByTitle } from "@/lib/musicbrainz";
-import { searchDiscogsByBarcode } from "@/lib/discogs";
+import { searchReleaseByBarcode, searchReleaseGroupsByTitle, type TitleSearchAlbum } from "@/lib/musicbrainz";
+import { searchDiscogsByBarcode, fetchDiscogsRelease, DISCOGS_URL_RE } from "@/lib/discogs";
 import { searchMovieByTitleYear } from "@/lib/tmdb";
 import { lookupMovieByBarcode } from "@/lib/barcode-lookup";
 import { guessAlbumMedium } from "@/lib/album-medium";
@@ -22,6 +22,24 @@ interface MusicBarcodeHit {
   year: number | null;
   format: string | null;
   coverArtUrl: string;
+}
+
+/**
+ * Pick which title+artist search hit to anchor a Discogs-only release to.
+ * MusicBrainz's own relevance ranking (anchors[0]) doesn't know this library
+ * may already have a *different* release-group on file for what is really
+ * the same record — a promo/EP/compilation variant can outrank the
+ * originally-enriched one in a free-text search. Preferring whichever
+ * candidate already has an Album row here avoids spawning a duplicate Album
+ * for a pressing that's actually already owned (just on another medium).
+ */
+async function pickAnchor(anchors: TitleSearchAlbum[]): Promise<TitleSearchAlbum | undefined> {
+  if (anchors.length === 0) return undefined;
+  const owned = await prisma.album.findFirst({
+    where: { mbid: { in: anchors.map((a) => a.mbid) } },
+    select: { mbid: true },
+  });
+  return anchors.find((a) => a.mbid === owned?.mbid) ?? anchors[0];
 }
 
 async function buildMusicResult(hit: MusicBarcodeHit): Promise<LookupResult> {
@@ -107,7 +125,7 @@ export async function resolveMusic(barcode: string): Promise<LookupResult | null
     if (!discogsHit) return null;
 
     const anchors = await searchReleaseGroupsByTitle(discogsHit.title, discogsHit.artistName);
-    const anchor = anchors[0];
+    const anchor = await pickAnchor(anchors);
     if (!anchor) return null;
 
     return await buildMusicResult({
@@ -125,6 +143,41 @@ export async function resolveMusic(barcode: string): Promise<LookupResult | null
     // movie path may still resolve.
     return null;
   }
+}
+
+/**
+ * Resolve a pasted Discogs release URL to "already owned" or a not-owned
+ * candidate to add — the Scan page's "paste Discogs links" bulk-add tool.
+ * Mirrors resolveMusic's own Discogs-fallback branch: a Discogs release has
+ * no MusicBrainz release-group of its own, so one is found by title+artist
+ * search to anchor the Album row the rest of this app's enrichment expects.
+ * If MusicBrainz has never heard of this artist/album at all, there's
+ * nothing safe to auto-create and this returns "unknown", same tier of miss
+ * as an unresolvable barcode. Unlike resolveMusic, network failures are left
+ * to propagate — a pasted-URL lookup is a one-off, explicit action, so the
+ * caller should surface "Discogs lookup failed" rather than silently
+ * swallowing it into a misleading "unknown".
+ */
+export async function resolveDiscogsUrl(url: string): Promise<LookupResult> {
+  const match = DISCOGS_URL_RE.exec(url.trim());
+  if (!match) return { status: "unknown" };
+  const discogsReleaseId = Number(match[1]);
+
+  const release = await fetchDiscogsRelease(discogsReleaseId);
+  const anchors = await searchReleaseGroupsByTitle(release.title, release.artistName);
+  const anchor = await pickAnchor(anchors);
+  if (!anchor) return { status: "unknown" };
+
+  return await buildMusicResult({
+    releaseGroupMbid: anchor.mbid,
+    releaseMbid: null,
+    discogsReleaseId,
+    title: release.title,
+    artistName: release.artistName,
+    year: release.year,
+    format: release.format,
+    coverArtUrl: release.coverUrl ?? anchor.coverArtUrl,
+  });
 }
 
 export async function resolveMovie(barcode: string): Promise<LookupResult | null> {
