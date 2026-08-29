@@ -215,7 +215,18 @@ async function enrichOneScene(scene: Scene, log: string[]): Promise<void> {
   });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const results: any[] = Array.isArray(searched?.data) ? searched.data : [];
+  let results: any[] = Array.isArray(searched?.data) ? searched.data : [];
+
+  // TPDB's hash param appears to sometimes suppress otherwise-good title
+  // matches when the hash doesn't correspond to a known encode (confirmed
+  // live: identical title-only query returns a match, adding a real-but-
+  // unrecognized oshash zeroes it out) — retry title-only before giving up,
+  // so a locally re-encoded file doesn't lose a match it would otherwise get.
+  if (results.length === 0 && oshash) {
+    const retried = await tpdbFetch("/scenes", { parse: query, hash: "", year: "" });
+    results = Array.isArray(retried?.data) ? retried.data : [];
+  }
+
   if (results.length === 0) {
     if (scene.matchConfidence !== "UNMATCHED") {
       await prisma.scene.update({ where: { id: scene.id }, data: { matchConfidence: "UNMATCHED" } });
