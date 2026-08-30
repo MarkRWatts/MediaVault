@@ -521,8 +521,9 @@ export default function AlbumPlayer({
             />
             <div className="min-w-0">
               <p className="truncate text-sm font-medium text-text">{currentTrack.title}</p>
-              <p className="truncate text-xs text-format-digital">
-                {artistName} · {albumTitle}
+              <p className="truncate text-xs">
+                <span className="text-format-digital">{artistName}</span>
+                <span className="text-text-muted"> · {albumTitle}</span>
               </p>
             </div>
           </div>
