@@ -77,7 +77,7 @@ function StatTile({
   return (
     <Tile>
       <span className={`text-[10px] font-semibold uppercase tracking-widest ${color}`}>{label}</span>
-      <div className="flex min-h-10 flex-col">
+      <div className="flex min-h-15 flex-col">
         {visible.length > 0 ? (
           visible.map((line, i) => (
             <span key={i} className="text-sm text-text">
@@ -130,7 +130,7 @@ function DigitalSummary({
         />
         <Tile>
           <span className={`text-[10px] font-semibold uppercase tracking-widest ${color.text}`}>Pressing</span>
-          <div className="flex min-h-10 flex-col justify-center">
+          <div className="flex min-h-15 flex-col justify-center">
             <DigitalSourceForm albumId={albumId} initial={digitalSource} />
           </div>
         </Tile>
