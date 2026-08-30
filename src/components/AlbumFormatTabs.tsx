@@ -79,7 +79,7 @@ function PressingTile({
   return (
     <Tile>
       <span className={`text-[10px] font-semibold uppercase tracking-widest ${color}`}>Pressing</span>
-      <div className="flex min-h-16 flex-col justify-between gap-2">
+      <div className="flex min-h-16 flex-col justify-between gap-1">
         <div className="flex flex-col">{children}</div>
         {discogsUrl && (
           <a

@@ -42,7 +42,7 @@ export default function DigitalSourceForm({
   };
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex flex-col gap-1">
       <label htmlFor="digital-source" className="text-xs font-medium text-text-muted">
         Digital source
       </label>
@@ -51,7 +51,7 @@ export default function DigitalSourceForm({
         value={value}
         disabled={isSaving}
         onChange={(e) => handleChange(e.target.value)}
-        className="rounded border border-border bg-bg-elevated px-2 py-1 text-xs text-text disabled:cursor-not-allowed disabled:opacity-40"
+        className="w-fit rounded border border-border bg-bg-elevated px-2 py-1 text-xs text-text disabled:cursor-not-allowed disabled:opacity-40"
       >
         <option value="">Unconfirmed</option>
         {DIGITAL_SOURCES.map((s: DigitalSource) => (
