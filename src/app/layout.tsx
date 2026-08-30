@@ -1,18 +1,15 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
-import { Bebas_Neue, Inter, JetBrains_Mono } from "next/font/google";
+import { Fredoka, JetBrains_Mono } from "next/font/google";
 import Nav from "@/components/Nav";
 import { isPreAuthPath } from "@/lib/public-paths";
 import "./globals.css";
 
-const bebas = Bebas_Neue({
-  variable: "--font-bebas",
-  weight: "400",
-  subsets: ["latin"],
-});
-
-const inter = Inter({
-  variable: "--font-inter",
+// Used for both --font-display and --font-sans (see globals.css) — one
+// variable-weight family, differentiated by size/tracking/weight utility
+// classes rather than by a separate display face.
+const fredoka = Fredoka({
+  variable: "--font-fredoka",
   subsets: ["latin"],
 });
 
@@ -39,7 +36,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
-      className={`${bebas.variable} ${inter.variable} ${jbMono.variable} h-full`}
+      className={`${fredoka.variable} ${jbMono.variable} h-full`}
     >
       <body className="min-h-full flex flex-col antialiased">
         {showNav && <Nav />}

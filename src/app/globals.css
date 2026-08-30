@@ -103,8 +103,8 @@
   --color-audio-dts-bg: var(--audio-dts-bg);
   --color-audio-dts-border: var(--audio-dts-border);
 
-  --font-display: var(--font-bebas), "Arial Narrow", sans-serif;
-  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-fredoka), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-fredoka), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-jbmono), ui-monospace, "SF Mono", monospace;
 }
 
