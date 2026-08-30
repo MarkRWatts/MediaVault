@@ -697,6 +697,15 @@ function entryIdentity(entry: DiscographyEntry): { discogsMasterId: number | nul
     : { discogsMasterId: null, discogsReleaseId: entry.id };
 }
 
+// The literal discogs.com URL for a discography entry — stored alongside
+// its identity so the album page can show provenance without reconstructing
+// it, same convention as the manual-match/pressing-link paths.
+function entryDiscogsUrl(entry: DiscographyEntry): string {
+  return entry.type === "master"
+    ? `https://www.discogs.com/master/${entry.id}`
+    : `https://www.discogs.com/release/${entry.id}`;
+}
+
 type OwnedAlbumRow = {
   id: number;
   title: string;
@@ -804,6 +813,7 @@ async function reconcileArtistAlbums(artistId: number, artistName: string, log: 
         where: { id: b.album.id },
         data: {
           ...identity,
+          discogsUrl: entryDiscogsUrl(b.entry),
           year: b.entry.year,
           releaseDate: b.entry.year ? new Date(Date.UTC(b.entry.year, 0, 1)) : null,
           kind,
@@ -896,6 +906,7 @@ async function reconcileArtistAlbums(artistId: number, artistName: string, log: 
       where: { id: owned.id },
       data: {
         ...identity,
+        discogsUrl: entryDiscogsUrl(entry),
         year: entry.year,
         releaseDate: entry.year ? new Date(Date.UTC(entry.year, 0, 1)) : null,
         kind,
@@ -985,6 +996,7 @@ async function reconcileArtistAlbums(artistId: number, artistName: string, log: 
           sortTitle: sortTitle(entry.title),
           year: entry.year,
           releaseDate: entry.year ? new Date(Date.UTC(entry.year, 0, 1)) : null,
+          discogsUrl: entryDiscogsUrl(entry),
           kind: "STUDIO",
         },
       });
@@ -1002,6 +1014,7 @@ async function reconcileArtistAlbums(artistId: number, artistName: string, log: 
           year: entry.year,
           releaseDate: entry.year ? new Date(Date.UTC(entry.year, 0, 1)) : null,
           ...identity,
+          discogsUrl: entryDiscogsUrl(entry),
           kind: "STUDIO",
         },
       });
@@ -1016,6 +1029,7 @@ async function reconcileArtistAlbums(artistId: number, artistName: string, log: 
         year: entry.year,
         releaseDate: entry.year ? new Date(Date.UTC(entry.year, 0, 1)) : null,
         ...identity,
+        discogsUrl: entryDiscogsUrl(entry),
         kind: "STUDIO",
         owned: false,
         folder: null,

@@ -172,6 +172,7 @@ export default async function AlbumPage({
                   copy.condition,
                   copy.inferred && "inferred from rip",
                   copy.notes,
+                  copy.barcode && `Barcode ${copy.barcode}`,
                 ]
                   .filter(Boolean)
                   .join(" · ")}
@@ -193,6 +194,10 @@ export default async function AlbumPage({
         <p className="text-xs text-text-faint">Playback unavailable — FairPlay-protected files.</p>
       )}
 
+      {album.owned && (
+        <FixAlbumMatchForm albumId={album.id} currentDiscogsUrl={album.discogsUrl} />
+      )}
+
       <div className="flex flex-wrap items-center gap-3">
         {album.copies.map((copy) => (
           <PhysicalCopyForm key={copy.id} albumId={album.id} medium={copy.medium as "VINYL" | "CD"} initial={copy} />
@@ -207,8 +212,6 @@ export default async function AlbumPage({
           <DeleteAlbumButton albumId={album.id} title={album.title} artistId={album.artist.id} />
         )}
       </div>
-
-      {album.owned && <FixAlbumMatchForm albumId={album.id} currentDiscogsUrl={album.discogsUrl} />}
 
       <div className="flex flex-col gap-6">
         {album.discs.length === 0 ? (
