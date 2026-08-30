@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react";
 import type { AlbumDiscView, PhysicalCopyView } from "@/lib/queries-music";
 import AudioCodecBadge from "./AudioCodecBadge";
 import AlbumPlayer, { type AlbumPlayerTrack } from "./AlbumPlayer";
+import CoverImage from "./CoverImage";
 import PhysicalCopyForm from "./PhysicalCopyForm";
 import FixAlbumMatchForm from "./FixAlbumMatchForm";
 import DigitalSourceForm from "./DigitalSourceForm";
@@ -243,14 +244,19 @@ type Tab =
 // Layout mirrors the design mockup: cover art on the left, the album's
 // title/tags + this switcher (tab bar, stat tiles, play/correction controls)
 // stacked beside it on the right, and the active format's tracklist breaking
-// out to the full page width below both — hence taking the cover/title JSX
-// as props (`cover`, `meta`) rather than rendering them itself, so the page
-// can lay all three regions out in one grid.
+// out to the full page width below both — hence taking the title JSX as a
+// prop (`meta`) rather than rendering it itself, so the page can lay all
+// three regions out in one grid. The cover art itself IS rendered here
+// (rather than passed down) because it's part of the switcher: selecting a
+// pressing's tab swaps in that pressing's own cover art when it has one
+// (falling back to the album's cover otherwise), matching the mockup's
+// image switcher.
 export default function AlbumFormatTabs({
-  cover,
   meta,
   albumId,
   albumTitle,
+  albumHasCover,
+  coverVersion,
   artistName,
   owned,
   copies,
@@ -263,10 +269,11 @@ export default function AlbumFormatTabs({
   canPlay,
   drmOnly,
 }: {
-  cover: ReactNode;
   meta: ReactNode;
   albumId: number;
   albumTitle: string;
+  albumHasCover: boolean;
+  coverVersion: number | null;
   artistName: string;
   owned: boolean;
   copies: PhysicalCopyView[];
@@ -303,10 +310,22 @@ export default function AlbumFormatTabs({
 
   const allTracks = discs.flatMap((d) => d.tracks);
 
+  const copyCoverSrc =
+    active?.kind === "copy" && active.copy.hasCover ? `/api/physical-cover/${active.copy.id}` : null;
+
   return (
     <div className="flex flex-col gap-6">
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-[16rem_1fr] sm:gap-6">
-        {cover}
+        <CoverImage
+          key={active?.key ?? "cover"}
+          albumId={albumHasCover ? albumId : null}
+          version={coverVersion}
+          title={albumTitle}
+          priority
+          sizes="(min-width: 640px) 256px, 60vw"
+          className="w-40 shrink-0 rounded-lg border border-border-strong shadow-lg shadow-black/40 sm:w-64"
+          src={copyCoverSrc}
+        />
         <div className="flex flex-col gap-4">
           {meta}
 

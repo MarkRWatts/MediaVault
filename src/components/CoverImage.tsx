@@ -18,6 +18,7 @@ export default function CoverImage({
   sizes,
   priority = false,
   className = "",
+  src,
 }: {
   albumId: number | null;
   /** Cover cache-buster (queries' coverVersion). A cover's bytes can change
@@ -28,9 +29,14 @@ export default function CoverImage({
   sizes?: string;
   priority?: boolean;
   className?: string;
+  /** Explicit image URL, overriding the default /api/cover/<albumId> — used
+   *  for a physical pressing's own cover art (/api/physical-cover/<copyId>,
+   *  a different route keyed by PhysicalCopy id rather than Album id). */
+  src?: string | null;
 }) {
   const [errored, setErrored] = useState(false);
-  const showFallback = albumId == null || errored;
+  const resolvedSrc = src ?? (albumId != null ? `/api/cover/${albumId}${version != null ? `?v=${version}` : ""}` : null);
+  const showFallback = resolvedSrc == null || errored;
 
   return (
     <div className={`relative aspect-square overflow-hidden bg-bg-elevated-2 ${className}`}>
@@ -42,7 +48,7 @@ export default function CoverImage({
         </div>
       ) : (
         <Image
-          src={`/api/cover/${albumId}${version != null ? `?v=${version}` : ""}`}
+          src={resolvedSrc}
           alt={`${title} cover art`}
           fill
           sizes={sizes ?? "(min-width: 1280px) 160px, (min-width: 640px) 20vw, 40vw"}
