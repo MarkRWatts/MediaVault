@@ -79,7 +79,7 @@ function PressingTile({
   return (
     <Tile>
       <span className={`text-[10px] font-semibold uppercase tracking-widest ${color}`}>Pressing</span>
-      <div className="flex min-h-15 flex-col justify-between gap-2">
+      <div className="flex min-h-16 flex-col justify-between gap-2">
         <div className="flex flex-col">{children}</div>
         {discogsUrl && (
           <a
@@ -109,7 +109,7 @@ function StatTile({
   return (
     <Tile>
       <span className={`text-[10px] font-semibold uppercase tracking-widest ${color}`}>{label}</span>
-      <div className="flex min-h-15 flex-col">
+      <div className="flex min-h-16 flex-col">
         {visible.length > 0 ? (
           visible.map((line, i) => (
             <span key={i} className="text-sm text-text">
@@ -400,21 +400,21 @@ export default function AlbumFormatTabs({
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-[16rem_1fr] sm:gap-6">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-[20rem_1fr] sm:gap-6">
         <CoverImage
           key={active?.key ?? "cover"}
           albumId={albumHasCover ? albumId : null}
           version={coverVersion}
           title={albumTitle}
           priority
-          sizes="(min-width: 640px) 256px, 60vw"
-          className="w-40 shrink-0 rounded-lg border border-border-strong shadow-lg shadow-black/40 sm:w-64"
+          sizes="(min-width: 640px) 320px, 60vw"
+          className="w-40 shrink-0 rounded-lg border border-border-strong shadow-lg shadow-black/40 sm:w-80"
           src={copyCoverSrc}
         />
         <div className="flex flex-col gap-3">
           {meta}
 
-          <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2 border-b border-border">
+          <div className="mt-14 flex flex-wrap items-end justify-between gap-x-4 gap-y-2 border-b border-border">
             <div className="flex flex-wrap gap-4">
               {tabs.map((tab) => {
                 const color = colorFor(tab.kind === "digital" ? "digital" : tab.copy.medium);
