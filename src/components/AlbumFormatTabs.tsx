@@ -208,7 +208,7 @@ function CopySummary({ albumId, copy }: { albumId: number; copy: PhysicalCopyVie
 
   let formatLines: (string | null)[];
   if (copy.medium === "CD") {
-    formatLines = ["16-bit / 44.1 kHz"];
+    formatLines = ["16-bit · 44.1 kHz"];
   } else if (copy.medium === "VINYL") {
     const discsCount = resolveVinylDiscs(copy);
     const speed = copy.speedRpm ?? inferSpeedFromFormat(copy.format);

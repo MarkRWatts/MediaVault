@@ -127,8 +127,15 @@
   --font-mono: var(--font-jbmono), ui-monospace, "SF Mono", monospace;
 }
 
-* {
-  border-color: var(--border);
+/* Layered so Tailwind's border-color utilities (in the utilities layer,
+   which sorts after base) can actually override this default — an
+   unlayered rule here would win over every colored-border utility in the
+   app regardless of specificity, which is exactly what was happening
+   (badges, the format-tab underline, ...) before this was layered. */
+@layer base {
+  * {
+    border-color: var(--border);
+  }
 }
 
 html {
