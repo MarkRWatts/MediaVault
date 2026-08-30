@@ -4,13 +4,13 @@ export const dynamic = "force-dynamic";
 
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import CoverImage from "@/components/CoverImage";
 import AudioCodecBadge from "@/components/AudioCodecBadge";
 import AlbumFormatTabs from "@/components/AlbumFormatTabs";
 import DeleteAlbumButton from "@/components/DeleteAlbumButton";
 import { getAlbumDetail } from "@/lib/queries-music";
 import type { AlbumTrackView } from "@/lib/queries-music";
 import { qualityLabel } from "@/lib/audio-quality";
+import { titleCase } from "@/lib/text-case";
 
 const KIND_LABELS: Record<string, string> = {
   STUDIO: "Studio",
@@ -72,6 +72,7 @@ export default async function AlbumPage({
   const allTracks = album.discs.flatMap((d) => d.tracks);
   const codec = dominantCodec(allTracks);
   const quality = dominantQuality(allTracks);
+  const displayTitle = titleCase(album.title);
 
   // Already in disc-then-trackNumber order (getAlbumDetail's sort), flattened
   // with each track's disc number attached and DRM (.m4p — FairPlay,
@@ -101,20 +102,10 @@ export default async function AlbumPage({
       </Link>
 
       <AlbumFormatTabs
-        cover={
-          <CoverImage
-            albumId={album.hasCover ? album.id : null}
-            version={album.coverVersion}
-            title={album.title}
-            priority
-            sizes="(min-width: 640px) 256px, 60vw"
-            className="w-40 shrink-0 rounded-lg border border-border-strong shadow-lg shadow-black/40 sm:w-64"
-          />
-        }
         meta={
           <div className="flex flex-col gap-2">
             <h1 className="font-display text-3xl leading-none tracking-wide text-balance sm:text-4xl">
-              {album.title}
+              {displayTitle}
             </h1>
             <Link
               href={`/music/artist/${album.artist.id}`}
@@ -160,7 +151,9 @@ export default async function AlbumPage({
           </div>
         }
         albumId={album.id}
-        albumTitle={album.title}
+        albumTitle={displayTitle}
+        albumHasCover={album.hasCover}
+        coverVersion={album.coverVersion}
         artistName={album.artist.name}
         owned={album.owned}
         copies={album.copies}
