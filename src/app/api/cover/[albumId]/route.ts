@@ -2,7 +2,7 @@
 // (which receives the cache-relative path directly, since that IS the TMDB
 // path), this route only receives the numeric Album id, so it looks up
 // Album.coverPath first — covers are fetched/cached during enrichment
-// (src/lib/musicbrainz.ts + src/lib/cover-art.ts), not on demand here.
+// (src/lib/discogs.ts + src/lib/cover-art.ts), not on demand here.
 // Rejects any resolved path that would land outside the covers cache dir.
 
 import { promises as fs } from "node:fs";

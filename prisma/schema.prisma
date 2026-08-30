@@ -6,7 +6,7 @@
 //   Version.videoRange:    SDR | HDR10 | HLG | DOLBY_VISION
 //   Film.matchConfidence:  EXACT | SEARCH | LOW | UNMATCHED
 //   Album.kind:            STUDIO | COMPILATION | EP | LIVE | SINGLE | REMIX | SOUNDTRACK | OTHER
-//   Album.coverSource:     embedded | caa | itunes | manual
+//   Album.coverSource:     embedded | itunes | discogs | manual
 //   Track.codec:           alac | aac | mp3 | flac | drm | unknown
 //   FilmPhysicalCopy.medium: DVD | BLURAY | UHD
 //   Scene.matchConfidence: EXACT | SEARCH | LOW | UNMATCHED
@@ -251,24 +251,26 @@ model ScanQueueItem {
 
 // --- Music ---
 // Same philosophy as movies/TV: Album rows exist for back-catalogue entries
-// we DON'T own (owned=false), created from MusicBrainz release-group listings.
+// we DON'T own (owned=false), created from an artist's Discogs discography listing.
 
 model Artist {
   id              Int      @id @default(autoincrement())
   name            String
   sortName        String
   folder          String?  @unique // top-level folder under MUSIC_PATH; null for vinyl-only artists with no digital rips
-  mbid            String?  @unique // MusicBrainz artist id
+  discogsId       Int?     @unique // Discogs artist id
   disambiguation  String?
   various         Boolean  @default(false) // Compilations pseudo-artist
   matchConfidence String   @default("UNMATCHED") // EXACT | SEARCH | LOW | UNMATCHED
-  studioTotal     Int? // count of official STUDIO release groups MusicBrainz lists, recorded even when gap tracking is off and no placeholders are created
+  studioTotal     Int? // count of "Main" studio releases Discogs lists for this artist, recorded even when gap tracking is off and no placeholders are created
   albums          Album[]
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
   // Roon-style enrichment (see artist-bio.ts) — best-effort, multi-source,
-  // fetched once mbid is known and cached like Album.coverPath. Null simply
+  // cached like Album.coverPath. TheAudioDB/Fanart.tv were keyed by a
+  // MusicBrainz artist id and no longer run post-Discogs-cutover (see
+  // artist-bio.ts) — only the Wikipedia-by-name tier remains. Null simply
   // means "not fetched yet" or "no source had anything", same convention as
   // the rest of this app's enrichment fields — never blocks anything.
   bio            String? // biography text
@@ -289,14 +291,25 @@ model Album {
   sortTitle      String
   year           Int?
   releaseDate    DateTime?
-  mbid           String?        @unique // MusicBrainz release-group id
+  // Exactly one of these two is ever meaningfully set — a Discogs master
+  // groups every pressing/edition of a release (the closer analog to
+  // MusicBrainz's old release-group identity); a standalone release (no
+  // master — common for small-run/promo pressings) is its own identity
+  // instead. Enforced in code (findAlbumByDiscogsIdentity), not the DB.
+  discogsMasterId  Int?    @unique
+  discogsReleaseId Int?    @unique
+  // The literal discogs.com URL used for the current match — stored
+  // verbatim (not reconstructed from the id above) so the edit UI can show
+  // provenance and link straight back to it. Set by both automatic
+  // enrichment and a manual "fix incorrect match" correction.
+  discogsUrl       String?
   kind           String         @default("STUDIO") // STUDIO | COMPILATION | EP | LIVE | SINGLE | REMIX | SOUNDTRACK | OTHER
   coverPath      String? // cached cover art file name under the cover cache dir
-  coverSource    String? // embedded | caa | itunes | manual — provenance of coverPath; "manual" is never overwritten
+  coverSource    String? // embedded | itunes | discogs | manual — provenance of coverPath; "manual" is never overwritten
   owned          Boolean        @default(true)
   folder         String? // album folder name under the artist folder (null when owned=false)
   digitalSource  String? // provenance of the digital files: cd | itunes | download | vinyl-code (bundled with the LP); null = unconfirmed
-  trackTotal     Int? // canonical track count from MusicBrainz, if known
+  trackTotal     Int? // canonical track count from Discogs, if known
   tracks         Track[]
   physicalCopies PhysicalCopy[]
   createdAt      DateTime       @default(now())
@@ -308,9 +321,10 @@ model Album {
 
 // A physical copy you own of this album — independent of digital ownership
 // (Album.owned). Presence of a row means "own on <medium>", full stop; the
-// album may or may not also have digital Tracks. One row per (album, medium):
-// owning two different pressings of the same release is an edge case handled
-// with a note, not a second row.
+// album may or may not also have digital Tracks. Multiple rows for the same
+// (album, medium) are legal — e.g. an original CD-era pressing and a later
+// anniversary vinyl reissue — distinguished in the UI by format/label/
+// pressYear/notes and ordered by addedAt; there is no "primary" copy.
 
 model PhysicalCopy {
   id        Int      @id @default(autoincrement())
@@ -325,32 +339,31 @@ model PhysicalCopy {
   pressYear Int? // pressing year — often later than Album.year for reissues
   condition String? // free text ("VG+", "Sealed", ...)
   notes     String?
-  barcode   String?
+  barcode   String? // the barcode scanned to identify THIS specific pressing — a CD and an LP of
+                     // the same album carry different barcodes, so this stays per-copy, not on Album
   addedAt   DateTime @default(now())
 
-  // The specific MusicBrainz *release* (a particular pressing) this copy
-  // corresponds to — distinct from Album.mbid, which is the abstract
-  // release-group. A pressing can have its own tracklist and cover art (an
-  // LP with a different running order/art than the CD), which is why these
-  // live per-PhysicalCopy rather than on Album. Null until the owner links a
-  // specific release (see attachPhysicalRelease in musicbrainz.ts) —
-  // metadata-only copies work fine without it.
-  releaseMbid String?
-  // Discogs fallback (see discogs.ts) — used when MusicBrainz simply has no
-  // entry for this pressing (common for newer/smaller-run vinyl). Mutually
-  // exclusive with releaseMbid in practice (attachPhysicalRelease clears
-  // whichever source it isn't using), never both meaningfully set at once.
+  // The specific Discogs *release* (a particular pressing) this copy
+  // corresponds to — distinct from Album.discogsMasterId/discogsReleaseId,
+  // which identify the abstract work. A pressing can have its own tracklist
+  // and cover art (an LP with a different running order/art than the CD),
+  // which is why these live per-PhysicalCopy rather than on Album. Null
+  // until the owner links a specific release (see attachPhysicalRelease in
+  // discogs.ts) — metadata-only copies work fine without it.
   discogsReleaseId Int?
+  // The literal discogs.com/release/... URL used for this pressing link —
+  // stored verbatim, same provenance treatment as Album.discogsUrl.
+  discogsUrl  String?
   coverPath   String? // cached cover art specific to this pressing, relative to POSTER_CACHE_DIR/covers/
-  coverSource String? // caa | discogs | manual — "manual" is never overwritten, same convention as Album.coverSource
+  coverSource String? // discogs | manual — "manual" is never overwritten, same convention as Album.coverSource
   tracks      PhysicalTrack[]
 
-  @@unique([albumId, medium])
+  @@index([albumId, medium])
   @@index([barcode])
 }
 
-// A pressing-specific tracklist, populated from a MusicBrainz release (see
-// PhysicalCopy.releaseMbid) — never backed by a file, unlike Track. Only
+// A pressing-specific tracklist, populated from a Discogs release (see
+// PhysicalCopy.discogsReleaseId) — never backed by a file, unlike Track. Only
 // exists when the owner has linked a specific release; most PhysicalCopy
 // rows have none.
 model PhysicalTrack {
@@ -380,7 +393,7 @@ model Track {
   bitDepth     Int?
   durationSecs Float?
   sizeBytes    BigInt?
-  tagYear      Int? // year from the file's own date tag — Album.year fallback when MusicBrainz has no match
+  tagYear      Int? // year from the file's own date tag — Album.year fallback when Discogs has no match
   mtimeMs      Float? // probe cache key, same convention as Version
   probedAt     DateTime?
 

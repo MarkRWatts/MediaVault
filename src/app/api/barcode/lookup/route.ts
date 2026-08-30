@@ -5,7 +5,7 @@
 // music/movie paths run concurrently and what `type` skips.
 
 import { NextRequest, NextResponse } from "next/server";
-import { normalizeBarcode } from "@/lib/musicbrainz";
+import { normalizeBarcode } from "@/lib/discogs";
 import { resolveBarcode } from "@/lib/scan-resolve";
 import { requireOwnerOrResponse } from "@/lib/require-member";
 

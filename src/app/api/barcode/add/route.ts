@@ -1,14 +1,16 @@
 // Register physical ownership for a barcode-scanned item. POST
-// { type: "film", tmdbId, medium, barcode? } | { type: "album", mbid, medium,
-// barcode? }. Films: find-or-create the Film row (owned stays false unless
-// it already had a rip) then upsert a FilmPhysicalCopy. Albums: delegates to
-// the existing createPhysicalOnlyAlbum, which already handles find-or-create
-// Artist/Album + attach a PhysicalCopy.
+// { type: "film", tmdbId, medium, barcode? } | { type: "album",
+// discogsMasterId, discogsReleaseId, medium, barcode? }. Films: find-or-create
+// the Film row (owned stays false unless it already had a rip) then upsert a
+// FilmPhysicalCopy. Albums: delegates to the existing createPhysicalOnlyAlbum,
+// which already handles find-or-create Artist/Album + attach a PhysicalCopy
+// (and, given a specific discogsReleaseId, its pressing-specific tracklist/
+// cover — no separate attach step needed here).
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { findOrCreateFilmByTmdbId } from "@/lib/tmdb";
-import { createPhysicalOnlyAlbum, attachPhysicalRelease, type PhysicalMedium } from "@/lib/musicbrainz";
+import { createPhysicalOnlyAlbum, type PhysicalMedium } from "@/lib/discogs";
 import { requireOwnerOrResponse } from "@/lib/require-member";
 
 const FILM_MEDIA = new Set(["DVD", "BLURAY", "UHD"]);
@@ -56,43 +58,35 @@ export async function POST(req: NextRequest) {
   }
 
   if (body.type === "album") {
-    const mbid = typeof body.mbid === "string" ? body.mbid : "";
+    const discogsMasterId = Number.isInteger(body.discogsMasterId) ? (body.discogsMasterId as number) : null;
+    const discogsReleaseId = Number.isInteger(body.discogsReleaseId) ? (body.discogsReleaseId as number) : null;
     const rawMedium = typeof body.medium === "string" ? body.medium.toUpperCase() : "";
-    if (!mbid || (rawMedium !== "VINYL" && rawMedium !== "CD")) {
+    if ((discogsMasterId == null && discogsReleaseId == null) || (rawMedium !== "VINYL" && rawMedium !== "CD")) {
       return NextResponse.json(
-        { error: "expected { type: 'album', mbid: string, medium: 'VINYL' | 'CD' }" },
+        {
+          error:
+            "expected { type: 'album', discogsMasterId?: number, discogsReleaseId?: number, medium: 'VINYL' | 'CD' }",
+        },
         { status: 400 },
       );
     }
     const medium: PhysicalMedium = rawMedium;
 
-    const result = await createPhysicalOnlyAlbum(mbid, medium, { barcode });
+    // A barcode-resolved hit always carries the specific pressing that was
+    // scanned (discogsReleaseId) — pass both facts through directly so
+    // createPhysicalOnlyAlbum populates that exact pressing's tracklist/
+    // cover, not just whatever its master's arbitrary main_release is. A
+    // title-search pick only knows the master OR a standalone release (no
+    // barcode was scanned), so a master-only pick is passed as a URL —
+    // createPhysicalOnlyAlbum resolves it via main_release.
+    const ref =
+      discogsReleaseId != null
+        ? { discogsMasterId, discogsReleaseId }
+        : `https://www.discogs.com/master/${discogsMasterId}`;
+
+    const result = await createPhysicalOnlyAlbum(ref, medium, { barcode });
     if (!result.ok) {
       return NextResponse.json({ error: result.error }, { status: result.status });
-    }
-
-    // The barcode search already resolved a specific release — either a
-    // MusicBrainz one (see searchReleaseByBarcode) or, when MusicBrainz had
-    // no entry for this pressing, a Discogs fallback one (see
-    // searchDiscogsByBarcode in scan-resolve.ts's resolveMusic) — attach its
-    // tracklist/cover on top of the release-group-level add above.
-    // Best-effort: a failure here doesn't undo the add, it just means no
-    // pressing-specific tracks/cover.
-    const releaseMbid = typeof body.releaseMbid === "string" ? body.releaseMbid : "";
-    const discogsReleaseId = Number.isInteger(body.discogsReleaseId) ? (body.discogsReleaseId as number) : null;
-    const pressingRef = releaseMbid || (discogsReleaseId != null ? String(discogsReleaseId) : "");
-    if (pressingRef) {
-      // Genuinely best-effort: attachPhysicalRelease's internal network
-      // calls are already individually guarded, but an unexpected failure
-      // in its own DB write must not fail this whole request and undo the
-      // add that already succeeded above — the album/copy already exists;
-      // losing the pressing-specific tracks/cover is a lesser miss than
-      // reporting "add failed" for an add that actually went through.
-      try {
-        await attachPhysicalRelease(result.album.id, medium, pressingRef);
-      } catch {
-        // swallow — see above
-      }
     }
 
     return NextResponse.json({ album: result.album });

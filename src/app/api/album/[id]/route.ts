@@ -1,6 +1,6 @@
 // Delete a physical-only Album row outright — for a placeholder created by
-// mistake (e.g. a "paste Discogs links" add that anchored to the wrong
-// MusicBrainz release-group, see the Scan page's Discogs paste tool). Unlike
+// mistake (e.g. a "paste Discogs links" add that matched the wrong record,
+// see the Scan page's Discogs paste tool). Unlike
 // DELETE /api/physical, which only removes one PhysicalCopy, this removes
 // the Album row itself (cascading its PhysicalCopy/PhysicalTrack/Track rows
 // — see onDelete: Cascade in prisma/schema.prisma).

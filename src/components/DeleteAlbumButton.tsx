@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 // Deletes the whole Album row (not just one PhysicalCopy — see
 // PhysicalCopyForm's "Remove", which only unlinks a medium) — for a
 // physical-only placeholder that shouldn't exist at all, e.g. a "paste
-// Discogs links" add that anchored to the wrong MusicBrainz release-group.
+// Discogs links" add that matched the wrong record.
 // Irreversible (no undo, unlike a PhysicalCopy removal which can just be
 // re-added), so this gets its own confirmation dialog rather than a plain
 // button — styled after RemoveMemberButton's modal.

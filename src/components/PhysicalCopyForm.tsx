@@ -6,14 +6,22 @@ import type { PhysicalCopyView } from "@/lib/queries-music";
 
 const MEDIUM_LABEL: Record<string, string> = { VINYL: "vinyl", CD: "CD" };
 
+// One physical copy — editable in place if `initial` is set, or a blank
+// "add a copy" form otherwise. Multiple copies of the same medium are legal
+// (an original pressing and a later reissue, say), so this no longer
+// upserts by (albumId, medium) — see POST /api/physical.
 export default function PhysicalCopyForm({
   albumId,
   medium,
   initial,
+  onDone,
 }: {
   albumId: number;
   medium: "VINYL" | "CD";
   initial: PhysicalCopyView | null;
+  /** Called after a successful create, so the parent can close the "add
+   *  another" form — edits stay open in place. */
+  onDone?: () => void;
 }) {
   const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
@@ -26,7 +34,8 @@ export default function PhysicalCopyForm({
   const [pressYear, setPressYear] = useState(initial?.pressYear?.toString() ?? "");
   const [condition, setCondition] = useState(initial?.condition ?? "");
   const [notes, setNotes] = useState(initial?.notes ?? "");
-  const [releaseMb, setReleaseMb] = useState("");
+  const [discogsRef, setDiscogsRef] = useState("");
+  const [rechecking, setRechecking] = useState(false);
 
   const mediumLabel = MEDIUM_LABEL[medium] ?? medium.toLowerCase();
 
@@ -40,6 +49,7 @@ export default function PhysicalCopyForm({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          id: initial?.id,
           albumId,
           medium,
           format: format || undefined,
@@ -48,7 +58,7 @@ export default function PhysicalCopyForm({
           pressYear: pressYear ? Number(pressYear) : undefined,
           condition: condition || undefined,
           notes: notes || undefined,
-          releaseMb: releaseMb || undefined,
+          discogsRef: discogsRef || undefined,
         }),
       });
 
@@ -61,9 +71,22 @@ export default function PhysicalCopyForm({
       if (data.trackImportError) {
         setError(`Saved, but couldn't link that release: ${data.trackImportError}`);
       } else {
+        if (!initial) {
+          // This is the persistent "+ Add another copy" instance — it stays
+          // mounted (same position in the tree) across the router.refresh()
+          // below, so its field state must be reset by hand or a second add
+          // would silently reopen pre-filled with this submission's values.
+          setFormat(medium === "VINYL" ? "LP" : "CD");
+          setCatalogNo("");
+          setLabel("");
+          setPressYear("");
+          setCondition("");
+          setNotes("");
+          onDone?.();
+        }
         setIsOpen(false);
       }
-      setReleaseMb("");
+      setDiscogsRef("");
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save");
@@ -78,9 +101,7 @@ export default function PhysicalCopyForm({
     setIsSaving(true);
 
     try {
-      const res = await fetch(`/api/physical?albumId=${albumId}&medium=${medium}`, {
-        method: "DELETE",
-      });
+      const res = await fetch(`/api/physical?id=${initial.id}`, { method: "DELETE" });
 
       if (!res.ok) {
         const data = await res.json();
@@ -93,6 +114,35 @@ export default function PhysicalCopyForm({
       setError(err instanceof Error ? err.message : "Failed to remove");
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  // Re-query Discogs from this copy's own already-stored barcode — a
+  // strong but not infallible anchor (a barcode can legitimately be shared
+  // across colour-vinyl/regional variants), so this only pre-fills the link
+  // field for confirmation rather than auto-applying the result.
+  const handleRecheckBarcode = async () => {
+    if (!initial?.barcode) return;
+    setError(null);
+    setRechecking(true);
+    try {
+      const res = await fetch("/api/barcode/lookup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ barcode: initial.barcode, type: "album" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      if (data.status === "not_owned" && data.type === "album" && data.candidate.discogsReleaseId) {
+        setDiscogsRef(`https://www.discogs.com/release/${data.candidate.discogsReleaseId}`);
+        setIsOpen(true);
+      } else {
+        setError("No Discogs match found for this barcode.");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Re-check failed");
+    } finally {
+      setRechecking(false);
     }
   };
 
@@ -116,6 +166,15 @@ export default function PhysicalCopyForm({
             className="rounded border border-missing-border px-2 py-1 text-xs font-medium text-missing transition-colors hover:bg-missing-bg disabled:cursor-not-allowed disabled:opacity-40"
           >
             Remove
+          </button>
+        )}
+        {initial?.barcode && (
+          <button
+            onClick={handleRecheckBarcode}
+            disabled={rechecking}
+            className="rounded border border-border px-2 py-1 text-xs font-medium text-text-muted transition-colors hover:border-border-strong hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {rechecking ? "Checking…" : "Re-check via barcode"}
           </button>
         )}
       </div>
@@ -193,16 +252,24 @@ export default function PhysicalCopyForm({
           </label>
           <input
             type="text"
-            value={releaseMb}
-            onChange={(e) => setReleaseMb(e.target.value)}
-            placeholder="musicbrainz.org/release/... or discogs.com/release/... — pulls this pressing's own tracklist & cover"
+            value={discogsRef}
+            onChange={(e) => setDiscogsRef(e.target.value)}
+            placeholder="discogs.com/release/... — pulls this pressing's own tracklist & cover"
             className="rounded border border-border bg-bg px-2 py-1 text-sm text-text placeholder-text-faint"
           />
           {initial && initial.tracks.length > 0 && (
             <p className="text-xs text-text-faint">
-              Linked via {initial.discogsReleaseId ? "Discogs" : "MusicBrainz"}: {initial.tracks.length} track
+              Linked via Discogs: {initial.tracks.length} track
               {initial.tracks.length === 1 ? "" : "s"}
               {initial.hasCover ? ", own cover art" : ""}
+              {initial.discogsUrl && (
+                <>
+                  {" — "}
+                  <a href={initial.discogsUrl} target="_blank" rel="noreferrer" className="text-accent hover:underline">
+                    view on Discogs
+                  </a>
+                </>
+              )}
             </p>
           )}
         </div>

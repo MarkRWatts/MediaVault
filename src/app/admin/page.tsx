@@ -94,7 +94,8 @@ export default async function AdminPage() {
         <h2 className="font-display text-xl tracking-wide text-text">Library</h2>
         <p className="text-sm text-text-muted">
           Rescan walks the library folders for new/changed/removed files; fetch metadata pulls TMDB (film/TV) or
-          MusicBrainz (music) matches for anything unmatched. Each media type runs independently.
+          Discogs (music) matches for anything unmatched. Each media type runs independently. Set DISCOGS_TOKEN
+          before running a full music enrich — it raises Discogs&rsquo; rate limit from 25 to 60 requests/min.
         </p>
         <ScanControls />
       </section>

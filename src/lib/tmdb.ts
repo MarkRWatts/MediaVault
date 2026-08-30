@@ -35,7 +35,7 @@ async function tmdbFetch(pathname: string, params: Record<string, string> = {}):
   else url.searchParams.set("api_key", key);
 
   // Node fetch has NO default timeout — an already-documented hazard (see
-  // mbFetch in musicbrainz.ts, which hit this for real) that also applies
+  // discogsFetch in discogs.ts, which hit this for real) that also applies
   // here, and matters more now that the barcode scan page awaits this
   // inline on a live request instead of a background enrichment run.
   const res = await fetch(url.toString(), { headers, signal: AbortSignal.timeout(30_000) });

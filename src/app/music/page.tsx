@@ -10,7 +10,7 @@ import { getMusicIndex, getArtistDetail } from "@/lib/queries-music";
 export default async function MusicPage() {
   const { totals, artists } = await getMusicIndex();
 
-  // The Compilations pseudo-artist (various=true) skips MusicBrainz matching
+  // The Compilations pseudo-artist (various=true) skips Discogs matching
   // entirely, so its studio counters are always 0/0 — getMusicIndex has no
   // "total albums" field to fall back on, so pull its own detail (studio +
   // shelf) for a plain album count instead of a misleading "0/0" fraction.

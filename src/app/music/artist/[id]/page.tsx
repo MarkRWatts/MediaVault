@@ -231,7 +231,7 @@ export default async function ArtistPage({
             </div>
             {gapTrackingOff && (
               <p className="text-xs text-text-faint">
-                MusicBrainz lists {stats.total} studio albums for this artist — gap tracking starts once at
+                Discogs lists {stats.total} studio albums for this artist — gap tracking starts once at
                 least 2 (and 20%) are owned.
               </p>
             )}

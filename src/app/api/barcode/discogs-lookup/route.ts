@@ -1,8 +1,8 @@
 // Resolve a pasted Discogs release URL to "already owned" or a not-owned
 // candidate to add — backs the Scan page's "paste Discogs links" bulk-add
 // tool. See src/lib/scan-resolve.ts's resolveDiscogsUrl for the actual
-// resolution logic (anchors the release to a MusicBrainz release-group by
-// title+artist, same as the barcode Discogs fallback).
+// resolution logic (resolves the release's own Discogs identity — its
+// master if it has one, otherwise the release itself).
 
 import { NextRequest, NextResponse } from "next/server";
 import { resolveDiscogsUrl } from "@/lib/scan-resolve";

@@ -21,7 +21,7 @@ export default function PhysicalAddForm() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [mb, setMb] = useState("");
+  const [discogsUrl, setDiscogsUrl] = useState("");
   const [medium, setMedium] = useState<"VINYL" | "CD">("VINYL");
   const [format, setFormat] = useState("");
   const [catalogNo, setCatalogNo] = useState("");
@@ -36,7 +36,7 @@ export default function PhysicalAddForm() {
     setLoading(true);
 
     try {
-      const body: Record<string, unknown> = { mb, medium };
+      const body: Record<string, unknown> = { discogsUrl, medium };
 
       if (format) body.format = format;
       if (catalogNo) body.catalogNo = catalogNo;
@@ -99,15 +99,15 @@ export default function PhysicalAddForm() {
 
       <div className="flex flex-col gap-3">
         <div>
-          <label htmlFor="mb" className="block text-xs font-medium text-text-muted mb-1">
-            MusicBrainz release or release-group URL <span className="text-accent">*</span>
+          <label htmlFor="discogsUrl" className="block text-xs font-medium text-text-muted mb-1">
+            Discogs release or master URL <span className="text-accent">*</span>
           </label>
           <input
-            id="mb"
+            id="discogsUrl"
             type="text"
-            value={mb}
-            onChange={(e) => setMb(e.target.value)}
-            placeholder="https://musicbrainz.org/release-group/..."
+            value={discogsUrl}
+            onChange={(e) => setDiscogsUrl(e.target.value)}
+            placeholder="https://www.discogs.com/release/..."
             required
             className="w-full rounded-md border border-border bg-bg-elevated px-3 py-1.5 text-sm text-text placeholder:text-text-faint focus-visible:outline-none"
           />
@@ -219,7 +219,7 @@ export default function PhysicalAddForm() {
       <div className="flex gap-2 pt-2">
         <button
           type="submit"
-          disabled={loading || !mb}
+          disabled={loading || !discogsUrl}
           className="inline-flex min-h-10 flex-1 items-center justify-center rounded-md border border-border px-2.5 py-1 font-medium tracking-wide text-text-muted transition-colors hover:border-border-strong hover:text-text disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0"
         >
           {loading ? "Adding..." : "Add"}

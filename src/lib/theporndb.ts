@@ -1,5 +1,5 @@
 // ThePornDB (metadatapi.net) enrichment: match Scene rows, pull
-// title/date/studio/performers, cache artwork. Mirrors musicbrainz.ts's
+// title/date/studio/performers, cache artwork. Mirrors discogs.ts's
 // shape (fixed-interval rate limiter + one retry on transient failure, not
 // tmdb.ts's flat post-call sleep) since TPDB — unlike TMDB — has a real
 // documented rate cap. API shape confirmed against the official
@@ -19,7 +19,7 @@ const TPDB_BASE = "https://api.theporndb.net";
 const IMAGE_CACHE_DIR = process.env.ADULT_IMAGE_CACHE_DIR ?? "./data/adult-images";
 // Confirmed in the official Jellyfin plugin's own rate limiter
 // (TimeLimiter.GetFromMaxCountByInterval(120, 60s)) — not a guessed figure.
-// A fixed-interval clock, same reasoning as musicbrainz.ts: TMDB has no
+// A fixed-interval clock, same reasoning as discogs.ts: TMDB has no
 // stated hard cap, TPDB does, so a scheduler beats a flat sleep here.
 const MIN_INTERVAL_MS = 500; // ~120/min, comfortably under the confirmed cap
 const RETRY_BACKOFF_MS = 3000;

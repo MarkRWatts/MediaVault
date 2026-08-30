@@ -10,6 +10,7 @@ import AlbumPlayer from "@/components/AlbumPlayer";
 import PhysicalCopyForm from "@/components/PhysicalCopyForm";
 import DigitalSourceForm from "@/components/DigitalSourceForm";
 import DeleteAlbumButton from "@/components/DeleteAlbumButton";
+import FixAlbumMatchForm from "@/components/FixAlbumMatchForm";
 import { digitalSourceLabel } from "@/lib/digital-source";
 import { getAlbumDetail } from "@/lib/queries-music";
 import type { AlbumTrackView } from "@/lib/queries-music";
@@ -136,19 +137,22 @@ export default async function AlbumPage({
             <span className="rounded border border-dvd-border bg-dvd-bg px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-widest leading-none text-dvd">
               {KIND_LABELS[album.kind] ?? album.kind}
             </span>
-            {album.copies.map((copy) => (
+            {Array.from(new Set(album.copies.map((c) => c.medium))).map((medium) => (
               <span
-                key={copy.medium}
+                key={medium}
                 className="rounded border border-good-border bg-good-bg px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-widest leading-none text-good"
               >
-                {copy.medium === "VINYL" ? "Vinyl" : copy.medium}
-                {copy.inferred ? "?" : ""}
+                {medium === "VINYL" ? "Vinyl" : medium}
+                {album.copies.filter((c) => c.medium === medium).length > 1
+                  ? ` ×${album.copies.filter((c) => c.medium === medium).length}`
+                  : ""}
+                {album.copies.some((c) => c.medium === medium && c.inferred) ? "?" : ""}
               </span>
             ))}
             {codec != null && <AudioCodecBadge codec={codec} quality={quality} />}
           </div>
           {album.copies.map((copy) => (
-            <div key={copy.medium} className="mt-2 flex items-center gap-2 text-xs text-text-faint">
+            <div key={copy.id} className="mt-2 flex items-center gap-2 text-xs text-text-faint">
               {copy.hasCover && (
                 // Small inline badge, not worth next/image's fill/layout machinery.
                 // eslint-disable-next-line @next/next/no-img-element
@@ -190,21 +194,21 @@ export default async function AlbumPage({
       )}
 
       <div className="flex flex-wrap items-center gap-3">
-        <PhysicalCopyForm
-          albumId={album.id}
-          medium="VINYL"
-          initial={album.copies.find((c) => c.medium === "VINYL") ?? null}
-        />
-        <PhysicalCopyForm
-          albumId={album.id}
-          medium="CD"
-          initial={album.copies.find((c) => c.medium === "CD") ?? null}
-        />
+        {album.copies.map((copy) => (
+          <PhysicalCopyForm key={copy.id} albumId={album.id} medium={copy.medium as "VINYL" | "CD"} initial={copy} />
+        ))}
+        {/* Always-available blank forms — multiple copies of the same medium
+            are legal (an original pressing and a later reissue, say), so
+            this is a perpetual "add another" rather than a fixed pair. */}
+        <PhysicalCopyForm albumId={album.id} medium="VINYL" initial={null} />
+        <PhysicalCopyForm albumId={album.id} medium="CD" initial={null} />
         {album.owned && <DigitalSourceForm albumId={album.id} initial={album.digitalSource} />}
         {!album.owned && (
           <DeleteAlbumButton albumId={album.id} title={album.title} artistId={album.artist.id} />
         )}
       </div>
+
+      {album.owned && <FixAlbumMatchForm albumId={album.id} currentDiscogsUrl={album.discogsUrl} />}
 
       <div className="flex flex-col gap-6">
         {album.discs.length === 0 ? (
@@ -246,8 +250,9 @@ export default async function AlbumPage({
 
       {album.copies
         .filter((copy) => copy.tracks.length > 0)
-        .map((copy) => {
+        .map((copy, _i, tracklisted) => {
           const copyMultiDisc = new Set(copy.tracks.map((t) => t.disc)).size > 1;
+          const sameMediumCount = tracklisted.filter((c) => c.medium === copy.medium).length;
           const byDisc = new Map<number, typeof copy.tracks>();
           for (const t of copy.tracks) {
             const arr = byDisc.get(t.disc);
@@ -255,9 +260,10 @@ export default async function AlbumPage({
             else byDisc.set(t.disc, [t]);
           }
           return (
-            <div key={copy.medium} className="flex flex-col gap-3">
+            <div key={copy.id} className="flex flex-col gap-3">
               <h2 className="font-mono text-xs uppercase tracking-widest text-text-faint">
                 {copy.medium === "VINYL" ? "Vinyl" : copy.medium} tracklist
+                {sameMediumCount > 1 ? ` (${copy.format}${copy.pressYear ? `, ${copy.pressYear}` : ""})` : ""}
               </h2>
               <div className="flex flex-col gap-6">
                 {Array.from(byDisc.entries())
