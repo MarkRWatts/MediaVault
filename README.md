@@ -2,30 +2,47 @@
   <img src="docs/logo.png" alt="MediaVault" width="320" />
 </p>
 
-A personal index of a DVD/Blu-ray film and TV collection stored on a NAS SMB
-share (also served by Jellyfin). It scans the share, probes every file with
-ffprobe for real resolution and soundtracks, enriches from TMDB, and presents
-a poster-forward library with collection timelines, season-by-season show
-pages, and a "what's missing" collector's report.
+A household index of a DVD/Blu-ray film and TV collection stored on a NAS
+SMB share (also served by Jellyfin), plus a Discogs-backed music library with
+physical CD/vinyl pressing tracking. It scans the share, probes every file
+with ffprobe for real resolution and soundtracks, enriches from TMDB/Discogs,
+and presents a poster-forward library with collection timelines,
+season-by-season show pages, in-browser playback, and a "what's missing"
+collector's report — shared across a household, each member with their own
+sign-in and watch history.
 
 - **Library** — every owned film, searchable/filterable, with format
-  (4K/Blu-ray/DVD) and resolution badges.
+  (4K/Blu-ray/DVD) and resolution badges. A film can be tagged as owned on a
+  physical medium independent of whether it's been ripped, and a barcode
+  scanner page (camera or a USB scanner gun) looks up a physical item against
+  the library while you're stood in front of the shelf.
 - **Film detail** — editions (theatrical vs director's cut), resolutions,
-  soundtracks (Dolby/DTS profile badges, HDR labels), file details, and
-  per-version "Play in Jellyfin" links.
+  soundtracks (Dolby/DTS profile badges, HDR labels), file details,
+  in-browser playback (on-demand ffmpeg remux/transcode, streamed while it's
+  still being prepared — no separate encode-then-wait step), and per-version
+  "Play in Jellyfin" links.
 - **Shows** — TV series with per-season episode lists, missing episodes
-  greyed out, and per-episode play links. Episode numbering follows disc
-  order (TMDB DVD episode groups), because this is a disc library.
+  greyed out, in-browser playback, and per-episode play links. Episode
+  numbering follows disc order (TMDB DVD episode groups), because this is a
+  disc library.
 - **Music** — artists with studio back-catalogues from Discogs, owned vs
   missing albums shown by colour, lossless/codec + quality badges
-  (`ALAC · 16/44.1`), cover art extracted from the files' own embedded
-  artwork, and **gapless in-browser album playback** — lossless end-to-end
-  (ALAC is served as FLAC, sample-accurate Web Audio track joins, no
-  transcoding of lossy files).
+  (`ALAC · 16/44.1`). An album page switches between the Digital copy and
+  any physical CD/vinyl pressings you own — each pressing can be linked to
+  its own Discogs release for its own tracklist, catalogue number, and cover
+  art (falling back to the digital files' own embedded artwork) — alongside
+  **gapless in-browser album playback** — lossless end-to-end (ALAC is
+  served as FLAC, sample-accurate Web Audio track joins, no transcoding of
+  lossy files).
 - **Collections** — film series (James Bond, Alien, …) in release-order
   timelines with missing films greyed out.
 - **Report** — missing films per collection, missing seasons/episodes per
   show, Blu-ray upgrade candidates, and files needing metadata attention.
+- **Stats** — per-member watch history and viewing stats.
+- **Households** — email one-time-code sign-in (no passwords), invite-based
+  membership so the library is shared with family without a separate account
+  per service, and an owner-only admin area for managing members and
+  integrations.
 
 ## Screenshots
 
@@ -55,8 +72,10 @@ pages, and a "what's missing" collector's report.
 
 ## Stack
 
-Next.js 15 (App Router) · Prisma 7 + SQLite · Tailwind v4 · ffprobe · TMDB
-API · Jellyfin API. See [PLAN.md](PLAN.md) for design decisions and
+Next.js 16 (App Router) · Prisma 7 + SQLite · Tailwind v4 · BetterAuth ·
+ffprobe/ffmpeg · TMDB API · Discogs API · Jellyfin API. See
+[PLAN.md](PLAN.md) for design decisions,
+[HOUSEHOLDS_PLAN.md](HOUSEHOLDS_PLAN.md) for the auth/households design, and
 [DEPLOYMENT.md](DEPLOYMENT.md) for Docker/VM deployment (shared-Caddy `edge`
 network pattern).
 
@@ -74,11 +93,26 @@ the Docker deployment reads `.env.docker` on the server (template:
 | `MOVIES_PATH` | Folder of movie files the scanner walks (e.g. `/Volumes/media/Movies` locally, `/media-share/Movies` in the container). |
 | `TVSHOWS_PATH` | Folder of TV shows (`Show (Year)/Season NN/Show SxxEyy.ext`). Optional — unset skips all TV features. |
 | `MUSIC_PATH` | Folder of a music library in iTunes layout (`Artist/Album/NN Track.m4a`). Optional — unset skips all music features. |
-| `ADULT_PATH` | Folder of an Adult library, one file per scene. Optional — unset skips all Adult features. |
-| `POSTER_CACHE_DIR` | Where downloaded TMDB artwork is cached. |
-| `ADULT_IMAGE_CACHE_DIR` | Where downloaded Adult artwork (ThePornDB) is cached. |
+| `POSTER_CACHE_DIR` | Where downloaded TMDB/Discogs artwork is cached. |
+| `VIDEO_CACHE_DIR` | Where on-demand ffmpeg remux/transcode output is cached, keyed per file — a prepared file is served straight from here on every subsequent play. |
+| `VIDEO_CACHE_MAX_BYTES` | Cap on that cache's total size; oldest-played files are evicted first once it's full. Defaults to 10 GiB if unset. |
 | `DATABASE_URL` | SQLite location, e.g. `file:./data/mediavault.db`. |
 | `FFPROBE_DOCKER_IMAGE` | Dev-only fallback: run ffprobe via `docker run` when it isn't on PATH (the deploy image installs ffmpeg). |
+
+### Authentication (required)
+
+Every route requires a signed-in household member — there is no
+unauthenticated mode. Sign-in is email one-time-code via
+[BetterAuth](https://www.better-auth.com/), so email-sending is a hard
+prerequisite, not optional config. See
+[HOUSEHOLDS_PLAN.md](HOUSEHOLDS_PLAN.md) for the full design.
+
+| Variable | Meaning |
+| --- | --- |
+| `BETTER_AUTH_SECRET` | Session/cookie signing key. Generate with `npx @better-auth/cli secret`. |
+| `BETTER_AUTH_URL` | The app's own public base URL, for building callback/redirect links. Must be a real HTTPS URL in production (also required for Jellyfin SSO discovery, below). |
+| `RESEND_API_KEY` | [Resend](https://resend.com) API key — sends the sign-in one-time-code emails. |
+| `ALLOWED_EMAILS` | Comma-separated email address(es), case-insensitive — the web of trust's root anchor (the app owner's own address(es)). This is the one access grant no database state can lock out. |
 
 ### SMB share (Docker deployment only)
 
@@ -99,11 +133,25 @@ dedicated read-only SMB account.
 | --- | --- |
 | `TMDB_API_KEY` | Free key or v4 read token from themoviedb.org → Settings → API. Optional — without it the app is scan-only (no posters, metadata, collections, or missing-content detection). |
 
-### ThePornDB (optional)
+### Discogs (optional)
+
+Discogs is the sole music metadata source (albums, tracklists, physical
+pressing details/cover art).
 
 | Variable | Meaning |
 | --- | --- |
-| `THEPORNDB_API_KEY` | Free key from theporndb.net → Account → API Tokens. Optional — without it the Adult scan is title/filename-only (no metadata or artwork). |
+| `DISCOGS_TOKEN` | Personal access token from discogs.com → Settings → Developers. Optional — unauthenticated lookups work at this app's scale, but a token raises the rate limit from 25/min to 60/min, worth it before a full-catalogue Enrich Music pass. |
+
+### Artist enrichment (optional)
+
+Biography text, portrait photo, and backdrop image for each artist —
+multi-source with graceful fallback; a missing/failed source just leaves
+that field unset.
+
+| Variable | Meaning |
+| --- | --- |
+| `AUDIODB_API_KEY` | [TheAudioDB](https://www.theaudiodb.com) key. Optional — the shared public test key works fine at this app's scale. |
+| `FANART_API_KEY` | [Fanart.tv](https://fanart.tv) key, for higher-quality backdrop art specifically. No shared key exists — this source is skipped entirely unless set. |
 
 ### Jellyfin (optional)
 
@@ -113,13 +161,10 @@ dedicated read-only SMB account.
 | `JELLYFIN_API_KEY` | Token from Dashboard → API Keys. Unset disables the integration gracefully. |
 | `JELLYFIN_MOVIES_PREFIX` | Path prefix Jellyfin's movie items carry before the relative file path (default `/media/Movies/`). |
 | `JELLYFIN_TV_PREFIX` | Same for TV episodes (default `/media/TV Shows/`). |
-| `JELLYFIN_ADULT_PREFIX` | Same for Adult scenes (default `/media/Adult/`) — powers each scene's "Play in Jellyfin" link. |
-| `ADULT_JELLYFIN_FOLDER_ID` | Folder id (GUID) of the Adult library in Jellyfin's dashboard. Required for the `/account` opt-in to grant/revoke that folder in Jellyfin. |
 
 A sync job matches Jellyfin items to files by path (Unicode-normalized, so
 macOS-scanned NFD paths match Linux NFC ones), runs automatically after every
-scan, and powers the per-version/per-episode/per-scene "Play in Jellyfin"
-links.
+scan, and powers the per-version/per-episode "Play in Jellyfin" links.
 
 ### Jellyfin SSO (optional)
 
@@ -153,11 +198,18 @@ npx prisma migrate dev
 npm run dev                # http://localhost:3000
 ```
 
-Trigger scans from the UI, or:
+Trigger scans from the UI, or hit the API routes directly — each requires an
+authenticated owner session (e.g. pass the browser's session cookie along
+with `curl`, or just use the UI's "Scan"/"Enrich" buttons, which is simpler
+for one-off runs):
 
 ```bash
-curl -X POST localhost:3000/api/scan        # add ?force=1 to re-probe everything
-curl -X POST localhost:3000/api/enrich
+curl -X POST localhost:3000/api/scan/film     # add ?force=1 to re-probe everything
+curl -X POST localhost:3000/api/scan/tv
+curl -X POST localhost:3000/api/scan/music
+curl -X POST localhost:3000/api/enrich/film
+curl -X POST localhost:3000/api/enrich/tv
+curl -X POST localhost:3000/api/enrich-music
 curl -X POST localhost:3000/api/jellyfin-sync
 ```
 
