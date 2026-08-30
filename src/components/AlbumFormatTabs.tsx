@@ -64,6 +64,38 @@ function Tile({ children }: { children: ReactNode }) {
   return <div className="flex flex-col gap-1 rounded-lg border border-border bg-bg-elevated p-3">{children}</div>;
 }
 
+// Pressing tile shared by Digital/CD/LP — content varies (a form vs. static
+// text) but all three anchor their Discogs link to the tile's own bottom
+// edge, in the tile's per-format color.
+function PressingTile({
+  color,
+  discogsUrl,
+  children,
+}: {
+  color: string;
+  discogsUrl: string | null;
+  children: ReactNode;
+}) {
+  return (
+    <Tile>
+      <span className={`text-[10px] font-semibold uppercase tracking-widest ${color}`}>Pressing</span>
+      <div className="flex min-h-15 flex-col justify-between gap-2">
+        <div>{children}</div>
+        {discogsUrl && (
+          <a
+            href={discogsUrl}
+            target="_blank"
+            rel="noreferrer"
+            className={`w-fit text-xs hover:underline ${color}`}
+          >
+            View on Discogs ↗
+          </a>
+        )}
+      </div>
+    </Tile>
+  );
+}
+
 function StatTile({
   label,
   lines,
@@ -128,24 +160,10 @@ function DigitalSummary({
           color={color.text}
           lines={[trackCount > 0 ? `${trackCount} track${trackCount === 1 ? "" : "s"} · ${formatDuration(totalSecs)}` : "No tracks"]}
         />
-        <Tile>
-          <span className={`text-[10px] font-semibold uppercase tracking-widest ${color.text}`}>Pressing</span>
-          <div className="flex min-h-15 flex-col justify-center">
-            <DigitalSourceForm albumId={albumId} initial={digitalSource} />
-          </div>
-        </Tile>
+        <PressingTile color={color.text} discogsUrl={discogsUrl}>
+          <DigitalSourceForm albumId={albumId} initial={digitalSource} />
+        </PressingTile>
       </div>
-
-      {discogsUrl && (
-        <a
-          href={discogsUrl}
-          target="_blank"
-          rel="noreferrer"
-          className={`w-fit text-xs hover:underline ${color.text}`}
-        >
-          View on Discogs ↗
-        </a>
-      )}
 
       {drmOnly && <p className="text-xs text-text-faint">Playback unavailable — FairPlay-protected files.</p>}
 
@@ -215,7 +233,7 @@ function CopySummary({ albumId, copy }: { albumId: number; copy: PhysicalCopyVie
   } else if (copy.medium === "VINYL") {
     const discsCount = resolveVinylDiscs(copy);
     const speed = copy.speedRpm ?? inferSpeedFromFormat(copy.format);
-    formatLines = [`${discsCount} disc${discsCount === 1 ? "" : "s"}`, speed];
+    formatLines = [[`${discsCount} disc${discsCount === 1 ? "" : "s"}`, speed].filter(Boolean).join(" · ")];
   } else {
     formatLines = [[copy.format, copy.discs && copy.discs > 1 && `${copy.discs} discs`].filter(Boolean).join(" · ")];
   }
@@ -229,19 +247,12 @@ function CopySummary({ albumId, copy }: { albumId: number; copy: PhysicalCopyVie
           color={color.text}
           lines={[trackCount > 0 ? `${trackCount} track${trackCount === 1 ? "" : "s"} · ${formatDuration(totalSecs)}` : "Not linked yet"]}
         />
-        <StatTile label="Pressing" color={color.text} lines={[pressingInfo]} />
+        <PressingTile color={color.text} discogsUrl={copy.discogsUrl}>
+          <span className="text-sm text-text">{pressingInfo || "—"}</span>
+        </PressingTile>
       </div>
 
-      {(noteLine || copy.discogsUrl) && (
-        <div className="flex flex-wrap items-center gap-x-2 text-xs text-text-faint">
-          {noteLine && <span>{noteLine}</span>}
-          {copy.discogsUrl && (
-            <a href={copy.discogsUrl} target="_blank" rel="noreferrer" className={`hover:underline ${color.text}`}>
-              View on Discogs ↗
-            </a>
-          )}
-        </div>
-      )}
+      {noteLine && <p className="text-xs text-text-faint">{noteLine}</p>}
 
       <PhysicalCopyForm albumId={albumId} medium={copy.medium as "VINYL" | "CD"} initial={copy} />
     </div>
