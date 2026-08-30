@@ -184,6 +184,11 @@ export interface DiscogsRelease {
   catalogNo: string | null;
   /** Name of the first listed label, if any. */
   label: string | null;
+  /** Playback speed descriptor (e.g. "45 RPM"), if Discogs' formats[]
+   *  descriptions call one out. Discogs only does this for non-default/
+   *  special-case pressings — a standard 33⅓ LP usually has nothing here,
+   *  which is exactly the "only flag the exception" signal wanted. */
+  speedRpm: string | null;
 }
 
 export async function fetchDiscogsRelease(releaseId: number): Promise<DiscogsRelease> {
@@ -205,6 +210,10 @@ export async function fetchDiscogsRelease(releaseId: number): Promise<DiscogsRel
   const images = data.images ?? [];
   const cover = images.find((img) => img.type === "primary") ?? images[0];
   const firstLabel = data.labels?.[0];
+  const allDescriptions = (data.formats ?? []).flatMap((f) => f.descriptions ?? []);
+  const speedMatch = allDescriptions
+    .map((d: string) => /(\d+(?:\s*⅓)?)\s*rpm/i.exec(d))
+    .find((m): m is RegExpExecArray => m != null);
 
   return {
     title: data.title ?? "Untitled",
@@ -214,6 +223,7 @@ export async function fetchDiscogsRelease(releaseId: number): Promise<DiscogsRel
     tracks: parseDiscogsTracklist(data.tracklist),
     coverUrl: cover?.uri ?? null,
     masterId: data.master_id ?? null,
+    speedRpm: speedMatch ? speedMatch[0].toUpperCase() : null,
     catalogNo: firstLabel?.catno && firstLabel.catno !== "none" ? firstLabel.catno : null,
     label: firstLabel?.name ?? null,
   };
@@ -1394,6 +1404,7 @@ async function populatePhysicalReleaseFromDiscogs(
     catalogNo: string | null;
     label: string | null;
     pressYear: number | null;
+    speedRpm: string | null;
   },
   discogsReleaseId: number,
 ): Promise<void> {
@@ -1405,10 +1416,11 @@ async function populatePhysicalReleaseFromDiscogs(
     // best-effort — a fetch failure just means "no tracks", not partial data
   }
   if (release) {
-    const fill: { catalogNo?: string; label?: string; pressYear?: number } = {};
+    const fill: { catalogNo?: string; label?: string; pressYear?: number; speedRpm?: string } = {};
     if (copy.catalogNo == null && release.catalogNo) fill.catalogNo = release.catalogNo;
     if (copy.label == null && release.label) fill.label = release.label;
     if (copy.pressYear == null && release.year != null) fill.pressYear = release.year;
+    if (copy.speedRpm == null && release.speedRpm) fill.speedRpm = release.speedRpm;
     if (Object.keys(fill).length > 0) {
       await prisma.physicalCopy.update({ where: { id: copy.id }, data: fill });
     }

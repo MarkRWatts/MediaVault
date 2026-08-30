@@ -337,6 +337,10 @@ model PhysicalCopy {
   catalogNo String?
   label     String? // pressing label/imprint, can differ from the original
   pressYear Int? // pressing year — often later than Album.year for reissues
+  speedRpm  String? // e.g. "45 RPM" — vinyl only. Discogs only states this for
+                     // non-default/special-case pressings (see
+                     // fetchDiscogsRelease), so null here just means "assume
+                     // standard speed for the format," not "unknown."
   condition String? // free text ("VG+", "Sealed", ...)
   notes     String?
   barcode   String? // the barcode scanned to identify THIS specific pressing — a CD and an LP of

@@ -62,6 +62,19 @@
   --audio-dts: #7fc4b8;
   --audio-dts-bg: rgba(127, 196, 184, 0.1);
   --audio-dts-border: rgba(127, 196, 184, 0.3);
+
+  /* Music format-switcher accent colors — deliberately separate from the
+     audio-dolby/audio-dts tokens above (those are for VersionCard's real
+     film DTS/Dolby badges; reusing them here would mean any future retheme
+     of one silently retheme the other too). Vinyl doesn't get its own
+     token — it reuses --accent directly, the app's one shared accent. */
+  --format-digital: #60b7b9;
+  --format-digital-bg: rgba(96, 183, 185, 0.12);
+  --format-digital-border: rgba(96, 183, 185, 0.32);
+
+  --format-cd: #7fa5da;
+  --format-cd-bg: rgba(127, 165, 218, 0.12);
+  --format-cd-border: rgba(127, 165, 218, 0.32);
 }
 
 @theme inline {
@@ -102,6 +115,12 @@
   --color-audio-dts: var(--audio-dts);
   --color-audio-dts-bg: var(--audio-dts-bg);
   --color-audio-dts-border: var(--audio-dts-border);
+  --color-format-digital: var(--format-digital);
+  --color-format-digital-bg: var(--format-digital-bg);
+  --color-format-digital-border: var(--format-digital-border);
+  --color-format-cd: var(--format-cd);
+  --color-format-cd-bg: var(--format-cd-bg);
+  --color-format-cd-border: var(--format-cd-border);
 
   --font-display: var(--font-fredoka), ui-sans-serif, system-ui, sans-serif;
   --font-sans: var(--font-fredoka), ui-sans-serif, system-ui, sans-serif;

@@ -395,7 +395,7 @@ export default function AlbumPlayer({
             onClick={handlePrevious}
             disabled={isIdle}
             aria-label="Previous track"
-            className="shrink-0 rounded px-2 py-1 text-text-muted hover:text-audio-dts disabled:opacity-30"
+            className="shrink-0 rounded px-2 py-1 text-text-muted hover:text-format-digital disabled:opacity-30"
           >
             <PreviousIcon />
           </button>
@@ -405,12 +405,12 @@ export default function AlbumPlayer({
             aria-label={isPlaying ? "Pause" : "Play album"}
             className={
               isIdle
-                ? "shrink-0 rounded-full bg-audio-dts px-5 py-2.5 text-sm font-semibold text-bg transition-colors hover:brightness-110"
-                : "shrink-0 rounded border border-border-strong bg-bg-elevated-2 px-3 py-1.5 text-sm font-medium text-text hover:border-audio-dts hover:text-audio-dts"
+                ? "shrink-0 rounded-full bg-format-digital px-5 py-2.5 text-sm font-semibold text-bg transition-colors hover:brightness-110"
+                : "shrink-0 rounded border border-border-strong bg-bg-elevated-2 px-3 py-1.5 text-sm font-medium text-text hover:border-format-digital hover:text-format-digital"
             }
           >
             {isIdle ? (
-              "Play album"
+              "▶︎ Play"
             ) : isPlaying ? (
               <PauseIcon />
             ) : isLoading ? (
@@ -424,7 +424,7 @@ export default function AlbumPlayer({
             onClick={handleNext}
             disabled={isIdle}
             aria-label="Next track"
-            className="shrink-0 rounded px-2 py-1 text-text-muted hover:text-audio-dts disabled:opacity-30"
+            className="shrink-0 rounded px-2 py-1 text-text-muted hover:text-format-digital disabled:opacity-30"
           >
             <NextIcon />
           </button>
@@ -450,7 +450,7 @@ export default function AlbumPlayer({
         </div>
 
         <div className="h-1 w-full overflow-hidden rounded-full bg-bg-hover">
-          <div ref={fillRef} className="h-full bg-audio-dts" style={{ width: "0%" }} />
+          <div ref={fillRef} className="h-full bg-format-digital" style={{ width: "0%" }} />
         </div>
       </div>
     </div>

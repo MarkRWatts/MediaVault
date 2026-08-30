@@ -50,3 +50,28 @@ export function qualityLabel(input: QualityInput): string | null {
 
   return null; // drm / unknown / unrecognised codec
 }
+
+/**
+ * Same derivation as qualityLabel, but spelled out for the album page's
+ * Format tile — "16 bit / 44.1 kHz" / "~320 kbps" instead of the compact
+ * "16/44.1" / "~320k" used everywhere else (AudioCodecBadge etc).
+ */
+export function qualityLabelVerbose(input: QualityInput): string | null {
+  const codec = (input.codec ?? "").toLowerCase();
+
+  if (input.lossless && LOSSLESS_CODECS.has(codec)) {
+    if (input.bitDepth == null || input.sampleRate == null) return null;
+    return `${input.bitDepth} bit / ${formatKhz(input.sampleRate)} kHz`;
+  }
+
+  if (!input.lossless && LOSSY_CODECS.has(codec)) {
+    if (input.sizeBytes == null || input.durationSecs == null || input.durationSecs <= 0) {
+      return null;
+    }
+    const kbps = (input.sizeBytes * 8) / input.durationSecs / 1000;
+    const rounded = Math.round(kbps / 16) * 16;
+    return rounded > 0 ? `~${rounded} kbps` : null;
+  }
+
+  return null; // drm / unknown / unrecognised codec
+}

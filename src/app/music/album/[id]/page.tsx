@@ -9,7 +9,7 @@ import AlbumFormatTabs from "@/components/AlbumFormatTabs";
 import DeleteAlbumButton from "@/components/DeleteAlbumButton";
 import { getAlbumDetail } from "@/lib/queries-music";
 import type { AlbumTrackView } from "@/lib/queries-music";
-import { qualityLabel } from "@/lib/audio-quality";
+import { qualityLabel, qualityLabelVerbose } from "@/lib/audio-quality";
 import { titleCase } from "@/lib/text-case";
 
 const KIND_LABELS: Record<string, string> = {
@@ -57,6 +57,10 @@ function dominantQuality(tracks: AlbumTrackView[]): string | null {
   return modal(tracks.map((t) => qualityLabel(t)));
 }
 
+function dominantQualityVerbose(tracks: AlbumTrackView[]): string | null {
+  return modal(tracks.map((t) => qualityLabelVerbose(t)));
+}
+
 export default async function AlbumPage({
   params,
 }: {
@@ -72,6 +76,7 @@ export default async function AlbumPage({
   const allTracks = album.discs.flatMap((d) => d.tracks);
   const codec = dominantCodec(allTracks);
   const quality = dominantQuality(allTracks);
+  const qualityVerbose = dominantQualityVerbose(allTracks);
   const displayTitle = titleCase(album.title);
 
   // Already in disc-then-trackNumber order (getAlbumDetail's sort), flattened
@@ -162,6 +167,7 @@ export default async function AlbumPage({
         discs={album.discs}
         dominantCodec={codec}
         dominantQuality={quality}
+        dominantQualityVerbose={qualityVerbose}
         playableTracks={playableTracks}
         canPlay={canPlay}
         drmOnly={drmOnly}
