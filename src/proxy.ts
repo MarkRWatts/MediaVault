@@ -15,13 +15,19 @@ import { PUBLIC_PATHS, PUBLIC_PATH_PREFIXES as PAGE_PUBLIC_PATH_PREFIXES } from 
 // exceptions below are proxy-only — they're not pages, so layout.tsx has no
 // reason to know about them.
 // /api/auth/ is BetterAuth's own routes — needed to sign in at all.
-// /api/poster/ and /api/cover/ are poster/cover art (not the actual video or
-// audio content) — deliberately excluded because next/image's built-in
-// optimizer fetches these SERVER-SIDE (via its own internal /_next/image
-// round-trip) and that internal fetch carries none of the original
-// browser's cookies, so gating them broke every optimized poster/cover
-// image app-wide the moment /api was brought into scope below.
-const PUBLIC_PATH_PREFIXES = [...PAGE_PUBLIC_PATH_PREFIXES, "/api/auth/", "/api/poster/", "/api/cover/"];
+// /api/poster/, /api/cover/, and /api/physical-cover/ are poster/cover art
+// (not the actual video or audio content) — deliberately excluded because
+// next/image's built-in optimizer fetches these SERVER-SIDE (via its own
+// internal /_next/image round-trip) and that internal fetch carries none of
+// the original browser's cookies, so gating them broke every optimized
+// poster/cover image app-wide the moment /api was brought into scope below.
+const PUBLIC_PATH_PREFIXES = [
+  ...PAGE_PUBLIC_PATH_PREFIXES,
+  "/api/auth/",
+  "/api/poster/",
+  "/api/cover/",
+  "/api/physical-cover/",
+];
 
 // Optimistic only — checks cookie presence, never hits the DB (this runs on
 // every request, including prefetches, and must stay edge-safe — no Prisma

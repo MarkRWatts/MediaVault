@@ -77,23 +77,23 @@ function StatTile({
   return (
     <Tile>
       <span className={`text-[10px] font-semibold uppercase tracking-widest ${color}`}>{label}</span>
-      {visible.length > 0 ? (
-        visible.map((line, i) => (
-          <span key={i} className="text-sm text-text">
-            {line}
-          </span>
-        ))
-      ) : (
-        <span className="text-sm text-text">—</span>
-      )}
+      <div className="flex min-h-10 flex-col">
+        {visible.length > 0 ? (
+          visible.map((line, i) => (
+            <span key={i} className="text-sm text-text">
+              {line}
+            </span>
+          ))
+        ) : (
+          <span className="text-sm text-text">—</span>
+        )}
+      </div>
     </Tile>
   );
 }
 
 function DigitalSummary({
   albumId,
-  albumTitle,
-  artistName,
   digitalSource,
   discogsUrl,
   trackCount,
@@ -101,13 +101,9 @@ function DigitalSummary({
   dominantCodec,
   dominantQuality,
   dominantQualityVerbose,
-  playableTracks,
-  canPlay,
   drmOnly,
 }: {
   albumId: number;
-  albumTitle: string;
-  artistName: string;
   digitalSource: string | null;
   discogsUrl: string | null;
   trackCount: number;
@@ -115,8 +111,6 @@ function DigitalSummary({
   dominantCodec: string | null;
   dominantQuality: string | null;
   dominantQualityVerbose: string | null;
-  playableTracks: AlbumPlayerTrack[];
-  canPlay: boolean;
   drmOnly: boolean;
 }) {
   const color = colorFor("digital");
@@ -136,17 +130,26 @@ function DigitalSummary({
         />
         <Tile>
           <span className={`text-[10px] font-semibold uppercase tracking-widest ${color.text}`}>Pressing</span>
-          <DigitalSourceForm albumId={albumId} initial={digitalSource} />
+          <div className="flex min-h-10 flex-col justify-center">
+            <DigitalSourceForm albumId={albumId} initial={digitalSource} />
+          </div>
         </Tile>
       </div>
 
-      {canPlay ? (
-        <AlbumPlayer albumTitle={albumTitle} artistName={artistName} tracks={playableTracks} />
-      ) : drmOnly ? (
-        <p className="text-xs text-text-faint">Playback unavailable — FairPlay-protected files.</p>
-      ) : null}
+      {discogsUrl && (
+        <a
+          href={discogsUrl}
+          target="_blank"
+          rel="noreferrer"
+          className={`w-fit text-xs hover:underline ${color.text}`}
+        >
+          View on Discogs ↗
+        </a>
+      )}
 
-      <FixAlbumMatchForm albumId={albumId} currentDiscogsUrl={discogsUrl} />
+      {drmOnly && <p className="text-xs text-text-faint">Playback unavailable — FairPlay-protected files.</p>}
+
+      <FixAlbumMatchForm albumId={albumId} />
     </div>
   );
 }
@@ -416,8 +419,6 @@ export default function AlbumFormatTabs({
           {active?.kind === "digital" && (
             <DigitalSummary
               albumId={albumId}
-              albumTitle={albumTitle}
-              artistName={artistName}
               digitalSource={digitalSource}
               discogsUrl={discogsUrl}
               trackCount={allTracks.length}
@@ -425,8 +426,6 @@ export default function AlbumFormatTabs({
               dominantCodec={dominantCodec}
               dominantQuality={dominantQuality}
               dominantQualityVerbose={dominantQualityVerbose}
-              playableTracks={playableTracks}
-              canPlay={canPlay}
               drmOnly={drmOnly}
             />
           )}
@@ -435,6 +434,16 @@ export default function AlbumFormatTabs({
         </div>
       </div>
 
+      {active?.kind === "digital" && canPlay && (
+        <AlbumPlayer
+          albumId={albumId}
+          albumTitle={albumTitle}
+          albumHasCover={albumHasCover}
+          coverVersion={coverVersion}
+          artistName={artistName}
+          tracks={playableTracks}
+        />
+      )}
       {active?.kind === "digital" && (
         <DigitalTracklist discs={discs} dominantCodec={dominantCodec} dominantQuality={dominantQuality} />
       )}

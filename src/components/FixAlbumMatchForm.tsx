@@ -10,13 +10,7 @@ import { useRouter } from "next/navigation";
 // old (possibly wrong) identity (see applyManualAlbumDiscogsMatch in
 // src/lib/discogs.ts). Only shown for owned albums — an unowned placeholder
 // is corrected by deleting it and letting the next enrich run recreate it.
-export default function FixAlbumMatchForm({
-  albumId,
-  currentDiscogsUrl,
-}: {
-  albumId: number;
-  currentDiscogsUrl: string | null;
-}) {
+export default function FixAlbumMatchForm({ albumId }: { albumId: number }) {
   const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
   const [discogsUrl, setDiscogsUrl] = useState("");
@@ -51,20 +45,13 @@ export default function FixAlbumMatchForm({
   if (!isOpen) {
     return (
       <div className="flex flex-col gap-1">
-        <div className="flex flex-wrap items-baseline gap-x-2">
-          <button
-            type="button"
-            onClick={() => setIsOpen(true)}
-            className="w-fit text-xs font-medium text-text-muted hover:text-text"
-          >
-            Wrong album? Fix with a Discogs link
-          </button>
-          {currentDiscogsUrl && (
-            <a href={currentDiscogsUrl} target="_blank" rel="noreferrer" className="w-fit text-xs text-text-faint hover:text-accent">
-              Currently matched via Discogs
-            </a>
-          )}
-        </div>
+        <button
+          type="button"
+          onClick={() => setIsOpen(true)}
+          className="w-fit text-xs font-medium text-text-muted hover:text-text"
+        >
+          Wrong album? Fix with a Discogs link
+        </button>
         <p className="max-w-prose text-xs text-text-faint">
           Use this only when the whole album is misidentified (wrong artist/title/year). If the album is right but a
           specific pressing&rsquo;s cover or tracklist is off, fix that copy&rsquo;s own &ldquo;Link a specific
