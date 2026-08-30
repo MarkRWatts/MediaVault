@@ -11,6 +11,7 @@ const nextConfig: NextConfig = {
     // omits `search`; posters are immutable TMDB paths with no query.
     localPatterns: [
       { pathname: "/api/cover/**" },
+      { pathname: "/api/physical-cover/**" },
       { pathname: "/api/poster/**", search: "" },
     ],
   },
