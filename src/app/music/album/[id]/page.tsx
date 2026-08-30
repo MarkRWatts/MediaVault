@@ -4,7 +4,6 @@ export const dynamic = "force-dynamic";
 
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import AudioCodecBadge from "@/components/AudioCodecBadge";
 import AlbumFormatTabs from "@/components/AlbumFormatTabs";
 import DeleteAlbumButton from "@/components/DeleteAlbumButton";
 import { getAlbumDetail } from "@/lib/queries-music";
@@ -123,36 +122,7 @@ export default async function AlbumPage({
               <span className="rounded border border-dvd-border bg-dvd-bg px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-widest leading-none text-dvd">
                 {KIND_LABELS[album.kind] ?? album.kind}
               </span>
-              {Array.from(new Set(album.copies.map((c) => c.medium))).map((medium) => (
-                <span
-                  key={medium}
-                  className="rounded border border-good-border bg-good-bg px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-widest leading-none text-good"
-                >
-                  {medium === "VINYL" ? "Vinyl" : medium}
-                  {album.copies.filter((c) => c.medium === medium).length > 1
-                    ? ` ×${album.copies.filter((c) => c.medium === medium).length}`
-                    : ""}
-                  {album.copies.some((c) => c.medium === medium && c.inferred) ? "?" : ""}
-                </span>
-              ))}
-              {codec != null && <AudioCodecBadge codec={codec} quality={quality} />}
             </div>
-            {album.copies.some((c) => c.hasCover) && (
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                {album.copies
-                  .filter((c) => c.hasCover)
-                  .map((copy) => (
-                    // Small inline badge, not worth next/image's fill/layout machinery.
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      key={copy.id}
-                      src={`/api/physical-cover/${copy.id}`}
-                      alt={`${copy.medium} cover art`}
-                      className="h-8 w-8 shrink-0 rounded border border-border-strong object-cover"
-                    />
-                  ))}
-              </div>
-            )}
           </div>
         }
         albumId={album.id}
