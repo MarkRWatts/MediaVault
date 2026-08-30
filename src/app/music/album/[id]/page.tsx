@@ -6,12 +6,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import CoverImage from "@/components/CoverImage";
 import AudioCodecBadge from "@/components/AudioCodecBadge";
-import AlbumPlayer from "@/components/AlbumPlayer";
-import PhysicalCopyForm from "@/components/PhysicalCopyForm";
-import DigitalSourceForm from "@/components/DigitalSourceForm";
+import AlbumFormatTabs from "@/components/AlbumFormatTabs";
 import DeleteAlbumButton from "@/components/DeleteAlbumButton";
-import FixAlbumMatchForm from "@/components/FixAlbumMatchForm";
-import { digitalSourceLabel } from "@/lib/digital-source";
 import { getAlbumDetail } from "@/lib/queries-music";
 import type { AlbumTrackView } from "@/lib/queries-music";
 import { qualityLabel } from "@/lib/audio-quality";
@@ -26,14 +22,6 @@ const KIND_LABELS: Record<string, string> = {
   SOUNDTRACK: "Soundtrack",
   OTHER: "Other",
 };
-
-function formatDuration(secs: number | null): string {
-  if (secs == null) return "—";
-  const total = Math.round(secs);
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return `${m}:${s.toString().padStart(2, "0")}`;
-}
 
 // Most common non-null value in a list — used for both the dominant codec
 // and the dominant quality string below. Ties keep whichever value was
@@ -84,7 +72,6 @@ export default async function AlbumPage({
   const allTracks = album.discs.flatMap((d) => d.tracks);
   const codec = dominantCodec(allTracks);
   const quality = dominantQuality(allTracks);
-  const multiDisc = album.discs.length > 1;
 
   // Already in disc-then-trackNumber order (getAlbumDetail's sort), flattened
   // with each track's disc number attached and DRM (.m4p — FairPlay,
@@ -113,190 +100,83 @@ export default async function AlbumPage({
         ← {album.artist.name}
       </Link>
 
-      <div className="flex flex-col gap-4 sm:flex-row">
-        <CoverImage
-          albumId={album.hasCover ? album.id : null}
-          version={album.coverVersion}
-          title={album.title}
-          priority
-          sizes="(min-width: 640px) 256px, 60vw"
-          className="w-40 shrink-0 rounded-lg border border-border-strong shadow-lg shadow-black/40 sm:w-64"
-        />
-        <div className="flex flex-1 flex-col gap-2 pt-1">
-          <h1 className="font-display text-3xl leading-none tracking-wide text-balance sm:text-4xl">
-            {album.title}
-          </h1>
-          <Link
-            href={`/music/artist/${album.artist.id}`}
-            className="w-fit text-sm text-text-muted hover:text-accent"
-          >
-            {album.artist.name}
-          </Link>
-          <div className="mt-1 flex flex-wrap items-center gap-2">
-            <span className="font-mono text-sm text-text-muted">{album.year ?? "Year unknown"}</span>
-            <span className="rounded border border-dvd-border bg-dvd-bg px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-widest leading-none text-dvd">
-              {KIND_LABELS[album.kind] ?? album.kind}
-            </span>
-            {Array.from(new Set(album.copies.map((c) => c.medium))).map((medium) => (
-              <span
-                key={medium}
-                className="rounded border border-good-border bg-good-bg px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-widest leading-none text-good"
-              >
-                {medium === "VINYL" ? "Vinyl" : medium}
-                {album.copies.filter((c) => c.medium === medium).length > 1
-                  ? ` ×${album.copies.filter((c) => c.medium === medium).length}`
-                  : ""}
-                {album.copies.some((c) => c.medium === medium && c.inferred) ? "?" : ""}
+      <AlbumFormatTabs
+        cover={
+          <CoverImage
+            albumId={album.hasCover ? album.id : null}
+            version={album.coverVersion}
+            title={album.title}
+            priority
+            sizes="(min-width: 640px) 256px, 60vw"
+            className="w-40 shrink-0 rounded-lg border border-border-strong shadow-lg shadow-black/40 sm:w-64"
+          />
+        }
+        meta={
+          <div className="flex flex-col gap-2">
+            <h1 className="font-display text-3xl leading-none tracking-wide text-balance sm:text-4xl">
+              {album.title}
+            </h1>
+            <Link
+              href={`/music/artist/${album.artist.id}`}
+              className="w-fit text-sm text-text-muted hover:text-accent"
+            >
+              {album.artist.name}
+            </Link>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <span className="font-mono text-sm text-text-muted">{album.year ?? "Year unknown"}</span>
+              <span className="rounded border border-dvd-border bg-dvd-bg px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-widest leading-none text-dvd">
+                {KIND_LABELS[album.kind] ?? album.kind}
               </span>
-            ))}
-            {codec != null && <AudioCodecBadge codec={codec} quality={quality} />}
-          </div>
-          {album.copies.map((copy) => (
-            <div key={copy.id} className="mt-2 flex items-center gap-2 text-xs text-text-faint">
-              {copy.hasCover && (
-                // Small inline badge, not worth next/image's fill/layout machinery.
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={`/api/physical-cover/${copy.id}`}
-                  alt={`${copy.medium} cover art`}
-                  className="h-8 w-8 shrink-0 rounded border border-border-strong object-cover"
-                />
-              )}
-              <span>
-                {[
-                  copy.format,
-                  copy.discs && copy.discs > 1 && `${copy.discs} discs`,
-                  copy.catalogNo && `Cat# ${copy.catalogNo}`,
-                  copy.label,
-                  copy.pressYear,
-                  copy.condition,
-                  copy.inferred && "inferred from rip",
-                  copy.notes,
-                  copy.barcode && `Barcode ${copy.barcode}`,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </span>
+              {Array.from(new Set(album.copies.map((c) => c.medium))).map((medium) => (
+                <span
+                  key={medium}
+                  className="rounded border border-good-border bg-good-bg px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-widest leading-none text-good"
+                >
+                  {medium === "VINYL" ? "Vinyl" : medium}
+                  {album.copies.filter((c) => c.medium === medium).length > 1
+                    ? ` ×${album.copies.filter((c) => c.medium === medium).length}`
+                    : ""}
+                  {album.copies.some((c) => c.medium === medium && c.inferred) ? "?" : ""}
+                </span>
+              ))}
+              {codec != null && <AudioCodecBadge codec={codec} quality={quality} />}
             </div>
-          ))}
-          {album.owned && album.digitalSource && (
-            <div className="mt-1 text-xs text-text-faint">
-              Files: {digitalSourceLabel(album.digitalSource)}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {canPlay && (
-        <AlbumPlayer albumTitle={album.title} artistName={album.artist.name} tracks={playableTracks} />
-      )}
-      {drmOnly && (
-        <p className="text-xs text-text-faint">Playback unavailable — FairPlay-protected files.</p>
-      )}
-
-      {album.owned && (
-        <FixAlbumMatchForm albumId={album.id} currentDiscogsUrl={album.discogsUrl} />
-      )}
-
-      <div className="flex flex-wrap items-center gap-3">
-        {album.copies.map((copy) => (
-          <PhysicalCopyForm key={copy.id} albumId={album.id} medium={copy.medium as "VINYL" | "CD"} initial={copy} />
-        ))}
-        {/* Always-available blank forms — multiple copies of the same medium
-            are legal (an original pressing and a later reissue, say), so
-            this is a perpetual "add another" rather than a fixed pair. */}
-        <PhysicalCopyForm albumId={album.id} medium="VINYL" initial={null} />
-        <PhysicalCopyForm albumId={album.id} medium="CD" initial={null} />
-        {album.owned && <DigitalSourceForm albumId={album.id} initial={album.digitalSource} />}
-        {!album.owned && (
-          <DeleteAlbumButton albumId={album.id} title={album.title} artistId={album.artist.id} />
-        )}
-      </div>
-
-      <div className="flex flex-col gap-6">
-        {album.discs.length === 0 ? (
-          // A physical copy's own tracklist (rendered below) can stand in for
-          // this — only claim "no track data" when there's truly none to show.
-          album.copies.every((c) => c.tracks.length === 0) && (
-            <p className="py-8 text-center text-sm text-text-faint">No track data for this album yet.</p>
-          )
-        ) : (
-          album.discs.map((disc) => (
-            <div key={disc.disc} className="flex flex-col gap-2">
-              {multiDisc && (
-                <h2 className="font-mono text-xs uppercase tracking-widest text-text-faint">
-                  Disc {disc.disc}
-                </h2>
-              )}
-              <ul className="flex flex-col divide-y divide-border rounded-lg border border-border bg-bg-elevated">
-                {disc.tracks.map((t) => {
-                  const trackQuality = qualityLabel(t);
-                  const differsFromDominant = t.codec !== codec || trackQuality !== quality;
-                  return (
-                    <li key={t.id} className="flex items-center gap-3 px-3 py-2">
-                      <span className="w-6 shrink-0 text-right font-mono text-xs text-text-faint">
-                        {t.trackNumber != null ? t.trackNumber.toString().padStart(2, "0") : "—"}
-                      </span>
-                      <span className="min-w-0 flex-1 truncate text-sm text-text">{t.title}</span>
-                      {differsFromDominant && <AudioCodecBadge codec={t.codec} quality={trackQuality} />}
-                      <span className="shrink-0 font-mono text-xs text-text-faint">
-                        {formatDuration(t.durationSecs)}
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          ))
-        )}
-      </div>
-
-      {album.copies
-        .filter((copy) => copy.tracks.length > 0)
-        .map((copy, _i, tracklisted) => {
-          const copyMultiDisc = new Set(copy.tracks.map((t) => t.disc)).size > 1;
-          const sameMediumCount = tracklisted.filter((c) => c.medium === copy.medium).length;
-          const byDisc = new Map<number, typeof copy.tracks>();
-          for (const t of copy.tracks) {
-            const arr = byDisc.get(t.disc);
-            if (arr) arr.push(t);
-            else byDisc.set(t.disc, [t]);
-          }
-          return (
-            <div key={copy.id} className="flex flex-col gap-3">
-              <h2 className="font-mono text-xs uppercase tracking-widest text-text-faint">
-                {copy.medium === "VINYL" ? "Vinyl" : copy.medium} tracklist
-                {sameMediumCount > 1 ? ` (${copy.format}${copy.pressYear ? `, ${copy.pressYear}` : ""})` : ""}
-              </h2>
-              <div className="flex flex-col gap-6">
-                {Array.from(byDisc.entries())
-                  .sort(([a], [b]) => a - b)
-                  .map(([disc, tracks]) => (
-                    <div key={disc} className="flex flex-col gap-2">
-                      {copyMultiDisc && (
-                        <h3 className="font-mono text-xs uppercase tracking-widest text-text-faint">
-                          Side/Disc {disc}
-                        </h3>
-                      )}
-                      <ul className="flex flex-col divide-y divide-border rounded-lg border border-border bg-bg-elevated">
-                        {tracks.map((t, i) => (
-                          <li key={i} className="flex items-center gap-3 px-3 py-2">
-                            <span className="w-6 shrink-0 text-right font-mono text-xs text-text-faint">
-                              {t.trackNumber != null ? t.trackNumber.toString().padStart(2, "0") : "—"}
-                            </span>
-                            <span className="min-w-0 flex-1 truncate text-sm text-text">{t.title}</span>
-                            <span className="shrink-0 font-mono text-xs text-text-faint">
-                              {formatDuration(t.durationSecs)}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
+            {album.copies.some((c) => c.hasCover) && (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                {album.copies
+                  .filter((c) => c.hasCover)
+                  .map((copy) => (
+                    // Small inline badge, not worth next/image's fill/layout machinery.
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      key={copy.id}
+                      src={`/api/physical-cover/${copy.id}`}
+                      alt={`${copy.medium} cover art`}
+                      className="h-8 w-8 shrink-0 rounded border border-border-strong object-cover"
+                    />
                   ))}
               </div>
-            </div>
-          );
-        })}
+            )}
+          </div>
+        }
+        albumId={album.id}
+        albumTitle={album.title}
+        artistName={album.artist.name}
+        owned={album.owned}
+        copies={album.copies}
+        digitalSource={album.digitalSource}
+        discogsUrl={album.discogsUrl}
+        discs={album.discs}
+        dominantCodec={codec}
+        dominantQuality={quality}
+        playableTracks={playableTracks}
+        canPlay={canPlay}
+        drmOnly={drmOnly}
+      />
+
+      {!album.owned && (
+        <DeleteAlbumButton albumId={album.id} title={album.title} artistId={album.artist.id} />
+      )}
     </div>
   );
 }

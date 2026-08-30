@@ -384,17 +384,18 @@ export default function AlbumPlayer({
   const currentTrack = tracks[index] ?? tracks[0];
   const isPlaying = status === "playing";
   const isLoading = status === "loading";
+  const isIdle = status === "idle";
 
   return (
-    <div className="sticky bottom-0 z-10 -mx-4 border-t border-border bg-bg-elevated px-4 py-3 sm:-mx-6 sm:px-6">
-      <div className="mx-auto flex max-w-3xl flex-col gap-2">
+    <div className="rounded-lg border border-border bg-bg-elevated p-4">
+      <div className="flex flex-col gap-2">
         <div className="flex items-center gap-3">
           <button
             type="button"
             onClick={handlePrevious}
-            disabled={status === "idle"}
+            disabled={isIdle}
             aria-label="Previous track"
-            className="shrink-0 rounded px-2 py-1 text-text-muted hover:text-text disabled:opacity-30"
+            className="shrink-0 rounded px-2 py-1 text-text-muted hover:text-audio-dts disabled:opacity-30"
           >
             <PreviousIcon />
           </button>
@@ -402,9 +403,13 @@ export default function AlbumPlayer({
             type="button"
             onClick={handlePlayPause}
             aria-label={isPlaying ? "Pause" : "Play album"}
-            className="shrink-0 rounded border border-border-strong bg-bg-elevated-2 px-3 py-1.5 text-sm font-medium text-text hover:border-accent-border hover:text-accent-bright"
+            className={
+              isIdle
+                ? "shrink-0 rounded-full bg-audio-dts px-5 py-2.5 text-sm font-semibold text-bg transition-colors hover:brightness-110"
+                : "shrink-0 rounded border border-border-strong bg-bg-elevated-2 px-3 py-1.5 text-sm font-medium text-text hover:border-audio-dts hover:text-audio-dts"
+            }
           >
-            {status === "idle" ? (
+            {isIdle ? (
               "Play album"
             ) : isPlaying ? (
               <PauseIcon />
@@ -417,9 +422,9 @@ export default function AlbumPlayer({
           <button
             type="button"
             onClick={handleNext}
-            disabled={status === "idle"}
+            disabled={isIdle}
             aria-label="Next track"
-            className="shrink-0 rounded px-2 py-1 text-text-muted hover:text-text disabled:opacity-30"
+            className="shrink-0 rounded px-2 py-1 text-text-muted hover:text-audio-dts disabled:opacity-30"
           >
             <NextIcon />
           </button>
@@ -445,7 +450,7 @@ export default function AlbumPlayer({
         </div>
 
         <div className="h-1 w-full overflow-hidden rounded-full bg-bg-hover">
-          <div ref={fillRef} className="h-full bg-accent" style={{ width: "0%" }} />
+          <div ref={fillRef} className="h-full bg-audio-dts" style={{ width: "0%" }} />
         </div>
       </div>
     </div>
