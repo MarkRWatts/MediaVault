@@ -31,20 +31,18 @@ interface FilmCandidate {
   filmId?: number;
 }
 interface AlbumCandidate {
-  mbid: string;
-  // Set only by a barcode-resolved hit (resolveMusic) — the specific
-  // pressing's release id, carrying its own tracklist/cover. Absent from a
-  // title-search pick (searchReleaseGroupsByTitle only knows release-groups).
-  // Exactly one of releaseMbid/discogsReleaseId is ever set: a Discogs
-  // fallback kicks in only when MusicBrainz had no entry for this barcode
-  // at all (see resolveMusic in scan-resolve.ts).
-  releaseMbid?: string;
-  discogsReleaseId?: number;
+  // Discogs identity — a master groups every pressing/edition of a release
+  // (group-level identity); discogsReleaseId is either the specific
+  // pressing resolved by a barcode scan (carrying its own tracklist/cover),
+  // or a standalone release with no master, in which case it doubles as the
+  // album's own identity. At least one of the two is always set.
+  discogsMasterId: number | null;
+  discogsReleaseId: number | null;
   title: string;
   artistName: string;
   year: number | null;
   format: string | null;
-  coverArtUrl: string;
+  coverArtUrl: string | null;
   // Set only by /api/barcode/search-album — see FilmCandidate.owned.
   owned?: boolean;
   albumId?: number;
@@ -90,8 +88,8 @@ interface QueueItem {
 // Small cover/poster thumbnail so the user can visually confirm a lookup
 // result is the right release before adding it — falls back to the same
 // typeset placeholder card the rest of the app uses (NoPoster) if there's
-// no image, or the image 404s (e.g. Cover Art Archive has no art for a
-// given release-group).
+// no image, or the image 404s (Discogs cover images are user-submitted and
+// occasionally missing or broken).
 function Thumb({
   src,
   title,
@@ -155,11 +153,7 @@ async function addCandidate(
       ? { type: "film", tmdbId: candidate.candidate.tmdbId, medium, barcode }
       : {
           type: "album",
-          mbid: candidate.candidate.mbid,
-          // Only present for a barcode-resolved hit (not a title-search
-          // pick) — carries the specific pressing's tracklist/cover, from
-          // whichever source resolveMusic found it through.
-          releaseMbid: candidate.candidate.releaseMbid,
+          discogsMasterId: candidate.candidate.discogsMasterId,
           discogsReleaseId: candidate.candidate.discogsReleaseId,
           medium,
           barcode,
@@ -236,7 +230,7 @@ function TitleSearchWidget({
   };
 
   const handleAdd = async (r: SearchCandidate) => {
-    const key = r.kind === "film" ? String(r.candidate.tmdbId) : r.candidate.mbid;
+    const key = r.kind === "film" ? String(r.candidate.tmdbId) : String(r.candidate.discogsMasterId ?? r.candidate.discogsReleaseId);
     setAddingKey(key);
     setError(null);
     try {
@@ -320,7 +314,7 @@ function TitleSearchWidget({
         <div className="flex flex-col gap-2">
           {results.length === 0 && <p className="text-xs text-text-faint">No matches found.</p>}
           {results.map((r) => {
-            const key = r.kind === "film" ? String(r.candidate.tmdbId) : r.candidate.mbid;
+            const key = r.kind === "film" ? String(r.candidate.tmdbId) : String(r.candidate.discogsMasterId ?? r.candidate.discogsReleaseId);
             const rowAdded = addedMap[key];
             const thumbSrc =
               r.kind === "film"
@@ -496,7 +490,7 @@ function DiscogsRowView({
 
         {row.status === "resolved" && row.result?.status === "unknown" && (
           <p className="text-xs text-text-faint">
-            No MusicBrainz match for this release — try &ldquo;Search by title&rdquo; in Single scan mode instead.
+            No Discogs match for this release — try &ldquo;Search by title&rdquo; in Single scan mode instead.
           </p>
         )}
 

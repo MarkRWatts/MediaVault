@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { runMusicEnrich } from "@/lib/musicbrainz";
+import { runMusicEnrich } from "@/lib/discogs";
 import { requireOwnerOrResponse } from "@/lib/require-member";
 
 export async function POST() {

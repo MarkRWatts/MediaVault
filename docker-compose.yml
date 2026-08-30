@@ -58,15 +58,10 @@ services:
       # The product owner's own address(es); this is the one thing no
       # database state can lock out.
       ALLOWED_EMAILS: ${ALLOWED_EMAILS:-}
-      # Self-hosted MusicBrainz mirror (metabrainz/musicbrainz-docker, run
-      # via OrbStack on the Mac — see src/lib/musicbrainz.ts) — e.g.
-      # http://192.168.1.129:15000/ws/2. Leave blank to use the public API.
-      # A music lookup fails outright if this is set but the mirror isn't
-      # running, rather than silently falling back.
-      MUSICBRAINZ_BASE_URL: ${MUSICBRAINZ_BASE_URL:-}
-      # Discogs fallback for pressing-specific tracklist/cover when
-      # MusicBrainz has no entry for it (see src/lib/discogs.ts). Optional —
-      # only raises the API rate limit, not required at this app's scale.
+      # Discogs is the sole music metadata source (see src/lib/discogs.ts).
+      # Optional — no key needed for read-only lookups at this app's scale,
+      # but setting one raises the rate limit (25/min -> 60/min), strongly
+      # recommended before a full-catalogue Enrich Music pass.
       DISCOGS_TOKEN: ${DISCOGS_TOKEN:-}
       # Artist bio/photo/backdrop enrichment (see src/lib/artist-bio.ts).
       # AUDIODB_API_KEY is optional (falls back to the shared public test

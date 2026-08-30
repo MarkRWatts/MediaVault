@@ -31,7 +31,7 @@ function byArtistOrder<T extends { various: boolean; sortName: string }>(a: T, b
 // — digitally (owned) or physically (a logged PhysicalCopy, e.g. a
 // vinyl-only pressing with no rip) — that has a cached cover image. A pure
 // gap-tracking placeholder (owned=false, no physical copy) is never picked,
-// same as one with no cover art yet (enrichment hasn't run, or CAA/iTunes
+// same as one with no cover art yet (enrichment hasn't run, or Discogs/iTunes
 // had nothing).
 function pickCoverAlbumId(
   albums: {
@@ -118,7 +118,7 @@ export async function getMusicIndex(): Promise<MusicIndexData> {
       const coverAlbumId = pickCoverAlbumId(a.albums);
       const coverAlbum = coverAlbumId == null ? null : a.albums.find((al) => al.id === coverAlbumId);
       // See getArtistDetail's totalStudio comment: studioTotal is the
-      // MusicBrainz-known count even when gap tracking never created
+      // Discogs-known count even when gap tracking never created
       // placeholders for it, so a Barenboim-style artist shows "1/282" here
       // rather than "1/1".
       return {
@@ -183,11 +183,11 @@ export interface ArtistDetail {
   studio: ArtistCatalogueAlbum[]; // full back-catalogue, release (year) order, nulls last
   shelf: ArtistShelfAlbum[]; // owned non-studio albums, by year
   stats: { owned: number; total: number; pct: number; yearMin: number | null; yearMax: number | null };
-  /** True when MusicBrainz's known studio catalogue (Artist.studioTotal) is
+  /** True when Discogs' known studio catalogue (Artist.studioTotal) is
    *  larger than the studio Album rows actually present — i.e. gap tracking
    *  never kicked in (see constants.ts MUSIC_GAP_MIN_OWNED/MUSIC_GAP_MIN_PCT
-   *  and musicbrainz.ts's reconcileArtistAlbums), so `total` above reflects
-   *  the honest MusicBrainz count even though no missing-album placeholders
+   *  and discogs.ts's reconcileArtistAlbums), so `total` above reflects
+   *  the honest Discogs count even though no missing-album placeholders
    *  exist to fill the grid. */
   gapTrackingOff: boolean;
 }
@@ -226,7 +226,7 @@ export async function getArtistDetail(id: number): Promise<ArtistDetail | null> 
     .sort(byYearAsc);
 
   const ownedStudio = studio.filter((a) => a.owned).length;
-  // studioTotal is the MusicBrainz-known count, recorded even when gap
+  // studioTotal is the Discogs-known count, recorded even when gap
   // tracking never created placeholders for it — fall back to the rows
   // actually present (pre-enrichment, or an artist with no MB match at all)
   // and never let a stale/short studioTotal under-report what's on disk.
@@ -295,12 +295,15 @@ export interface PhysicalCopyView {
   pressYear: number | null;
   condition: string | null;
   notes: string | null;
-  /** Set once this copy is linked to a specific MusicBrainz release. */
-  releaseMbid: string | null;
-  /** Set once this copy is linked to a specific Discogs release (fallback
-   *  when MusicBrainz has no entry for this pressing) — mutually exclusive
-   *  with releaseMbid in practice. */
+  /** The barcode that identified THIS specific pressing, if scanned — a
+   *  CD and an LP of the same album carry different barcodes, so this is
+   *  per-copy, not per-album. Lets the owner re-query Discogs later. */
+  barcode: string | null;
+  /** Set once this copy is linked to a specific Discogs release. */
   discogsReleaseId: number | null;
+  /** The literal discogs.com/release/... URL used for that link, for
+   *  display/provenance — null until linked. */
+  discogsUrl: string | null;
   /** True when this pressing has its own cover art — served at /api/physical-cover/<id>. */
   hasCover: boolean;
   /** Pressing-specific tracklist (see PhysicalTrack) — empty unless linked to a release. */
@@ -321,6 +324,9 @@ export interface AlbumDetail {
   /** See MusicIndexArtist.coverVersion. Null when hasCover is false. */
   coverVersion: number | null;
   trackTotal: number | null;
+  /** The literal discogs.com URL used for this album's own identity match,
+   *  if any — shown in the "fix incorrect match" UI as current provenance. */
+  discogsUrl: string | null;
   artist: { id: number; name: string; various: boolean };
   discs: AlbumDiscView[]; // ordered by disc number, tracks by trackNumber (nulls last)
 }
@@ -376,7 +382,7 @@ export async function getAlbumDetail(id: number): Promise<AlbumDetail | null> {
     owned: album.owned,
     copies: album.physicalCopies
       .slice()
-      .sort((a, b) => a.medium.localeCompare(b.medium))
+      .sort((a, b) => a.medium.localeCompare(b.medium) || a.addedAt.getTime() - b.addedAt.getTime())
       .map((c) => ({
         id: c.id,
         medium: c.medium,
@@ -388,8 +394,9 @@ export async function getAlbumDetail(id: number): Promise<AlbumDetail | null> {
         pressYear: c.pressYear,
         condition: c.condition,
         notes: c.notes,
-        releaseMbid: c.releaseMbid,
+        barcode: c.barcode,
         discogsReleaseId: c.discogsReleaseId,
+        discogsUrl: c.discogsUrl,
         hasCover: c.coverPath != null,
         tracks: c.tracks
           .slice()
@@ -399,6 +406,7 @@ export async function getAlbumDetail(id: number): Promise<AlbumDetail | null> {
     digitalSource: album.digitalSource,
     hasCover: album.coverPath != null,
     coverVersion: album.coverPath != null ? album.updatedAt.getTime() : null,
+    discogsUrl: album.discogsUrl,
     trackTotal: album.trackTotal,
     artist: album.artist,
     discs,
@@ -461,7 +469,7 @@ export async function getMusicReportData(): Promise<MusicReportData> {
   // are only created for an artist once we own enough of its studio
   // catalogue to be worth completing (see constants.ts MUSIC_GAP_MIN_OWNED /
   // MUSIC_GAP_MIN_PCT, enforced at placeholder-creation time in
-  // musicbrainz.ts's reconcileArtistAlbums) — a sub-threshold artist simply
+  // discogs.ts's reconcileArtistAlbums) — a sub-threshold artist simply
   // has no owned=false rows, so missingAlbums.length === 0 already excludes
   // it below. This check is kept as belt-and-braces in case stale rows ever
   // exist (e.g. between an enrichment run and the threshold changing).

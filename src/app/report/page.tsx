@@ -112,7 +112,7 @@ export default async function ReportPage({
 
   // missingByArtist only lists artists past the gap-tracking threshold (see
   // constants.ts MUSIC_GAP_MIN_OWNED/MUSIC_GAP_MIN_PCT — enforced at
-  // placeholder-creation time in musicbrainz.ts, this is just a
+  // placeholder-creation time in discogs.ts, this is just a
   // belt-and-braces re-check) — the section count reflects what's actually
   // listed, not the global albumsMissing total.
   const missingBackCatalogueCount = music.missingByArtist.reduce((sum, g) => sum + g.albums.length, 0);

@@ -1,8 +1,11 @@
 // Cover art fetch for music albums. Priority for an OWNED album: (1) the
 // art embedded in the album's own files — the owner hand-curated these via
-// iTunes, so for anything on disk this beats any online source; (2) Cover
-// Art Archive's release-group front image; (3) the iTunes Search API. An
-// owned=false album (no files on disk) only has (2) and (3) available.
+// iTunes, so for anything on disk this beats any online source; (2) the
+// iTunes Search API. An owned=false album (no files on disk) only has (2)
+// available at the album level — Discogs cover art is fetched opportunistically
+// via a linked PhysicalCopy (see fetchDiscogsPhysicalCopyCover/
+// fetchDiscogsAlbumCover below), not as a standalone album-level tier, since
+// it has no equivalent of Cover Art Archive's release-group-keyed lookup.
 // Caches bytes under POSTER_CACHE_DIR/covers/<albumId>.jpg, mirroring
 // tmdb.ts's cachePoster: best-effort throughout, never throws — a failed
 // fetch just leaves Album.coverPath (and coverSource) unset. A coverSource
@@ -20,13 +23,11 @@ const execFileAsync = promisify(execFile);
 
 const POSTER_CACHE_DIR = process.env.POSTER_CACHE_DIR ?? "./data/posters";
 const COVERS_DIR = path.join(POSTER_CACHE_DIR, "covers");
-const CAA_BASE = "https://coverartarchive.org";
 const ITUNES_SEARCH_BASE = "https://itunes.apple.com/search";
 const USER_AGENT = "MediaVault/1.4 (https://github.com/MarkRWatts/MediaVault)";
 // Sanity floor for the online sources — a real cover is comfortably above
-// this; CAA occasionally serves a tiny placeholder/error image on a
-// technicality 200, and a truncated/failed download would also land under
-// this.
+// this; a source occasionally serving a tiny placeholder/error image on a
+// technicality 200, or a truncated/failed download, would land under this.
 const MIN_COVER_BYTES = 5 * 1024;
 // Embedded art comes straight off disk (no truncation risk), so a much
 // lower floor is enough to catch a genuinely empty/corrupt attached-picture
@@ -38,11 +39,10 @@ const MIN_EMBEDDED_COVER_BYTES = 2 * 1024;
 // mandatory artist-name check below.
 const ITUNES_TITLE_THRESHOLD = 0.6;
 
-export type CoverSource = "embedded" | "caa" | "itunes" | "discogs" | "manual";
+export type CoverSource = "embedded" | "itunes" | "discogs" | "manual";
 
 export interface CoverTarget {
   id: number;
-  mbid: string | null;
   title: string;
   artistName: string;
   /** Whether the album has files on disk — gates the embedded-art attempt. */
@@ -55,38 +55,6 @@ export interface CoverResult {
   /** Value to store on Album.coverPath ("<albumId>.jpg", relative to POSTER_CACHE_DIR/covers/). */
   fileName: string;
   source: CoverSource;
-}
-
-async function fetchCaaCoverAt(url: string): Promise<Buffer | null> {
-  try {
-    const res = await fetch(url, {
-      headers: { "User-Agent": USER_AGENT },
-      redirect: "follow",
-      // No default fetch timeout in Node — a hung CAA socket can freeze the
-      // whole enrichment run (same failure class as mbFetch; see there).
-      signal: AbortSignal.timeout(60_000),
-    });
-    if (!res.ok) return null;
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.byteLength < MIN_COVER_BYTES) return null;
-    return buf;
-  } catch {
-    return null;
-  }
-}
-
-function fetchCaaCover(mbid: string): Promise<Buffer | null> {
-  return fetchCaaCoverAt(`${CAA_BASE}/release-group/${mbid}/front-250`);
-}
-
-/**
- * Cover art for one specific *release* (pressing), as opposed to the
- * release-group's generic art — a vinyl reissue can have different cover
- * art than the CD it shares a release-group with. Used for PhysicalCopy
- * rows that have a releaseMbid (see attachPhysicalRelease in musicbrainz.ts).
- */
-function fetchReleaseCaaCover(releaseMbid: string): Promise<Buffer | null> {
-  return fetchCaaCoverAt(`${CAA_BASE}/release/${releaseMbid}/front-250`);
 }
 
 // Cheap token-overlap similarity in [0, 1] — no need for a real string-
@@ -205,7 +173,7 @@ async function fetchItunesCover(artistName: string, title: string): Promise<Buff
 // sniff content by magic bytes, not extension, so this renders fine either
 // way. A track with no attached-picture stream (or a .m4p DRM file we never
 // probe) simply makes the `-map 0:v:0` fail; that failure is caught and
-// treated as "no embedded art", falling through to CAA/iTunes.
+// treated as "no embedded art", falling through to iTunes.
 //
 // Mirrors ffprobe.ts's local-vs-docker fallback: prefer `ffmpeg` on PATH,
 // else run the same FFPROBE_DOCKER_IMAGE (mwader/static-ffmpeg ships both
@@ -299,8 +267,11 @@ async function fetchEmbeddedCoverForAlbum(albumId: number): Promise<Buffer | nul
 
 /**
  * Fetch + cache a cover for one album. Priority for an owned album:
- * embedded art (from its own files) -> CAA (by mbid) -> iTunes Search. An
- * owned=false album (no files) skips straight to CAA -> iTunes. Refuses
+ * embedded art (from its own files) -> iTunes Search. An owned=false album
+ * (no files) skips straight to iTunes. Discogs cover art has no
+ * album-level (group-keyed) lookup the way Cover Art Archive did — it's
+ * only fetched opportunistically via a linked PhysicalCopy, see
+ * fetchDiscogsPhysicalCopyCover/fetchDiscogsAlbumCover below. Refuses
  * outright (returns null) when the album's current coverSource is "manual"
  * — that's an owner-curated override and must never be replaced. Never
  * throws — callers should treat a null return as "leave coverPath/coverSource
@@ -315,10 +286,6 @@ export async function fetchCover(album: CoverTarget): Promise<CoverResult | null
   if (album.owned) {
     buf = await fetchEmbeddedCoverForAlbum(album.id);
     if (buf) source = "embedded";
-  }
-  if (!buf && album.mbid) {
-    buf = await fetchCaaCover(album.mbid);
-    if (buf) source = "caa";
   }
   if (!buf) {
     buf = await fetchItunesCover(album.artistName, album.title);
@@ -337,12 +304,10 @@ export async function fetchCover(album: CoverTarget): Promise<CoverResult | null
 }
 
 /**
- * Fetch + cache cover art for one specific pressing (PhysicalCopy), keyed by
- * its own file name so it never collides with — or overwrites — the album's
- * main cover. CAA-only (no embedded/iTunes fallback: there's no ripped file
- * to pull embedded art from, and iTunes has no notion of "which pressing").
- * A miss is a normal outcome, not an error — the album's own cover still
- * shows for this copy. Refuses outright when coverSource is already
+ * Cache cover art for one specific pressing (PhysicalCopy), keyed by its own
+ * file name so it never collides with — or overwrites — the album's main
+ * cover. A miss is a normal outcome, not an error — the album's own cover
+ * still shows for this copy. Refuses outright when coverSource is already
  * "manual", same convention as fetchCover.
  */
 async function cachePhysicalCopyCover(
@@ -361,25 +326,12 @@ async function cachePhysicalCopyCover(
   }
 }
 
-export async function fetchPhysicalCopyCover(copy: {
-  albumId: number;
-  medium: string;
-  releaseMbid: string;
-  coverSource: string | null;
-}): Promise<CoverResult | null> {
-  if (copy.coverSource === "manual") return null;
-
-  const buf = await fetchReleaseCaaCover(copy.releaseMbid);
-  if (!buf) return null;
-  return cachePhysicalCopyCover(copy.albumId, copy.medium, buf, "caa");
-}
-
 /**
- * Discogs fallback cover fetch (see discogs.ts) — Discogs already hands
- * back a direct, full-size image URL (unlike MusicBrainz+CAA's separate
- * archive lookup), so this is a plain download. May be a lower-quality or
- * off-target photo (e.g. shrinkwrapped sleeve) — Discogs images are
- * user-submitted and there's no way to verify quality from the API alone.
+ * Pressing-specific cover fetch (see discogs.ts) — Discogs hands back a
+ * direct, full-size image URL already, so this is a plain download. May be
+ * a lower-quality or off-target photo (e.g. shrinkwrapped sleeve) —
+ * Discogs images are user-submitted and there's no way to verify quality
+ * from the API alone.
  */
 export async function fetchDiscogsPhysicalCopyCover(copy: {
   albumId: number;
@@ -404,13 +356,12 @@ export async function fetchDiscogsPhysicalCopyCover(copy: {
 }
 
 /**
- * Album-level fallback for a physical-only Discogs-sourced album whose
- * MusicBrainz release-group has no Cover Art Archive entry and no iTunes
- * match either (see fetchCover above) — common for small-run/novelty
+ * Album-level fallback for a physical-only album whose iTunes cover search
+ * came up empty too (see fetchCover above) — common for small-run/novelty
  * releases (a kids' TV tie-in single, say). Reuses the same pressing photo
  * just fetched for its PhysicalCopy rather than leaving the album with no
  * cover at all when a usable image is already in hand. The caller (see
- * populatePhysicalReleaseFromDiscogs in musicbrainz.ts) only calls this when
+ * populatePhysicalReleaseFromDiscogs in discogs.ts) only calls this when
  * the album genuinely has none yet — never overwrites an existing or
  * manually-set one.
  */

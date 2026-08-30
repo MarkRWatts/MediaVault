@@ -5,7 +5,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { normalizeBarcode } from "@/lib/musicbrainz";
+import { normalizeBarcode } from "@/lib/discogs";
 import { shapeScanQueueItem } from "@/lib/scan-resolve";
 import { requireOwnerOrResponse } from "@/lib/require-member";
 

@@ -16,7 +16,7 @@ pages, and a "what's missing" collector's report.
 - **Shows** — TV series with per-season episode lists, missing episodes
   greyed out, and per-episode play links. Episode numbering follows disc
   order (TMDB DVD episode groups), because this is a disc library.
-- **Music** — artists with studio back-catalogues from MusicBrainz, owned vs
+- **Music** — artists with studio back-catalogues from Discogs, owned vs
   missing albums shown by colour, lossless/codec + quality badges
   (`ALAC · 16/44.1`), cover art extracted from the files' own embedded
   artwork, and **gapless in-browser album playback** — lossless end-to-end

@@ -1,6 +1,6 @@
 // Best-effort UPC/EAN -> product title lookup for movie barcodes. There's no
-// free, authoritative barcode database for DVD/Blu-ray the way MusicBrainz
-// covers CD/vinyl (see searchReleaseByBarcode in musicbrainz.ts), so this
+// free, authoritative barcode database for DVD/Blu-ray the way Discogs
+// covers CD/vinyl (see searchDiscogsByBarcode in discogs.ts), so this
 // hits UPCitemdb's free trial endpoint and returns a title guess for the
 // caller to fuzzy-match against TMDB. Never throws — a failed/rate-limited
 // lookup just means "couldn't identify this barcode", not a hard error.
@@ -10,7 +10,7 @@
 // — a batch scanning session that processes several barcodes in a row was
 // silently losing most of them to this, indistinguishable from a genuine
 // "not found". throttle()/RETRY_BACKOFF_MS mirror the same pattern
-// musicbrainz.ts already uses for MusicBrainz's real 1 req/s cap.
+// discogs.ts already uses for Discogs' own rate limit.
 
 const UPCITEMDB_URL = "https://api.upcitemdb.com/prod/trial/lookup";
 const MIN_INTERVAL_MS = 1200;

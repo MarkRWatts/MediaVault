@@ -253,20 +253,16 @@ works.
 - `POSTER_CACHE_DIR`: `/app/data/posters` (set in the base `docker-compose.yml`).
 - `MOVIES_SMB_HOST/SHARE/USERNAME/PASSWORD`: the CIFS named-volume credentials (see `.env.docker.example`); `MOVIES_HOST_PATH` points at an empty placeholder dir.
 - `TMDB_API_KEY`: Free key (optional; leave blank for scan-only).
-- `MUSICBRAINZ_BASE_URL`: Optional — points music lookups at a self-hosted
-  MusicBrainz mirror (metabrainz/musicbrainz-docker, run via OrbStack on the
-  Mac; see `src/lib/musicbrainz.ts`) instead of the public API, e.g.
-  `http://192.168.1.129:15000/ws/2` (the Mac's LAN IP — OrbStack exposes
-  container ports to the LAN by default). Must be started on the Mac before
-  a music scan/enrich on the VM, or lookups fail outright rather than
-  falling back to the public API. Leave unset to always use musicbrainz.org.
-- `DISCOGS_TOKEN`: Optional — raises the rate limit for the Discogs fallback
-  used when MusicBrainz has no entry for a specific pressing (see
-  `src/lib/discogs.ts`). Not required at this app's scale.
-- `AUDIODB_API_KEY` / `FANART_API_KEY`: Optional — artist bio/photo/backdrop
-  enrichment (see `src/lib/artist-bio.ts`). TheAudioDB needs no signup at
-  this scale; Fanart.tv strictly requires a free personal key
-  (https://fanart.tv/get-an-api-key/) and is skipped entirely without one.
+- `DISCOGS_TOKEN`: Optional — Discogs is the sole music metadata source (see
+  `src/lib/discogs.ts`); no key is required for read-only lookups at this
+  app's scale, but setting one is strongly recommended before a
+  full-catalogue Enrich Music pass (25/min unauthenticated vs 60/min with a
+  token set).
+- `AUDIODB_API_KEY` / `FANART_API_KEY`: Currently unused — TheAudioDB/
+  Fanart.tv artist bio/photo/backdrop enrichment (see `src/lib/artist-bio.ts`)
+  was keyed by a MusicBrainz artist id, which no longer exists post-Discogs-
+  cutover; only the Wikipedia-by-name bio/photo tier still runs. Left in
+  place for a future revisit, not currently worth setting.
 
 No `FFPROBE_DOCKER_IMAGE` needed — the runner image installs ffmpeg.
 

@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { parseDiscogsDuration, parseDiscogsTracklist } from "./discogs";
+import {
+  parseDiscogsDuration,
+  parseDiscogsTracklist,
+  classifyDiscogsKind,
+  normalizeBarcode,
+  artistNameVariants,
+  normalizeAlbumTitle,
+} from "./discogs";
 
 describe("parseDiscogsDuration", () => {
   it("parses M:SS", () => {
@@ -88,5 +95,76 @@ describe("parseDiscogsTracklist", () => {
     expect(parseDiscogsTracklist(null)).toEqual([]);
     expect(parseDiscogsTracklist(undefined)).toEqual([]);
     expect(parseDiscogsTracklist([])).toEqual([]);
+  });
+});
+
+describe("normalizeBarcode", () => {
+  it("accepts plausible UPC/EAN lengths (8, 12, 13, 14 digits)", () => {
+    expect(normalizeBarcode("12345678")).toBe("12345678");
+    expect(normalizeBarcode("123456789012")).toBe("123456789012");
+    expect(normalizeBarcode("1234567890123")).toBe("1234567890123");
+    expect(normalizeBarcode("12345678901234")).toBe("12345678901234");
+  });
+
+  it("strips non-digit characters a camera scanner or manual entry might add", () => {
+    expect(normalizeBarcode(" 123456789012 \n")).toBe("123456789012");
+    expect(normalizeBarcode("123-456-789012")).toBe("123456789012");
+  });
+
+  it("rejects implausible lengths", () => {
+    expect(normalizeBarcode("123")).toBeNull();
+    expect(normalizeBarcode("")).toBeNull();
+    expect(normalizeBarcode("1234567890123456789")).toBeNull();
+  });
+});
+
+describe("artistNameVariants", () => {
+  it("returns just the original when no iTunes sanitisation chars are present", () => {
+    expect(artistNameVariants("Radiohead")).toEqual(["Radiohead"]);
+  });
+
+  it("adds a reversed-sanitisation variant for underscore/semicolon", () => {
+    expect(artistNameVariants("AC_DC")).toEqual(["AC_DC", "AC/DC"]);
+    expect(artistNameVariants("Various;Artists")).toEqual(["Various;Artists", "Various:Artists"]);
+  });
+});
+
+describe("normalizeAlbumTitle", () => {
+  it("strips bracket/paren tag suffixes before normalizing", () => {
+    expect(normalizeAlbumTitle("The Singles 86_98 (Deluxe Edition)")).toBe(normalizeAlbumTitle("The Singles 86/98"));
+  });
+
+  it("folds underscore/slash the same as normalizeTitle", () => {
+    expect(normalizeAlbumTitle("The Singles 86_98")).toBe(normalizeAlbumTitle("The Singles 86/98"));
+  });
+
+  it("keeps the Latin side of a Discogs '<title> = <translated title>' pairing, regardless of which side it's on", () => {
+    expect(normalizeAlbumTitle("Flowers = 花朵")).toBe(normalizeAlbumTitle("Flowers"));
+    expect(normalizeAlbumTitle("Da Capo = 頭腦靈光")).toBe(normalizeAlbumTitle("Da Capo"));
+    // Real case: Jean-Michel Jarre's "Oxygène" master came back from a
+    // Discogs search hit titled "幻想惑星 = Oxygene" — native script FIRST.
+    expect(normalizeAlbumTitle("幻想惑星 = Oxygene")).toBe(normalizeAlbumTitle("Oxygene"));
+  });
+});
+
+describe("classifyDiscogsKind", () => {
+  it("format descriptor 'Compilation' wins outright", () => {
+    expect(classifyDiscogsKind("Anything", "CD, Compilation")).toBe("COMPILATION");
+  });
+
+  it("title heuristics catch live/remix/soundtrack (no structured signal from Discogs)", () => {
+    expect(classifyDiscogsKind("Live at Wembley", "Vinyl, LP, Album")).toBe("LIVE");
+    expect(classifyDiscogsKind("Greatest Hits Remixed", "CD, Album")).toBe("REMIX");
+    expect(classifyDiscogsKind("Original Soundtrack", "CD, Album")).toBe("SOUNDTRACK");
+  });
+
+  it("format descriptor EP/Album classify when no title heuristic matches", () => {
+    expect(classifyDiscogsKind("Untitled", "Vinyl, 12\", EP")).toBe("EP");
+    expect(classifyDiscogsKind("Untitled", "CD, Album")).toBe("STUDIO");
+  });
+
+  it("no usable signal at all -> OTHER", () => {
+    expect(classifyDiscogsKind("Untitled", "Vinyl, 7\", Single")).toBe("OTHER");
+    expect(classifyDiscogsKind("Untitled", null)).toBe("OTHER");
   });
 });

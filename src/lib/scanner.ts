@@ -374,7 +374,7 @@ interface MusicCandidateFile {
 }
 
 // Compilations is the one iTunes pseudo-artist folder that gets indexed as a
-// various=true Artist (skip MusicBrainz artist matching, see musicbrainz.ts).
+// various=true Artist (skip Discogs artist matching, see discogs.ts).
 const COMPILATIONS_FOLDER = "Compilations";
 
 function isLocalizedFolder(name: string): boolean {
@@ -450,8 +450,8 @@ async function resolveArtist(artistFolder: string, artistName: string, various: 
 
 /**
  * Resolve (or create) an owned Album under an Artist. Only touches identity
- * fields (title/sortTitle/owned) — mbid/year/kind/coverPath/trackTotal are
- * MusicBrainz enrichment data (musicbrainz.ts) and are never written here.
+ * fields (title/sortTitle/owned) — discogsMasterId/discogsReleaseId/year/kind/coverPath/trackTotal are
+ * Discogs enrichment data (discogs.ts) and are never written here.
  */
 async function resolveAlbum(artistId: number, albumFolder: string, albumTitle: string): Promise<number> {
   const album = await prisma.album.upsert({
@@ -849,19 +849,19 @@ async function doScanMusic(runId: number, force: boolean): Promise<void> {
     log.push(`Removed ${staleTrackIds.length} track(s) for music files no longer on disk`);
   }
 
-  // Owned albums left with zero tracks: if MusicBrainz-matched and still a
+  // Owned albums left with zero tracks: if Discogs-matched and still a
   // studio album, revert to a "missing" back-catalogue placeholder
   // (owned=false, folder cleared — same shape as the placeholders
-  // musicbrainz.ts creates for albums we never owned); otherwise there's no
+  // discogs.ts creates for albums we never owned); otherwise there's no
   // back-catalogue reason to keep the row, so delete it outright.
   const emptyOwnedAlbums = await prisma.album.findMany({
     where: { owned: true, tracks: { none: {} } },
-    select: { id: true, title: true, mbid: true, kind: true },
+    select: { id: true, title: true, discogsMasterId: true, discogsReleaseId: true, kind: true },
   });
   for (const a of emptyOwnedAlbums) {
-    if (a.mbid && a.kind === "STUDIO") {
+    if ((a.discogsMasterId != null || a.discogsReleaseId != null) && a.kind === "STUDIO") {
       await prisma.album.update({ where: { id: a.id }, data: { owned: false, folder: null } });
-      log.push(`"${a.title}" has no tracks left — reverted to missing (studio album, MusicBrainz-matched)`);
+      log.push(`"${a.title}" has no tracks left — reverted to missing (studio album, Discogs-matched)`);
     } else {
       await prisma.album.delete({ where: { id: a.id } });
       log.push(`Deleted "${a.title}" — no tracks left`);
@@ -880,11 +880,17 @@ async function doScanMusic(runId: number, force: boolean): Promise<void> {
   }
 
   // Fallback release year from the files' own date tags for albums
-  // MusicBrainz can't match (all of Compilations by design, plus title
-  // mismatches): the modal tagYear across the album's tracks. MB-matched
-  // albums always take MusicBrainz's date instead (enrichment overwrites).
+  // Discogs can't match (all of Compilations by design, plus title
+  // mismatches): the modal tagYear across the album's tracks. Discogs-matched
+  // albums always take Discogs' date instead (enrichment overwrites).
   const yearless = await prisma.album.findMany({
-    where: { owned: true, year: null, mbid: null, tracks: { some: { tagYear: { not: null } } } },
+    where: {
+      owned: true,
+      year: null,
+      discogsMasterId: null,
+      discogsReleaseId: null,
+      tracks: { some: { tagYear: { not: null } } },
+    },
     select: { id: true, title: true, tracks: { select: { tagYear: true } } },
   });
   for (const a of yearless) {

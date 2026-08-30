@@ -4,11 +4,11 @@
 // rationale on why the music/movie paths are split and run concurrently.
 
 import { prisma } from "@/lib/db";
-import { searchReleaseByBarcode, searchReleaseGroupAnchor, type TitleSearchAlbum } from "@/lib/musicbrainz";
 import {
   searchDiscogsByBarcode,
   fetchDiscogsRelease,
   fetchDiscogsMasterMainRelease,
+  findAlbumByDiscogsIdentity,
   DISCOGS_URL_RE,
   DISCOGS_MASTER_URL_RE,
 } from "@/lib/discogs";
@@ -20,64 +20,52 @@ import { guessAlbumMedium } from "@/lib/album-medium";
 export type LookupResult = any;
 
 interface MusicBarcodeHit {
-  releaseGroupMbid: string;
-  releaseMbid: string | null;
-  discogsReleaseId: number | null;
+  /** The Discogs master this release belongs to, if any — group-level
+   *  identity when present. */
+  discogsMasterId: number | null;
+  /** The specific release Discogs matched — always present for a
+   *  Discogs-sourced hit; doubles as the album's own identity when it has
+   *  no master. */
+  discogsReleaseId: number;
   title: string;
   artistName: string;
   year: number | null;
   format: string | null;
-  coverArtUrl: string;
-}
-
-/**
- * Pick which title+artist search hit to anchor a Discogs-only release to.
- * MusicBrainz's own relevance ranking (anchors[0]) doesn't know this library
- * may already have a *different* release-group on file for what is really
- * the same record — a promo/EP/compilation variant can outrank the
- * originally-enriched one in a free-text search. Preferring whichever
- * candidate already has an Album row here avoids spawning a duplicate Album
- * for a pressing that's actually already owned (just on another medium).
- */
-async function pickAnchor(anchors: TitleSearchAlbum[]): Promise<TitleSearchAlbum | undefined> {
-  if (anchors.length === 0) return undefined;
-  const owned = await prisma.album.findFirst({
-    where: { mbid: { in: anchors.map((a) => a.mbid) } },
-    select: { mbid: true },
-  });
-  return anchors.find((a) => a.mbid === owned?.mbid) ?? anchors[0];
+  coverArtUrl: string | null;
 }
 
 async function buildMusicResult(hit: MusicBarcodeHit): Promise<LookupResult> {
-  const album = await prisma.album.findUnique({
-    where: { mbid: hit.releaseGroupMbid },
-    include: { physicalCopies: { select: { medium: true } } },
+  const album = await findAlbumByDiscogsIdentity({
+    discogsMasterId: hit.discogsMasterId,
+    discogsReleaseId: hit.discogsMasterId == null ? hit.discogsReleaseId : null,
   });
+  const albumWithCopies = album
+    ? await prisma.album.findUnique({ where: { id: album.id }, include: { physicalCopies: { select: { medium: true } } } })
+    : null;
 
-  // Medium-specific: owning this release-group in SOME form (a CD rip, a
-  // different pressing) doesn't mean the exact thing just scanned is
-  // already in the collection — scanning an LP barcode for an album you
-  // only have on CD should still offer to add the LP, not report "already
-  // owned" with no way to log the format actually in hand. Album.owned
-  // (digital) only counts toward CD specifically — a digital rip is
-  // overwhelmingly CD-sourced in this library (see the all-ALAC backfill),
-  // but is never a reasonable signal for vinyl ownership, which is always
-  // logged explicitly.
+  // Medium-specific: owning this album in SOME form (a CD rip, a different
+  // pressing) doesn't mean the exact thing just scanned is already in the
+  // collection — scanning an LP barcode for an album you only have on CD
+  // should still offer to add the LP, not report "already owned" with no
+  // way to log the format actually in hand. Album.owned (digital) only
+  // counts toward CD specifically — a digital rip is overwhelmingly
+  // CD-sourced in this library, but is never a reasonable signal for vinyl
+  // ownership, which is always logged explicitly.
   const scannedMedium = guessAlbumMedium(hit.format);
   const alreadyOwnedInMedium =
-    album != null &&
-    (album.physicalCopies.some((c) => c.medium === scannedMedium) || (scannedMedium === "CD" && album.owned));
+    albumWithCopies != null &&
+    (albumWithCopies.physicalCopies.some((c) => c.medium === scannedMedium) || (scannedMedium === "CD" && albumWithCopies.owned));
 
-  if (album && alreadyOwnedInMedium) {
+  if (albumWithCopies && alreadyOwnedInMedium) {
     return {
       status: "owned",
       type: "album",
       album: {
-        id: album.id,
-        title: album.title,
+        id: albumWithCopies.id,
+        title: albumWithCopies.title,
         artistName: hit.artistName,
-        year: album.year,
-        coverPath: album.coverPath,
+        year: albumWithCopies.year,
+        coverPath: albumWithCopies.coverPath,
       },
     };
   }
@@ -85,8 +73,7 @@ async function buildMusicResult(hit: MusicBarcodeHit): Promise<LookupResult> {
     status: "not_owned",
     type: "album",
     candidate: {
-      mbid: hit.releaseGroupMbid,
-      releaseMbid: hit.releaseMbid,
+      discogsMasterId: hit.discogsMasterId,
       discogsReleaseId: hit.discogsReleaseId,
       title: hit.title,
       artistName: hit.artistName,
@@ -99,76 +86,36 @@ async function buildMusicResult(hit: MusicBarcodeHit): Promise<LookupResult> {
 
 export async function resolveMusic(barcode: string): Promise<LookupResult | null> {
   try {
-    const mbHit = await searchReleaseByBarcode(barcode);
-    if (mbHit) {
-      return await buildMusicResult({
-        releaseGroupMbid: mbHit.releaseGroupMbid,
-        releaseMbid: mbHit.releaseMbid,
-        discogsReleaseId: null,
-        title: mbHit.title,
-        artistName: mbHit.artistName,
-        year: mbHit.year,
-        format: mbHit.format,
-        coverArtUrl: mbHit.coverArtUrl,
-      });
-    }
-  } catch {
-    // MusicBrainz lookup failed (rate limit, network, timeout) — fall
-    // through to the Discogs fallback below rather than giving up.
-  }
-
-  // MusicBrainz's barcode coverage skews toward CD/digital and misses a lot
-  // of newer/smaller-run vinyl (including plain colour-vinyl variants of an
-  // otherwise well-known release) — Discogs catches most of what MB misses.
-  // A Discogs hit has no MusicBrainz release-group of its own, so one is
-  // found by title+artist search to anchor the Album the rest of this app's
-  // enrichment/reconciliation machinery expects; if MusicBrainz has never
-  // heard of this artist/album at all (not just this pressing), there's
-  // nothing safe to auto-create and this falls through to "no match", same
-  // as today — same tier of miss as an untagged/obscure release always was.
-  try {
-    const discogsHit = await searchDiscogsByBarcode(barcode);
-    if (!discogsHit) return null;
-
-    const anchors = await searchReleaseGroupAnchor(discogsHit.title, discogsHit.artistName, discogsHit.year);
-    const anchor = await pickAnchor(anchors);
-    if (!anchor) return null;
+    const hit = await searchDiscogsByBarcode(barcode);
+    if (!hit) return null;
 
     return await buildMusicResult({
-      releaseGroupMbid: anchor.mbid,
-      releaseMbid: null,
-      discogsReleaseId: discogsHit.discogsReleaseId,
-      title: discogsHit.title,
-      artistName: discogsHit.artistName,
-      year: discogsHit.year,
-      format: discogsHit.format,
-      coverArtUrl: discogsHit.coverUrl ?? anchor.coverArtUrl,
+      discogsMasterId: hit.masterId,
+      discogsReleaseId: hit.discogsReleaseId,
+      title: hit.title,
+      artistName: hit.artistName,
+      year: hit.year,
+      format: hit.format,
+      coverArtUrl: hit.coverUrl,
     });
   } catch {
-    // Discogs lookup failed — never fail the whole request over it, the
-    // movie path may still resolve.
+    // Discogs lookup failed (rate limit, network, timeout) — never fail the
+    // whole request over it, the movie path may still resolve.
     return null;
   }
 }
 
 /**
  * Resolve a pasted Discogs release (or master) URL to "already owned" or a
- * not-owned candidate to add — the Scan page's "paste Discogs links"
- * bulk-add tool. Mirrors resolveMusic's own Discogs-fallback branch: a
- * Discogs release has no MusicBrainz release-group of its own, so one is
- * found by title+artist search to anchor the Album row the rest of this
- * app's enrichment expects. If MusicBrainz has never heard of this
- * artist/album at all, there's nothing safe to auto-create and this returns
- * "unknown", same tier of miss as an unresolvable barcode. Unlike
- * resolveMusic, network failures are left to propagate — a pasted-URL
- * lookup is a one-off, explicit action, so the caller should surface
- * "Discogs lookup failed" rather than silently swallowing it into a
- * misleading "unknown".
- *
- * A master URL has no tracklist/cover of its own tied to one physical item
- * (see fetchDiscogsMasterMainRelease in discogs.ts) — resolved by following
- * its main_release and continuing exactly as if that release URL had been
- * pasted instead.
+ * not-owned candidate to add — the Scan page's "paste Discogs links" bulk-add
+ * tool. A master URL has no tracklist/cover of its own tied to one physical
+ * item (see fetchDiscogsMasterMainRelease in discogs.ts) — resolved by
+ * following its main_release for display fields, but the identity stored is
+ * the master itself (group-level), matching applyManualAlbumDiscogsMatch's
+ * own convention. Unlike resolveMusic, network failures are left to
+ * propagate — a pasted-URL lookup is a one-off, explicit action, so the
+ * caller should surface "Discogs lookup failed" rather than silently
+ * swallowing it into a misleading "unknown".
  */
 export async function resolveDiscogsUrl(url: string): Promise<LookupResult> {
   const trimmed = url.trim();
@@ -176,24 +123,20 @@ export async function resolveDiscogsUrl(url: string): Promise<LookupResult> {
   const releaseMatch = masterMatch ? null : DISCOGS_URL_RE.exec(trimmed);
   if (!masterMatch && !releaseMatch) return { status: "unknown" };
 
-  const discogsReleaseId = masterMatch
-    ? await fetchDiscogsMasterMainRelease(Number(masterMatch[1]))
-    : Number(releaseMatch![1]);
+  const isMaster = masterMatch != null;
+  const id = Number((masterMatch ?? releaseMatch)![1]);
+  const discogsReleaseId = isMaster ? await fetchDiscogsMasterMainRelease(id) : id;
 
   const release = await fetchDiscogsRelease(discogsReleaseId);
-  const anchors = await searchReleaseGroupAnchor(release.title, release.artistName, release.year);
-  const anchor = await pickAnchor(anchors);
-  if (!anchor) return { status: "unknown" };
 
   return await buildMusicResult({
-    releaseGroupMbid: anchor.mbid,
-    releaseMbid: null,
+    discogsMasterId: isMaster ? id : release.masterId,
     discogsReleaseId,
     title: release.title,
     artistName: release.artistName,
     year: release.year,
     format: release.format,
-    coverArtUrl: release.coverUrl ?? anchor.coverArtUrl,
+    coverArtUrl: release.coverUrl,
   });
 }
 
