@@ -98,7 +98,7 @@ export default async function AlbumPage({
   const drmOnly = album.owned && allTracks.length > 0 && playableTracks.length === 0;
 
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-8 px-4 py-6 sm:px-6">
+    <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-8 px-4 py-6 sm:px-6">
       <Link
         href={`/music/artist/${album.artist.id}`}
         className="w-fit text-xs font-medium text-text-muted hover:text-text"
