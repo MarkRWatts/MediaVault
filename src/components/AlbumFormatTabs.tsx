@@ -18,15 +18,45 @@ function formatDuration(secs: number | null): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-// Per-format accent identity — reuses the app's existing distinct-hue chip
-// tokens (already turquoise/purple/amber) rather than introducing new ones.
-// Digital gets the audio-dts (turquoise) family, vinyl the audio-dolby
-// (purple) family, CD the app's own amber accent (reads as orange here),
-// and anything else falls back to the neutral dvd tokens.
+const CODEC_DESCRIPTIONS: Record<string, string> = {
+  alac: "Apple Lossless (ALAC)",
+  flac: "Lossless (FLAC)",
+  mp3: "Lossy Compressed (MP3)",
+  aac: "Lossy Compressed (AAC)",
+  drm: "Protected (FairPlay)",
+};
+
+function codecDescription(codec: string | null): string | null {
+  if (!codec) return null;
+  return CODEC_DESCRIPTIONS[codec.toLowerCase()] ?? codec.toUpperCase();
+}
+
+// Resolved disc count for a vinyl copy: the explicit field when set, else
+// parsed off a leading "2x"/"2×" in the free-text format ("2xLP"), else 1.
+function resolveVinylDiscs(copy: PhysicalCopyView): number {
+  if (copy.discs != null) return copy.discs;
+  const m = /^(\d+)\s*[x×]/i.exec(copy.format);
+  return m ? Number(m[1]) : 1;
+}
+
+// Fallback only used when the pressing has no Discogs-sourced speedRpm —
+// Discogs itself only states speed for non-default/special-case pressings,
+// so this is a coarse guess from the format string, not a real lookup.
+function inferSpeedFromFormat(format: string): string | null {
+  const f = format.toLowerCase();
+  if (f.includes('7"') || f.includes("7-inch") || f.includes("7 inch")) return "45 RPM";
+  if (f.includes("lp") || f.includes('12"')) return "33⅓ RPM";
+  return null;
+}
+
+// Per-format accent identity. Digital and CD get their own dedicated tokens
+// (NOT the audio-dts/audio-dolby ones VersionCard uses for real film DTS/
+// Dolby badges — reusing those would mean retheming one silently retheme
+// the other). Vinyl reuses --accent directly, the app's one shared accent.
 function colorFor(kind: "digital" | string): { text: string; border: string } {
-  if (kind === "digital") return { text: "text-audio-dts", border: "border-audio-dts" };
-  if (kind === "VINYL") return { text: "text-audio-dolby", border: "border-audio-dolby" };
-  if (kind === "CD") return { text: "text-accent", border: "border-accent" };
+  if (kind === "digital") return { text: "text-format-digital", border: "border-format-digital" };
+  if (kind === "CD") return { text: "text-format-cd", border: "border-format-cd" };
+  if (kind === "VINYL") return { text: "text-accent", border: "border-accent" };
   return { text: "text-dvd", border: "border-dvd-border" };
 }
 
@@ -34,11 +64,28 @@ function Tile({ children }: { children: ReactNode }) {
   return <div className="flex flex-col gap-1 rounded-lg border border-border bg-bg-elevated p-3">{children}</div>;
 }
 
-function StatTile({ label, value, color }: { label: string; value: string; color: string }) {
+function StatTile({
+  label,
+  lines,
+  color,
+}: {
+  label: string;
+  lines: (string | null | undefined | false)[];
+  color: string;
+}) {
+  const visible = lines.filter((l): l is string => Boolean(l));
   return (
     <Tile>
       <span className={`text-[10px] font-semibold uppercase tracking-widest ${color}`}>{label}</span>
-      <span className="text-sm text-text">{value || "—"}</span>
+      {visible.length > 0 ? (
+        visible.map((line, i) => (
+          <span key={i} className="text-sm text-text">
+            {line}
+          </span>
+        ))
+      ) : (
+        <span className="text-sm text-text">—</span>
+      )}
     </Tile>
   );
 }
@@ -53,6 +100,7 @@ function DigitalSummary({
   totalSecs,
   dominantCodec,
   dominantQuality,
+  dominantQualityVerbose,
   playableTracks,
   canPlay,
   drmOnly,
@@ -66,6 +114,7 @@ function DigitalSummary({
   totalSecs: number;
   dominantCodec: string | null;
   dominantQuality: string | null;
+  dominantQualityVerbose: string | null;
   playableTracks: AlbumPlayerTrack[];
   canPlay: boolean;
   drmOnly: boolean;
@@ -76,16 +125,17 @@ function DigitalSummary({
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         <StatTile
-          label="Quality"
+          label="Format"
           color={color.text}
-          value={[dominantCodec?.toUpperCase(), dominantQuality].filter(Boolean).join(" · ")}
+          lines={[codecDescription(dominantCodec), dominantQualityVerbose ?? dominantQuality]}
         />
         <StatTile
-          label="Tracklist"
+          label="Track List"
           color={color.text}
-          value={trackCount > 0 ? `${trackCount} track${trackCount === 1 ? "" : "s"} · ${formatDuration(totalSecs)}` : "No tracks"}
+          lines={[trackCount > 0 ? `${trackCount} track${trackCount === 1 ? "" : "s"} · ${formatDuration(totalSecs)}` : "No tracks"]}
         />
         <Tile>
+          <span className={`text-[10px] font-semibold uppercase tracking-widest ${color.text}`}>Pressing</span>
           <DigitalSourceForm albumId={albumId} initial={digitalSource} />
         </Tile>
       </div>
@@ -156,20 +206,27 @@ function CopySummary({ albumId, copy }: { albumId: number; copy: PhysicalCopyVie
   const trackCount = copy.tracks.length;
   const totalSecs = copy.tracks.reduce((n, t) => n + (t.durationSecs ?? 0), 0);
 
+  let formatLines: (string | null)[];
+  if (copy.medium === "CD") {
+    formatLines = ["16-bit / 44.1 kHz"];
+  } else if (copy.medium === "VINYL") {
+    const discsCount = resolveVinylDiscs(copy);
+    const speed = copy.speedRpm ?? inferSpeedFromFormat(copy.format);
+    formatLines = [`${discsCount} disc${discsCount === 1 ? "" : "s"}`, speed];
+  } else {
+    formatLines = [[copy.format, copy.discs && copy.discs > 1 && `${copy.discs} discs`].filter(Boolean).join(" · ")];
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <StatTile label="Format" color={color.text} lines={formatLines} />
         <StatTile
-          label="Format"
+          label="Track List"
           color={color.text}
-          value={[copy.format, copy.discs && copy.discs > 1 && `${copy.discs} discs`].filter(Boolean).join(" · ")}
+          lines={[trackCount > 0 ? `${trackCount} track${trackCount === 1 ? "" : "s"} · ${formatDuration(totalSecs)}` : "Not linked yet"]}
         />
-        <StatTile label="Pressing" color={color.text} value={pressingInfo} />
-        <StatTile
-          label="Tracklist"
-          color={color.text}
-          value={trackCount > 0 ? `${trackCount} track${trackCount === 1 ? "" : "s"} · ${formatDuration(totalSecs)}` : "Not linked yet"}
-        />
+        <StatTile label="Pressing" color={color.text} lines={[pressingInfo]} />
       </div>
 
       {(noteLine || copy.discogsUrl) && (
@@ -265,6 +322,7 @@ export default function AlbumFormatTabs({
   discs,
   dominantCodec,
   dominantQuality,
+  dominantQualityVerbose,
   playableTracks,
   canPlay,
   drmOnly,
@@ -282,6 +340,7 @@ export default function AlbumFormatTabs({
   discs: AlbumDiscView[];
   dominantCodec: string | null;
   dominantQuality: string | null;
+  dominantQualityVerbose: string | null;
   playableTracks: AlbumPlayerTrack[];
   canPlay: boolean;
   drmOnly: boolean;
@@ -292,7 +351,7 @@ export default function AlbumFormatTabs({
 
   const tabs: Tab[] = [];
   if (owned) {
-    tabs.push({ kind: "digital", key: "digital", label: dominantCodec ? dominantCodec.toUpperCase() : "Digital" });
+    tabs.push({ kind: "digital", key: "digital", label: "Digital" });
   }
   for (const copy of copies) {
     const isDup = (formatCounts.get(copy.format) ?? 0) > 1;
@@ -365,6 +424,7 @@ export default function AlbumFormatTabs({
               totalSecs={allTracks.reduce((n, t) => n + (t.durationSecs ?? 0), 0)}
               dominantCodec={dominantCodec}
               dominantQuality={dominantQuality}
+              dominantQualityVerbose={dominantQualityVerbose}
               playableTracks={playableTracks}
               canPlay={canPlay}
               drmOnly={drmOnly}

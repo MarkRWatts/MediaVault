@@ -293,6 +293,9 @@ export interface PhysicalCopyView {
   catalogNo: string | null;
   label: string | null;
   pressYear: number | null;
+  /** e.g. "45 RPM" — vinyl only; null means "assume standard speed," not
+   *  "unknown" (Discogs only states this for non-default pressings). */
+  speedRpm: string | null;
   condition: string | null;
   notes: string | null;
   /** The barcode that identified THIS specific pressing, if scanned — a
@@ -392,6 +395,7 @@ export async function getAlbumDetail(id: number): Promise<AlbumDetail | null> {
         catalogNo: c.catalogNo,
         label: c.label,
         pressYear: c.pressYear,
+        speedRpm: c.speedRpm,
         condition: c.condition,
         notes: c.notes,
         barcode: c.barcode,
