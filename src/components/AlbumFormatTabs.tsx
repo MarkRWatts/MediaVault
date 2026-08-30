@@ -116,7 +116,7 @@ function DigitalSummary({
   const color = colorFor("digital");
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-3">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         <StatTile
           label="Format"
@@ -221,7 +221,7 @@ function CopySummary({ albumId, copy }: { albumId: number; copy: PhysicalCopyVie
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-3">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         <StatTile label="Format" color={color.text} lines={formatLines} />
         <StatTile
@@ -388,7 +388,7 @@ export default function AlbumFormatTabs({
           className="w-40 shrink-0 rounded-lg border border-border-strong shadow-lg shadow-black/40 sm:w-64"
           src={copyCoverSrc}
         />
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-3">
           {meta}
 
           <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2 border-b border-border">
@@ -401,7 +401,7 @@ export default function AlbumFormatTabs({
                     key={tab.key}
                     type="button"
                     onClick={() => setSelected(tab.key)}
-                    className={`border-b-2 pb-2 text-sm font-medium transition-colors ${
+                    className={`border-b-2 pb-1.5 text-sm font-medium transition-colors ${
                       isActive ? `${color.border} ${color.text}` : "border-transparent text-text-muted hover:text-text"
                     }`}
                   >
@@ -410,7 +410,7 @@ export default function AlbumFormatTabs({
                 );
               })}
             </div>
-            <div className="flex gap-2 pb-2">
+            <div className="flex gap-2 pb-1.5">
               <PhysicalCopyForm albumId={albumId} medium="VINYL" initial={null} />
               <PhysicalCopyForm albumId={albumId} medium="CD" initial={null} />
             </div>
