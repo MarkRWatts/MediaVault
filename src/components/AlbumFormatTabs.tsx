@@ -80,7 +80,7 @@ function PressingTile({
     <Tile>
       <span className={`text-[10px] font-semibold uppercase tracking-widest ${color}`}>Pressing</span>
       <div className="flex min-h-15 flex-col justify-between gap-2">
-        <div>{children}</div>
+        <div className="flex flex-col">{children}</div>
         {discogsUrl && (
           <a
             href={discogsUrl}
@@ -218,9 +218,13 @@ function DigitalTracklist({
 
 function CopySummary({ albumId, copy }: { albumId: number; copy: PhysicalCopyView }) {
   const color = colorFor(copy.medium);
-  const pressingInfo = [copy.catalogNo && `Cat# ${copy.catalogNo}`, copy.label, copy.pressYear]
-    .filter(Boolean)
-    .join(" · ");
+  // Two explicit lines (not one long joined-and-wrapped string) so the
+  // Pressing tile's line count/spacing matches every other tile's, however
+  // long the catalog number or label happens to be.
+  const pressingLines = [
+    [copy.catalogNo && `Cat# ${copy.catalogNo}`, copy.pressYear].filter(Boolean).join(" · "),
+    copy.label,
+  ].filter((l): l is string => Boolean(l));
   const noteLine = [copy.condition, copy.inferred && "inferred from rip", copy.notes, copy.barcode && `Barcode ${copy.barcode}`]
     .filter(Boolean)
     .join(" · ");
@@ -248,7 +252,15 @@ function CopySummary({ albumId, copy }: { albumId: number; copy: PhysicalCopyVie
           lines={[trackCount > 0 ? `${trackCount} track${trackCount === 1 ? "" : "s"} · ${formatDuration(totalSecs)}` : "Not linked yet"]}
         />
         <PressingTile color={color.text} discogsUrl={copy.discogsUrl}>
-          <span className="text-sm text-text">{pressingInfo || "—"}</span>
+          {pressingLines.length > 0 ? (
+            pressingLines.map((line, i) => (
+              <span key={i} className="text-sm text-text">
+                {line}
+              </span>
+            ))
+          ) : (
+            <span className="text-sm text-text">—</span>
+          )}
         </PressingTile>
       </div>
 
