@@ -429,7 +429,7 @@ export default function AlbumFormatTabs({
               drmOnly={drmOnly}
             />
           )}
-          {active?.kind === "copy" && <CopySummary albumId={albumId} copy={active.copy} />}
+          {active?.kind === "copy" && <CopySummary key={active.copy.id} albumId={albumId} copy={active.copy} />}
           {!active && <p className="text-sm text-text-faint">No formats tracked yet — add one above.</p>}
         </div>
       </div>
