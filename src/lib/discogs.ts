@@ -179,6 +179,11 @@ export interface DiscogsRelease {
    *  one (small-run/promo pressings commonly don't). Used to resolve a
    *  barcode/pasted-URL hit up to its group-level identity. */
   masterId: number | null;
+  /** Catalog number of the first listed label, if any — Discogs uses the
+   *  literal string "none" for "no catalog number", filtered out here. */
+  catalogNo: string | null;
+  /** Name of the first listed label, if any. */
+  label: string | null;
 }
 
 export async function fetchDiscogsRelease(releaseId: number): Promise<DiscogsRelease> {
@@ -192,11 +197,14 @@ export async function fetchDiscogsRelease(releaseId: number): Promise<DiscogsRel
     formats?: any[];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     images?: any[];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    labels?: any[];
     master_id?: number;
   };
 
   const images = data.images ?? [];
   const cover = images.find((img) => img.type === "primary") ?? images[0];
+  const firstLabel = data.labels?.[0];
 
   return {
     title: data.title ?? "Untitled",
@@ -206,6 +214,8 @@ export async function fetchDiscogsRelease(releaseId: number): Promise<DiscogsRel
     tracks: parseDiscogsTracklist(data.tracklist),
     coverUrl: cover?.uri ?? null,
     masterId: data.master_id ?? null,
+    catalogNo: firstLabel?.catno && firstLabel.catno !== "none" ? firstLabel.catno : null,
+    label: firstLabel?.name ?? null,
   };
 }
 
@@ -1369,9 +1379,22 @@ async function saveCoverIfFound(
  * existing PhysicalTrack rows outright rather than diffing, since a
  * re-attach means the owner is correcting which pressing this copy actually
  * is.
+ *
+ * Also fills catalogNo/label/pressYear from the release when the copy
+ * doesn't already have them — but only then: those are hand-entered fields
+ * describing the actual physical object (see physicalCopyData), so an
+ * existing value always wins over whatever Discogs says.
  */
 async function populatePhysicalReleaseFromDiscogs(
-  copy: { id: number; albumId: number; medium: string; coverSource: string | null },
+  copy: {
+    id: number;
+    albumId: number;
+    medium: string;
+    coverSource: string | null;
+    catalogNo: string | null;
+    label: string | null;
+    pressYear: number | null;
+  },
   discogsReleaseId: number,
 ): Promise<void> {
   let release: Awaited<ReturnType<typeof fetchDiscogsRelease>> | null = null;
@@ -1380,6 +1403,15 @@ async function populatePhysicalReleaseFromDiscogs(
     await replacePhysicalTracks(copy.id, release.tracks);
   } catch {
     // best-effort — a fetch failure just means "no tracks", not partial data
+  }
+  if (release) {
+    const fill: { catalogNo?: string; label?: string; pressYear?: number } = {};
+    if (copy.catalogNo == null && release.catalogNo) fill.catalogNo = release.catalogNo;
+    if (copy.label == null && release.label) fill.label = release.label;
+    if (copy.pressYear == null && release.year != null) fill.pressYear = release.year;
+    if (Object.keys(fill).length > 0) {
+      await prisma.physicalCopy.update({ where: { id: copy.id }, data: fill });
+    }
   }
   if (release?.coverUrl) {
     try {
