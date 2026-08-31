@@ -23,8 +23,58 @@ import { resolveVideoStream, registerStreamReader } from "@/lib/video-cache";
 import { createTailingStream } from "@/lib/tailing-stream";
 import { parseRange } from "@/lib/http-range";
 
+// Manual ReadableStream instead of Readable.toWeb(): a Node Readable emits
+// 'close' after 'end' as part of its own finalization, and a client
+// disconnect (every seek cancels the in-flight range request, and this runs
+// on every direct-play file) can race that with a destroy() triggered by the
+// runtime canceling the response stream. Readable.toWeb's adapter doesn't
+// guard against both landing on the same controller, and throws "Invalid
+// state: Controller is already closed" (ERR_INVALID_STATE) as an *uncaught*
+// exception when it does -- from inside Node's own internal adapter, outside
+// this handler's promise chain, so nothing here ever gets a chance to catch
+// it, and it takes the whole process down. Owning the controller directly
+// lets every close/error/enqueue call be guarded against running twice.
 function fileToWebStream(readStream: Readable): ReadableStream<Uint8Array> {
-  return Readable.toWeb(readStream) as ReadableStream<Uint8Array>;
+  let closed = false;
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      readStream.on("data", (chunk: Buffer) => {
+        try {
+          controller.enqueue(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
+        } catch {
+          return; // Controller already closed/errored by a concurrent event.
+        }
+        if (controller.desiredSize !== null && controller.desiredSize <= 0) {
+          readStream.pause();
+        }
+      });
+      readStream.once("end", () => {
+        if (closed) return;
+        closed = true;
+        try {
+          controller.close();
+        } catch {
+          // Already closed by a concurrent event -- ignore.
+        }
+      });
+      readStream.once("error", (err) => {
+        if (closed) return;
+        closed = true;
+        try {
+          controller.error(err);
+        } catch {
+          // Already closed/errored by a concurrent event -- ignore.
+        }
+      });
+    },
+    pull() {
+      readStream.resume();
+    },
+    cancel() {
+      closed = true;
+      readStream.destroy();
+    },
+  });
 }
 
 export async function GET(req: Request, ctx: { params: Promise<{ versionId: string }> }) {
