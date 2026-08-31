@@ -10,8 +10,50 @@ import { createTailingStream } from "@/lib/tailing-stream";
 import { parseRange } from "@/lib/http-range";
 import { requireAdultAccessOrResponse } from "@/lib/require-member";
 
+// Manual ReadableStream instead of Readable.toWeb() -- see
+// /api/video/:versionId/stream for why (the ERR_INVALID_STATE race between a
+// client-disconnect-triggered destroy() and the stream's own 'end'/'close').
 function fileToWebStream(readStream: Readable): ReadableStream<Uint8Array> {
-  return Readable.toWeb(readStream) as ReadableStream<Uint8Array>;
+  let closed = false;
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      readStream.on("data", (chunk: Buffer) => {
+        try {
+          controller.enqueue(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
+        } catch {
+          return; // Controller already closed/errored by a concurrent event.
+        }
+        if (controller.desiredSize !== null && controller.desiredSize <= 0) {
+          readStream.pause();
+        }
+      });
+      readStream.once("end", () => {
+        if (closed) return;
+        closed = true;
+        try {
+          controller.close();
+        } catch {
+          // Already closed by a concurrent event -- ignore.
+        }
+      });
+      readStream.once("error", (err) => {
+        if (closed) return;
+        closed = true;
+        try {
+          controller.error(err);
+        } catch {
+          // Already closed/errored by a concurrent event -- ignore.
+        }
+      });
+    },
+    pull() {
+      readStream.resume();
+    },
+    cancel() {
+      closed = true;
+      readStream.destroy();
+    },
+  });
 }
 
 export async function GET(req: Request, ctx: { params: Promise<{ sceneId: string }> }) {
