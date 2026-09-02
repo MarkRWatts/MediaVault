@@ -2,9 +2,11 @@
 // (the Docker image is built with no database present).
 export const dynamic = "force-dynamic";
 
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 import LibraryBrowser from "@/components/LibraryBrowser";
+import { PasskeyNudge } from "@/components/auth/PasskeyNudge";
 import { auth } from "@/lib/auth";
+import { PASSKEY_NUDGE_COOKIE } from "@/lib/flow-cookies";
 import { getContinueWatchingFilms, getLibraryFilms } from "@/lib/queries";
 
 export default async function LibraryPage() {
@@ -14,6 +16,9 @@ export default async function LibraryPage() {
   // just enough to scope the continue-watching query to the right user.
   const session = await auth.api.getSession({ headers: await headers() });
   const userId = session?.user?.id ?? null;
+  // Set by an email-code sign-in (see verifyOTP); the strip itself decides
+  // whether this device can make a passkey and whether it's been dismissed.
+  const nudgePasskey = (await cookies()).has(PASSKEY_NUDGE_COOKIE);
 
   const [{ films, filmCount, discCount }, continueWatching] = await Promise.all([
     getLibraryFilms(),
@@ -22,6 +27,7 @@ export default async function LibraryPage() {
 
   return (
     <div className="flex flex-1 flex-col">
+      {nudgePasskey && <PasskeyNudge />}
       <div className="border-b border-border px-4 pt-6 sm:px-6">
         <h1 className="font-display text-3xl tracking-wide">Movies</h1>
         {filmCount > 0 && (

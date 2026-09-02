@@ -501,6 +501,7 @@ model User {
   updatedAt     DateTime  @updatedAt
   sessions      Session[]
   accounts      Account[]
+  passkeys      Passkey[]
 
   members     Member[]
   invitations Invitation[]
@@ -579,6 +580,32 @@ model Verification {
 
   @@index([identifier])
   @@map("verification")
+}
+
+// Passkeys — see PASSKEYS_PLAN.md. One row per registered authenticator (a
+// phone, a laptop, a security key), owned by @better-auth/passkey: the
+// column set is exactly what that plugin's schema declares, nothing
+// app-specific added. onDelete: Cascade is load-bearing — deleteAccount
+// (src/app/actions/account.ts) does a plain prisma.user.delete and relies
+// on the schema's cascades, so without it a deleted user would leave
+// orphan credentials behind.
+model Passkey {
+  id           String   @id
+  name         String?
+  publicKey    String
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  credentialID String
+  counter      Int
+  deviceType   String
+  backedUp     Boolean
+  transports   String?
+  createdAt    DateTime @default(now())
+  aaguid       String?
+
+  @@index([userId])
+  @@index([credentialID])
+  @@map("passkey")
 }
 
 // Access codes — the growth/trust gate for brand-new households (see

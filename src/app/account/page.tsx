@@ -8,9 +8,11 @@ import { PromoteButton } from "@/components/household/PromoteButton";
 import { DemoteButton } from "@/components/household/DemoteButton";
 import { RemoveMemberButton } from "@/components/household/RemoveMemberButton";
 import { RenameHouseholdForm } from "@/components/household/RenameHouseholdForm";
+import { getAuthenticatorName } from "@better-auth/passkey";
 import { DeleteAccountButton } from "@/components/account/DeleteAccountButton";
 import { EditNameForm } from "@/components/account/EditNameForm";
 import { AdultAccessToggle } from "@/components/account/AdultAccessToggle";
+import { PasskeyManager } from "@/components/account/PasskeyManager";
 
 // DB-backed, per-user page — must render per-request, not be frozen at
 // build time (the Docker image is built with no database present).
@@ -31,10 +33,18 @@ export default async function AccountPage() {
   const { userId, householdId, role } = await requireMemberOrRedirect();
   const isOwner = role === "owner";
 
-  const [user, household] = await Promise.all([
+  const [user, passkeys, household] = await Promise.all([
     prisma.user.findUniqueOrThrow({
       where: { id: userId },
       select: { name: true, email: true, isAppOwner: true, adultLibraryAccess: true, jellyfinUserId: true },
+    }),
+    // Read directly rather than via the plugin's list endpoint — same as
+    // every other read on this page. The plugin's own list is what the
+    // client would use; here the server component already has the user.
+    prisma.passkey.findMany({
+      where: { userId },
+      select: { id: true, name: true, createdAt: true, backedUp: true, aaguid: true },
+      orderBy: { createdAt: "asc" },
     }),
     // The household name and member list are visible to every member, not
     // just owners — only the pending-invitations query (and the invite/
@@ -77,6 +87,23 @@ export default async function AccountPage() {
             Admin
           </Link>
         )}
+      </section>
+
+      {/* PASSKEYS_PLAN.md Phase 2. Date and authenticator label resolved
+          here so the client component renders nothing locale- or
+          server-only-dependent. en-GB is fixed on purpose: a server/client
+          locale disagreement would be a hydration mismatch. */}
+      <section id="passkeys" className="flex flex-col gap-4">
+        <h2 className="font-display text-xl tracking-wide text-text">Passkeys</h2>
+        <PasskeyManager
+          passkeys={passkeys.map((p) => ({
+            id: p.id,
+            name: p.name,
+            added: p.createdAt.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }),
+            backedUp: p.backedUp,
+            authenticator: getAuthenticatorName(p.aaguid) ?? null,
+          }))}
+        />
       </section>
 
       <section className="flex flex-col gap-4">

@@ -105,7 +105,13 @@ Every route requires a signed-in household member — there is no
 unauthenticated mode. Sign-in is email one-time-code via
 [BetterAuth](https://www.better-auth.com/), so email-sending is a hard
 prerequisite, not optional config. See
-[HOUSEHOLDS_PLAN.md](HOUSEHOLDS_PLAN.md) for the full design.
+[HOUSEHOLDS_PLAN.md](HOUSEHOLDS_PLAN.md) for the full design. Once signed
+in, each member can add a passkey per device from `/account` (Face ID,
+Touch ID, Windows Hello, a security key) and skip the email code on that
+device from then on — an optional extra, never a replacement; the email
+code always still works. Passkeys need HTTPS (or `localhost`), so a
+plain-http LAN address won't offer them. See
+[PASSKEYS_PLAN.md](PASSKEYS_PLAN.md).
 
 | Variable | Meaning |
 | --- | --- |
