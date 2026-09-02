@@ -23,7 +23,12 @@ import { prisma } from "@/lib/db";
 import { normalizeCode } from "@/lib/access";
 import { safeCallbackURL } from "@/lib/safe-callback";
 import { isTooLong } from "@/lib/validation";
-import { OTP_EMAIL_COOKIE, OTP_NAME_COOKIE, SIGNUP_CODE_COOKIE } from "@/lib/flow-cookies";
+import {
+  OTP_EMAIL_COOKIE,
+  OTP_NAME_COOKIE,
+  PASSKEY_NUDGE_COOKIE,
+  SIGNUP_CODE_COOKIE,
+} from "@/lib/flow-cookies";
 
 export type ActionState = { error?: string } | null;
 
@@ -226,6 +231,12 @@ export async function verifyOTP(
   ) {
     redirect(result.url);
   }
+
+  // An email-code sign-in on this device is the moment to suggest a passkey
+  // for it (PASSKEYS_PLAN.md Phase 4): the session is at its freshest, so
+  // the plugin's 24h registration window is fully open. Not set on the
+  // Jellyfin-SSO path above — that redirects straight back to Jellyfin.
+  store.set(PASSKEY_NUDGE_COOKIE, "1", { ...FLOW_COOKIE_OPTS, maxAge: 60 * 60 * 24 });
 
   const cameFromSignup = Boolean(store.get(SIGNUP_CODE_COOKIE)?.value);
   redirect(
