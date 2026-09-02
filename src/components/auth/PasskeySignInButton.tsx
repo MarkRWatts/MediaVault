@@ -37,6 +37,10 @@ export function PasskeySignInButton({ callbackURL }: { callbackURL: string }) {
   const finish = useCallback(() => {
     if (navigated.current) return;
     navigated.current = true;
+    // Stays pending for good: the page is navigating away, and a second
+    // ceremony started from the button meanwhile would only mint a
+    // second session.
+    setPending(true);
     router.push(callbackURL);
     router.refresh();
   }, [router, callbackURL]);
