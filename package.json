@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@better-auth/oauth-provider": "^1.7.2",
+    "@better-auth/passkey": "^1.7.2",
     "@prisma/adapter-better-sqlite3": "^7.9.1",
     "@prisma/client": "^7.9.1",
     "@zxing/browser": "^0.2.1",
