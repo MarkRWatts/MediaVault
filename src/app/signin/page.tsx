@@ -6,6 +6,7 @@ import { requestOTP } from "@/app/actions/auth-flow";
 import { safeCallbackURL } from "@/lib/safe-callback";
 import { OTP_EMAIL_COOKIE } from "@/lib/flow-cookies";
 import { OTPForm } from "@/components/auth/OTPForm";
+import { PasskeySignInButton } from "@/components/auth/PasskeySignInButton";
 import { SubmitButton } from "./submit-button";
 
 // Email-OTP only sign-in (see auth.ts / HOUSEHOLDS_PLAN.md). Two steps on
@@ -122,10 +123,15 @@ export default async function SignInPage({
               {oauthQuery !== undefined && (
                 <input type="hidden" name="oauthQuery" value={oauthQuery} />
               )}
+              {/* "webauthn" is the conditional-UI hook: with it, a browser
+                  that supports passkey autofill offers this person's
+                  passkey inside this field's autofill sheet — see
+                  PasskeySignInButton, which starts that ceremony. */}
               <input
                 type="email"
                 name="email"
                 required
+                autoComplete="username webauthn"
                 placeholder="you@example.com"
                 className="w-full rounded-md border border-border bg-bg-elevated-2 px-4 py-2.5 text-sm text-text placeholder:text-text-faint focus-visible:outline-none"
               />
@@ -140,6 +146,11 @@ export default async function SignInPage({
               />
               <SubmitButton pendingText="Sending…">Email me a sign-in code</SubmitButton>
             </form>
+            {/* Not on a Jellyfin-SSO sign-in (PASSKEYS_PLAN.md "Auth &
+                gating"): whether oauthProvider's hooks see oauth_query on
+                the passkey endpoint is unverified, so that path stays
+                OTP-only until Phase 5 proves it. */}
+            {oauthQuery === undefined && <PasskeySignInButton callbackURL={callbackURL} />}
             <p className="text-xs text-text-faint">
               New here with an access code?{" "}
               <Link href="/signup" className="font-semibold text-accent underline-offset-2 hover:underline">
