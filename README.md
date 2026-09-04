@@ -18,9 +18,11 @@ sign-in and watch history.
   the library while you're stood in front of the shelf.
 - **Film detail** — editions (theatrical vs director's cut), resolutions,
   soundtracks (Dolby/DTS profile badges, HDR labels), file details,
-  in-browser playback (on-demand ffmpeg remux/transcode, streamed while it's
-  still being prepared — no separate encode-then-wait step), and per-version
-  "Play in Jellyfin" links.
+  in-browser playback (on-demand ffmpeg remux/transcode served as HLS while
+  it's still being prepared — no separate encode-then-wait step, seeking
+  works from the first segment, and a "Remote" 720p quality is there for
+  connections that can't carry a Blu-ray bitrate), and per-version "Play in
+  Jellyfin" links.
 - **Shows** — TV series with per-season episode lists, missing episodes
   greyed out, in-browser playback, and per-episode play links. Episode
   numbering follows disc order (TMDB DVD episode groups), because this is a
@@ -94,7 +96,7 @@ the Docker deployment reads `.env.docker` on the server (template:
 | `TVSHOWS_PATH` | Folder of TV shows (`Show (Year)/Season NN/Show SxxEyy.ext`). Optional — unset skips all TV features. |
 | `MUSIC_PATH` | Folder of a music library in iTunes layout (`Artist/Album/NN Track.m4a`). Optional — unset skips all music features. |
 | `POSTER_CACHE_DIR` | Where downloaded TMDB/Discogs artwork is cached. |
-| `VIDEO_CACHE_DIR` | Where on-demand ffmpeg remux/transcode output is cached, keyed per file — a prepared file is served straight from here on every subsequent play. |
+| `VIDEO_CACHE_DIR` | Where on-demand ffmpeg output is cached: one directory per file and quality (`film-42/`, `film-42-remote/`) holding an HLS playlist and its segments — a prepared file is served straight from here on every subsequent play. See [PLAYBACK_PLAN.md](PLAYBACK_PLAN.md). |
 | `VIDEO_CACHE_MAX_BYTES` | Cap on that cache's retained size; before each prepare, least-recently-played files are evicted to make room for the incoming one (in-flight files count). A single output bigger than the cap is still produced and kept until the next prepare needs its space. Independently of the cap, a prepare is refused if it would leave the volume with under 1 GB free. Defaults to 10 GiB if unset. |
 | `DATABASE_URL` | SQLite location, e.g. `file:./data/mediavault.db`. |
 | `FFPROBE_DOCKER_IMAGE` | Dev-only fallback: run ffprobe via `docker run` when it isn't on PATH (the deploy image installs ffmpeg). |
@@ -250,3 +252,15 @@ npx tsx scripts/e2e-passkey.ts
 
 Takes about a minute. `E2E_PORT` picks the throwaway server's port
 (default 3007); `E2E_CHROMIUM` points at a specific Chromium binary.
+
+In-browser playback (HLS via hls.js, quality switching, direct-play byte
+ranges) has a sibling harness that seeds two synthetic films and plays
+them. Playwright's own Chromium has no H.264/AAC decoder, so point it at a
+real Chrome (see [PLAYBACK_PLAN.md](PLAYBACK_PLAN.md)):
+
+```bash
+E2E_CHROMIUM="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  npx tsx scripts/e2e-playback.ts
+```
+
+Takes two to three minutes; `E2E_PORT` defaults to 3008.

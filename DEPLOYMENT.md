@@ -283,6 +283,12 @@ docker run --rm -v mediavault_data:/data -v "$HOME":/backup alpine \
 find "$HOME" -maxdepth 1 -name 'mediavault-data-*.tar.gz' -mtime +14 -delete
 ```
 
+The cache layout changed with HLS playback (`PLAYBACK_PLAN.md`): entries are
+now directories (`film-42/`, `film-42-remote/`), and the app sweeps
+anything else in the cache dir — including the old single-file `*.mp4`
+output — on its first playback call after a deploy. So the first play of
+each film after that deploy prepares again; nothing to do by hand.
+
 If the disk has already filled, the cache is safe to empty outright while
 the app is running — anything mid-play is re-prepared on the next Play:
 
