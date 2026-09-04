@@ -95,7 +95,7 @@ the Docker deployment reads `.env.docker` on the server (template:
 | `MUSIC_PATH` | Folder of a music library in iTunes layout (`Artist/Album/NN Track.m4a`). Optional — unset skips all music features. |
 | `POSTER_CACHE_DIR` | Where downloaded TMDB/Discogs artwork is cached. |
 | `VIDEO_CACHE_DIR` | Where on-demand ffmpeg remux/transcode output is cached, keyed per file — a prepared file is served straight from here on every subsequent play. |
-| `VIDEO_CACHE_MAX_BYTES` | Cap on that cache's total size; oldest-played files are evicted first once it's full. Defaults to 10 GiB if unset. |
+| `VIDEO_CACHE_MAX_BYTES` | Cap on that cache's retained size; before each prepare, least-recently-played files are evicted to make room for the incoming one (in-flight files count). A single output bigger than the cap is still produced and kept until the next prepare needs its space. Independently of the cap, a prepare is refused if it would leave the volume with under 1 GB free. Defaults to 10 GiB if unset. |
 | `DATABASE_URL` | SQLite location, e.g. `file:./data/mediavault.db`. |
 | `FFPROBE_DOCKER_IMAGE` | Dev-only fallback: run ffprobe via `docker run` when it isn't on PATH (the deploy image installs ffmpeg). |
 

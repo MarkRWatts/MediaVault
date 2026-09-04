@@ -47,11 +47,20 @@ COPY --from=builder /app/src ./src
 COPY --from=builder /app/scripts ./scripts
 COPY --from=builder /app/tsconfig.json ./tsconfig.json
 
-# ffprobe for ground-truth video metadata in the scanner.
-RUN apk add --no-cache ffmpeg
+# ffprobe/ffmpeg for ground-truth video metadata in the scanner and the
+# on-demand playback remux/transcode. tini as PID 1 so a `docker stop` (every
+# deploy) reaches the app as SIGTERM instead of `sh` swallowing it and the
+# runtime SIGKILLing everything 10s later -- which killed any in-flight
+# ffmpeg mid-write and left its multi-GB .partial behind (see
+# src/lib/video-cache.ts's shutdown hook).
+RUN apk add --no-cache ffmpeg tini
 
 EXPOSE 3000
 
+ENTRYPOINT ["/sbin/tini", "--"]
 # Apply any pending migrations, then start the server. Safe to run on every
 # boot: migrate deploy is a no-op when the schema is already up to date.
-CMD ["sh", "-c", "npx prisma migrate deploy && npm start"]
+# `exec` replaces the shell with the server process so tini's signal
+# forwarding lands on Node itself; node_modules/.bin/next is the same binary
+# `npm start` would run, minus npm's own layer in between.
+CMD ["sh", "-c", "npx prisma migrate deploy && exec node_modules/.bin/next start"]
