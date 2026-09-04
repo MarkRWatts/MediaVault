@@ -229,3 +229,24 @@ The filename parsers are tested against the real quirks of a lived-in library:
 missing years, `[imdbid-…]`/`[tmdbid-…]` tags, edition brackets, underscores,
 glued tags, typo'd extensions, unpadded season folders, flat show layouts, and
 multi-episode files.
+
+### Passkeys end to end
+
+A WebAuthn ceremony needs an authenticator, so the passkey flows have their
+own browser-driven check (see [PASSKEYS_PLAN.md](PASSKEYS_PLAN.md)). It
+starts its own throwaway `next dev` on a scratch SQLite database and drives
+Chromium with a virtual authenticator — nothing touches your real
+`.env`, database, or email. Once per machine:
+
+```bash
+npx playwright install chromium
+```
+
+then:
+
+```bash
+npx tsx scripts/e2e-passkey.ts
+```
+
+Takes about a minute. `E2E_PORT` picks the throwaway server's port
+(default 3007); `E2E_CHROMIUM` points at a specific Chromium binary.
