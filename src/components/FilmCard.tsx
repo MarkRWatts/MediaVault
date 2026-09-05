@@ -53,8 +53,8 @@ export default function FilmCard({
             <span
               className={`flex items-center gap-1.5 font-mono text-text-faint ${compact ? "text-[10px]" : "text-xs"}`}
             >
-              {film.year ?? "—"}
               <CertificationBadge certification={film.certification} />
+              {film.year ?? "—"}
             </span>
             {formatChips.length > 0 && (
               <div className="flex flex-wrap justify-end gap-1">

@@ -49,8 +49,8 @@ export default function ShowCard({
             {title}
           </h3>
           <span className="flex items-center gap-1.5 font-mono text-xs text-text-faint">
-            {year ?? "—"}
             <CertificationBadge certification={certification} />
+            {year ?? "—"}
           </span>
           <div className="mt-auto flex flex-col gap-1.5">
             <div className="flex items-center justify-between">
