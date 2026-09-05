@@ -67,6 +67,25 @@ async function cachePoster(tmdbPath: string | null | undefined, size: "w300" | "
   }
 }
 
+// The UK certificate off a movie's `release_dates` append (BBFC: U, PG,
+// 12A, 12, 15, 18, R18). Several GB entries can exist (theatrical,
+// physical, digital); the first non-empty one in TMDB's order is used.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function ukCertification(details: any): string | null {
+  const gb = (details?.release_dates?.results ?? []).find((r: { iso_3166_1?: string }) => r.iso_3166_1 === "GB");
+  const cert = (gb?.release_dates ?? []).map((d: { certification?: string }) => (d.certification ?? "").trim()).find(Boolean);
+  return cert || null;
+}
+
+// The UK rating off a TV show's `content_ratings` append -- a BBFC
+// certificate where the show has one, else whatever TMDB holds for GB.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function ukTvRating(details: any): string | null {
+  const gb = (details?.content_ratings?.results ?? []).find((r: { iso_3166_1?: string }) => r.iso_3166_1 === "GB");
+  const rating = (gb?.rating ?? "").trim();
+  return rating || null;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function ensureCollection(collStub: any, collectionCache: Map<number, any>, log: string[]): Promise<void> {
   await prisma.collection.upsert({
@@ -246,7 +265,7 @@ export async function findOrCreateFilmByTmdbId(tmdbId: number): Promise<FilmRef>
     };
   }
 
-  const details = await tmdbFetch(`/movie/${tmdbId}`);
+  const details = await tmdbFetch(`/movie/${tmdbId}`, { append_to_response: "release_dates" });
   const releaseDate = details.release_date ? new Date(details.release_date) : null;
   const year = releaseDate && !Number.isNaN(releaseDate.getTime()) ? releaseDate.getFullYear() : null;
 
@@ -263,6 +282,7 @@ export async function findOrCreateFilmByTmdbId(tmdbId: number): Promise<FilmRef>
       releaseDate,
       runtimeMins: details.runtime ?? null,
       rating: details.vote_average ?? null,
+      certification: ukCertification(details),
       genres: details.genres?.length
         ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
           details.genres.map((g: any) => g.name).join(", ")
@@ -342,7 +362,7 @@ async function enrichOneFilm(film: Film, log: string[], collectionCache: Map<num
     return;
   }
 
-  const details = await tmdbFetch(`/movie/${tmdbId}`);
+  const details = await tmdbFetch(`/movie/${tmdbId}`, { append_to_response: "release_dates" });
 
   if (confidence === "LOW") {
     log.push(`Low-confidence match: "${film.title}"${film.year ? ` (${film.year})` : ""} -> "${details.title}" (tmdb:${tmdbId})`);
@@ -357,6 +377,7 @@ async function enrichOneFilm(film: Film, log: string[], collectionCache: Map<num
     releaseDate: details.release_date ? new Date(details.release_date) : null,
     runtimeMins: details.runtime ?? null,
     rating: details.vote_average ?? null,
+    certification: ukCertification(details),
     genres: details.genres?.length ? details.genres.map((g: { name: string }) => g.name).join(", ") : null,
     matchConfidence: confidence,
   };
@@ -571,7 +592,7 @@ async function enrichOneShow(show: Show, log: string[]): Promise<void> {
     return;
   }
 
-  const details = await tmdbFetch(`/tv/${tmdbId}`, { append_to_response: "external_ids" });
+  const details = await tmdbFetch(`/tv/${tmdbId}`, { append_to_response: "external_ids,content_ratings" });
 
   if (confidence === "LOW") {
     log.push(`Low-confidence match: "${show.title}"${show.year ? ` (${show.year})` : ""} -> "${details.name}" (tmdb:${tmdbId})`);
@@ -586,6 +607,7 @@ async function enrichOneShow(show: Show, log: string[]): Promise<void> {
     firstAirDate: details.first_air_date ? new Date(details.first_air_date) : null,
     status: details.status ?? null,
     rating: details.vote_average ?? null,
+    certification: ukTvRating(details),
     genres: details.genres?.length ? details.genres.map((g: { name: string }) => g.name).join(", ") : null,
     matchConfidence: confidence,
   };

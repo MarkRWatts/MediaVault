@@ -68,6 +68,7 @@ export interface LibraryFilm {
   title: string;
   sortTitle: string;
   year: number | null;
+  certification: string | null;
   posterPath: string | null;
   collectionId: number | null;
   collectionName: string | null;
@@ -104,6 +105,7 @@ const FILM_CARD_SELECT = {
   collectionId: true,
   collection: { select: { name: true } },
   releaseDate: true,
+  certification: true,
   createdAt: true,
   owned: true,
   physicalCopies: { select: { medium: true } },
@@ -127,6 +129,7 @@ type FilmCardSource = {
   collectionId: number | null;
   collection: { name: string } | null;
   releaseDate: Date | null;
+  certification: string | null;
   createdAt: Date;
   owned: boolean;
   physicalCopies: { medium: string }[];
@@ -143,6 +146,7 @@ function shapeLibraryFilm(f: FilmCardSource): LibraryFilm {
   return {
     id: f.id,
     title: f.title,
+    certification: f.certification,
     sortTitle: f.sortTitle,
     year: f.year,
     posterPath: f.posterPath,
@@ -377,6 +381,7 @@ export interface FilmDetail {
   releaseDate: string | null;
   runtimeLabel: string;
   rating: number | null;
+  certification: string | null;
   genres: string[];
   matchConfidence: string;
   versions: VersionView[];
@@ -438,6 +443,7 @@ export async function getFilmDetail(id: number): Promise<FilmDetail | null> {
     releaseDate: film.releaseDate ? film.releaseDate.toISOString() : null,
     runtimeLabel: formatRuntimeMins(film.runtimeMins),
     rating: film.rating,
+    certification: film.certification,
     genres: film.genres ? film.genres.split(",").map((g) => g.trim()).filter(Boolean) : [],
     matchConfidence: film.matchConfidence,
     versions,
@@ -572,6 +578,7 @@ export interface ShowSummary {
   sortTitle: string;
   year: number | null;
   posterPath: string | null;
+  certification: string | null;
   ownedEpisodeCount: number;
   totalEpisodeCount: number;
   complete: boolean;
@@ -597,6 +604,7 @@ export async function getShows(): Promise<ShowSummary[]> {
       sortTitle: s.sortTitle,
       year: s.year,
       posterPath: s.posterPath,
+      certification: s.certification,
       ownedEpisodeCount,
       totalEpisodeCount,
       complete: totalEpisodeCount > 0 && ownedEpisodeCount === totalEpisodeCount,
@@ -648,6 +656,7 @@ export interface ShowDetail {
   overview: string | null;
   status: string | null;
   rating: number | null;
+  certification: string | null;
   genres: string[];
   matchConfidence: string;
   ownedEpisodeCount: number;
@@ -722,6 +731,7 @@ export async function getShowDetail(id: number): Promise<ShowDetail | null> {
     overview: show.overview,
     status: show.status,
     rating: show.rating,
+    certification: show.certification,
     genres: show.genres ? show.genres.split(",").map((g) => g.trim()).filter(Boolean) : [],
     matchConfidence: show.matchConfidence,
     ownedEpisodeCount,
