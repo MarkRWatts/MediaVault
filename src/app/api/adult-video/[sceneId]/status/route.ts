@@ -1,10 +1,10 @@
-// GET /api/adult-video/:sceneId/status — see /api/video/:versionId/status.
+// GET /api/adult-video/:sceneId/status?variant=… — see /api/video/:versionId/status.
 
 import { NextResponse } from "next/server";
-import { getVideoStatus } from "@/lib/video-cache";
+import { getVideoStatus, parseVariant } from "@/lib/video-cache";
 import { requireAdultAccessOrResponse } from "@/lib/require-member";
 
-export async function GET(_req: Request, ctx: { params: Promise<{ sceneId: string }> }) {
+export async function GET(req: Request, ctx: { params: Promise<{ sceneId: string }> }) {
   const gate = await requireAdultAccessOrResponse();
   if (gate instanceof NextResponse) return gate;
 
@@ -13,8 +13,10 @@ export async function GET(_req: Request, ctx: { params: Promise<{ sceneId: strin
   if (!Number.isInteger(sceneId)) {
     return NextResponse.json({ error: "invalid scene id" }, { status: 400 });
   }
+  const variant = parseVariant(new URL(req.url).searchParams.get("variant") ?? "original");
+  if (!variant) return NextResponse.json({ error: "invalid variant" }, { status: 400 });
 
-  const status = await getVideoStatus("scene", sceneId);
+  const status = await getVideoStatus("scene", sceneId, variant);
   if (status.state === "not-found") {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }

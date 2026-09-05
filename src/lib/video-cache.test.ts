@@ -1,8 +1,15 @@
 import { describe, expect, it, afterEach } from "vitest";
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { selectEntriesToEvict, maxCacheBytes, sweepOrphanedPartialsIn, type CacheEntry } from "./video-cache";
+import {
+  selectEntriesToEvict,
+  maxCacheBytes,
+  sweepOrphanedEntriesIn,
+  estimateOutputBytes,
+  HLS_FILE_RE,
+  type CacheEntry,
+} from "./video-cache";
 
 describe("selectEntriesToEvict", () => {
   it("evicts nothing when under budget", () => {
@@ -73,23 +80,63 @@ describe("selectEntriesToEvict", () => {
   });
 });
 
-describe("sweepOrphanedPartialsIn", () => {
-  it("removes partials with no live job and leaves everything else alone", async () => {
+describe("sweepOrphanedEntriesIn", () => {
+  it("removes incomplete entries with no live job, legacy files, and strays; keeps complete and live ones", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "mv-cache-"));
-    await writeFile(path.join(dir, "film-1.mp4"), "done");
-    await writeFile(path.join(dir, "film-2.mp4.partial"), "orphan");
-    await writeFile(path.join(dir, "scene-3.mp4.partial"), "live");
-    await writeFile(path.join(dir, "notes.txt"), "unrelated");
+    // A finished entry: keep.
+    await mkdir(path.join(dir, "film-1"));
+    await writeFile(path.join(dir, "film-1", ".complete"), "");
+    await writeFile(path.join(dir, "film-1", "index.m3u8"), "#EXTM3U");
+    // An in-progress entry nobody is writing: orphan, remove.
+    await mkdir(path.join(dir, "film-2"));
+    await writeFile(path.join(dir, "film-2", "index.m3u8"), "#EXTM3U");
+    // An in-progress entry with a live job: keep.
+    await mkdir(path.join(dir, "scene-3-remote"));
+    await writeFile(path.join(dir, "scene-3-remote", "seg_00000.m4s"), "…");
+    // The pre-HLS layout and a stray file: unknown to this layout, remove.
+    await writeFile(path.join(dir, "film-4.mp4"), "legacy");
+    await writeFile(path.join(dir, "film-5.mp4.partial"), "legacy");
+    await writeFile(path.join(dir, "notes.txt"), "stray");
 
-    const removed = await sweepOrphanedPartialsIn(dir, (key) => key === "scene-3");
+    const removed = await sweepOrphanedEntriesIn(dir, (key) => key === "scene-3-remote");
 
-    expect(removed).toEqual([path.join(dir, "film-2.mp4.partial")]);
-    expect((await readdir(dir)).sort()).toEqual(["film-1.mp4", "notes.txt", "scene-3.mp4.partial"]);
+    expect(removed.map((p) => path.basename(p)).sort()).toEqual(["film-2", "film-4.mp4", "film-5.mp4.partial", "notes.txt"]);
+    expect((await readdir(dir)).sort()).toEqual(["film-1", "scene-3-remote"]);
     await rm(dir, { recursive: true, force: true });
   });
 
   it("is a no-op on a missing directory", async () => {
-    expect(await sweepOrphanedPartialsIn("/definitely/not/here", () => false)).toEqual([]);
+    expect(await sweepOrphanedEntriesIn("/definitely/not/here", () => false)).toEqual([]);
+  });
+});
+
+describe("estimateOutputBytes", () => {
+  it("bounds an original-variant output by the source size", () => {
+    expect(estimateOutputBytes(40_000, 7200, "original")).toBe(40_000);
+  });
+
+  it("sizes a remote-variant output from duration at the encode ceiling, never above the source", () => {
+    // 2h at ~3.128 Mbps × 1.2 margin ≈ 3.4 GB; far below a 40 GB source.
+    const estimate = estimateOutputBytes(40 * 1024 ** 3, 7200, "remote");
+    expect(estimate).toBeGreaterThan(3 * 1024 ** 3);
+    expect(estimate).toBeLessThan(4 * 1024 ** 3);
+    // A tiny source can't produce more than itself.
+    expect(estimateOutputBytes(1000, 7200, "remote")).toBe(1000);
+  });
+
+  it("falls back to a quarter of the source when the duration is unknown", () => {
+    expect(estimateOutputBytes(4000, null, "remote")).toBe(1000);
+  });
+});
+
+describe("HLS_FILE_RE", () => {
+  it("accepts only the init segment and zero-padded media segments", () => {
+    expect(HLS_FILE_RE.test("init.mp4")).toBe(true);
+    expect(HLS_FILE_RE.test("seg_00000.m4s")).toBe(true);
+    expect(HLS_FILE_RE.test("seg_12345.m4s")).toBe(true);
+    for (const bad of ["index.m3u8", "../init.mp4", "seg_1.m4s", "seg_00000.m4s/", ".complete", "seg_00000.mp4", "init.mp4\n"]) {
+      expect(HLS_FILE_RE.test(bad)).toBe(false);
+    }
   });
 });
 

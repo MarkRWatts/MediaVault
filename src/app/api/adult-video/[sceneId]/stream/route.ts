@@ -1,60 +1,11 @@
 // GET /api/adult-video/:sceneId/stream — see /api/video/:versionId/stream
-// for the full mechanism explanation; this is the scene-flavoured twin,
-// gated by requireAdultAccessOrResponse.
+// for the mechanism; this is the scene-flavoured twin, gated by
+// requireAdultAccessOrResponse.
 
 import { NextResponse } from "next/server";
-import { promises as fsPromises, createReadStream } from "node:fs";
-import { Readable } from "node:stream";
-import { resolveVideoStream, registerStreamReader } from "@/lib/video-cache";
-import { createTailingStream } from "@/lib/tailing-stream";
-import { parseRange } from "@/lib/http-range";
+import { resolveVideoStream } from "@/lib/video-cache";
+import { serveFile } from "@/lib/serve-file";
 import { requireAdultAccessOrResponse } from "@/lib/require-member";
-
-// Manual ReadableStream instead of Readable.toWeb() -- see
-// /api/video/:versionId/stream for why (the ERR_INVALID_STATE race between a
-// client-disconnect-triggered destroy() and the stream's own 'end'/'close').
-function fileToWebStream(readStream: Readable): ReadableStream<Uint8Array> {
-  let closed = false;
-  return new ReadableStream<Uint8Array>({
-    start(controller) {
-      readStream.on("data", (chunk: Buffer) => {
-        try {
-          controller.enqueue(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
-        } catch {
-          return; // Controller already closed/errored by a concurrent event.
-        }
-        if (controller.desiredSize !== null && controller.desiredSize <= 0) {
-          readStream.pause();
-        }
-      });
-      readStream.once("end", () => {
-        if (closed) return;
-        closed = true;
-        try {
-          controller.close();
-        } catch {
-          // Already closed by a concurrent event -- ignore.
-        }
-      });
-      readStream.once("error", (err) => {
-        if (closed) return;
-        closed = true;
-        try {
-          controller.error(err);
-        } catch {
-          // Already closed/errored by a concurrent event -- ignore.
-        }
-      });
-    },
-    pull() {
-      readStream.resume();
-    },
-    cancel() {
-      closed = true;
-      readStream.destroy();
-    },
-  });
-}
 
 export async function GET(req: Request, ctx: { params: Promise<{ sceneId: string }> }) {
   const gate = await requireAdultAccessOrResponse();
@@ -67,64 +18,11 @@ export async function GET(req: Request, ctx: { params: Promise<{ sceneId: string
   }
 
   const resolved = await resolveVideoStream("scene", sceneId);
-
   if (resolved.kind === "not-found") {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
-  if (resolved.kind === "error") {
-    return NextResponse.json({ error: resolved.message }, { status: 500 });
+  if (resolved.kind === "needs-prepare") {
+    return NextResponse.json({ error: "this file is served as HLS; use hls/<variant>/index.m3u8" }, { status: 409 });
   }
-  if (resolved.kind === "not-started") {
-    return NextResponse.json({ error: "not ready yet" }, { status: 503, headers: { "Retry-After": "2" } });
-  }
-
-  if (resolved.kind === "tailing") {
-    const nodeStream = createTailingStream(resolved.absPath, {
-      isDone: resolved.isDone,
-      hasErrored: resolved.hasErrored,
-    });
-    nodeStream.once("close", registerStreamReader("scene", sceneId));
-    return new NextResponse(fileToWebStream(nodeStream), {
-      status: 200,
-      headers: {
-        "Content-Type": resolved.contentType,
-        "Cache-Control": "no-store",
-      },
-    });
-  }
-
-  // resolved.kind === "complete" — normal byte-range serving, unchanged.
-  const stat = await fsPromises.stat(resolved.absPath);
-  const range = parseRange(req.headers.get("range"), stat.size);
-
-  if (range === "unsatisfiable") {
-    return new NextResponse(null, {
-      status: 416,
-      headers: { "Content-Range": `bytes */${stat.size}` },
-    });
-  }
-
-  if (range === null) {
-    return new NextResponse(fileToWebStream(createReadStream(resolved.absPath)), {
-      status: 200,
-      headers: {
-        "Content-Type": resolved.contentType,
-        "Content-Length": String(stat.size),
-        "Accept-Ranges": "bytes",
-        "Cache-Control": "no-store",
-      },
-    });
-  }
-
-  const chunkSize = range.end - range.start + 1;
-  return new NextResponse(fileToWebStream(createReadStream(resolved.absPath, { start: range.start, end: range.end })), {
-    status: 206,
-    headers: {
-      "Content-Type": resolved.contentType,
-      "Content-Range": `bytes ${range.start}-${range.end}/${stat.size}`,
-      "Content-Length": String(chunkSize),
-      "Accept-Ranges": "bytes",
-      "Cache-Control": "no-store",
-    },
-  });
+  return serveFile(req, resolved.absPath, resolved.contentType, "no-store");
 }

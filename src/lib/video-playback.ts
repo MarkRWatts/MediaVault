@@ -145,11 +145,96 @@ export function audioTranscodeBitrate(outputChannels: number): string {
   return "512k";
 }
 
+/** Which rendition of a prepared file to produce/serve (PLAYBACK_PLAN.md):
+ *  "original" keeps the source's video (copied where possible) and its best
+ *  compatible audio; "remote" is a 720p ~3 Mbps H.264 + stereo AAC encode for
+ *  links that can't carry a Blu-ray bitrate. Always the viewer's choice —
+ *  over a VPN the server can't tell a hotel from the sofa. */
+export type Variant = "original" | "remote";
+export const VARIANTS: readonly Variant[] = ["original", "remote"];
+
+export function parseVariant(raw: string | null | undefined): Variant | null {
+  return raw === "original" || raw === "remote" ? raw : null;
+}
+
+/** Segment length. Six seconds is the conventional compromise: short enough
+ *  that seeking during preparation lands within seconds of the target and a
+ *  reconnect re-fetches little, long enough that a copied stream's keyframe
+ *  cadence (2–5s on most Blu-ray encodes) rarely forces a longer segment. */
+export const HLS_SEGMENT_SECS = 6;
+
+/** Remote-variant encode ceiling. ~3 Mbps video + 128k audio streams over
+ *  most hotel/mobile links with room to spare, and 720p keeps the encode
+ *  near realtime on a small VM at two threads. */
+export const REMOTE_VIDEO_MAXRATE = "3M";
+export const REMOTE_AUDIO_BITRATE = "128k";
+
 /**
- * Build the ffmpeg argument list for a "prepare" job. `output` is an absolute
- * path ffmpeg should write to directly (already resolved for local-vs-docker
- * by the caller — see video-cache.ts). `sourceAudioChannels` is only needed
- * when `plan.audioAction === "transcode"`, to size the AAC output.
+ * Build the ffmpeg argument list for a "prepare" job writing HLS into
+ * `outDir` (already resolved for local-vs-docker by the caller). The output
+ * is an *event* playlist of fMP4 segments: players can seek anywhere
+ * already written while ffmpeg is still running, and it becomes plain VOD
+ * once `#EXT-X-ENDLIST` lands. Verified against a real AC-3 source: the hls
+ * muxer's own fMP4 defaults cover the delay_moov/negative-CTS lessons the
+ * single-file path had to learn explicitly, so no `-movflags` here.
+ */
+export function buildHlsFfmpegArgs(
+  input: string,
+  outDir: string,
+  plan: VideoPlaybackPlan,
+  sourceAudioChannels: number | null | undefined,
+  variant: Variant,
+): string[] {
+  const args = ["-y", "-nostats", "-loglevel", "error", "-i", input, "-map", "0:v:0"];
+  if (plan.audioStreamIndex !== null) args.push("-map", `0:${plan.audioStreamIndex}`);
+  args.push("-map_chapters", "-1");
+
+  if (variant === "remote") {
+    // Never upscale: a DVD source stays at its own height.
+    args.push("-vf", "scale=-2:min(720\\,ih)");
+    args.push("-c:v", "libx264", "-preset", "veryfast", "-crf", "23");
+    args.push("-maxrate", REMOTE_VIDEO_MAXRATE, "-bufsize", "6M", "-pix_fmt", "yuv420p", "-threads", "2");
+    // Keyframe every segment boundary so every segment is independently
+    // decodable and seeks land exactly on segment starts.
+    args.push("-force_key_frames", `expr:gte(t,n_forced*${HLS_SEGMENT_SECS})`);
+    if (plan.audioStreamIndex !== null) args.push("-c:a", "aac", "-ac", "2", "-b:a", REMOTE_AUDIO_BITRATE);
+  } else {
+    if (plan.videoAction === "copy") {
+      args.push("-c:v", "copy");
+      if (plan.hevcTag) args.push("-tag:v", "hvc1");
+    } else {
+      args.push("-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p", "-threads", "2");
+      args.push("-force_key_frames", `expr:gte(t,n_forced*${HLS_SEGMENT_SECS})`);
+    }
+    if (plan.audioStreamIndex !== null) {
+      if (plan.audioAction === "copy") {
+        args.push("-c:a", "copy");
+      } else {
+        const outputChannels = audioTranscodeChannels(sourceAudioChannels ?? null);
+        args.push("-c:a", "aac", "-ac", String(outputChannels), "-b:a", audioTranscodeBitrate(outputChannels));
+      }
+    }
+  }
+
+  args.push(
+    "-f", "hls",
+    "-hls_time", String(HLS_SEGMENT_SECS),
+    "-hls_playlist_type", "event",
+    "-hls_segment_type", "fmp4",
+    "-hls_fmp4_init_filename", "init.mp4",
+    "-hls_flags", "independent_segments",
+    "-hls_segment_filename", `${outDir}/seg_%05d.m4s`,
+    `${outDir}/index.m3u8`,
+  );
+  return args;
+}
+
+/**
+ * Build the ffmpeg argument list for a single-file fragmented-MP4 "prepare"
+ * job — the pre-HLS output format, kept for the tests that pin the muxer
+ * flags the fragmented path needed. `output` is an absolute path ffmpeg
+ * should write to directly. `sourceAudioChannels` is only needed when
+ * `plan.audioAction === "transcode"`, to size the AAC output.
  */
 export function buildFfmpegArgs(
   input: string,

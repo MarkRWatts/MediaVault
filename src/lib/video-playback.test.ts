@@ -1,5 +1,70 @@
 import { describe, expect, it } from "vitest";
-import { buildFfmpegArgs, planVideoPlayback } from "./video-playback";
+import { buildFfmpegArgs, buildHlsFfmpegArgs, parseVariant, planVideoPlayback } from "./video-playback";
+
+describe("buildHlsFfmpegArgs", () => {
+  const remuxPlan = planVideoPlayback({
+    videoCodec: "h264",
+    container: "mkv",
+    audioTracks: [{ streamIdx: 1, codec: "ac3", profile: null, channels: 6 }],
+  })!;
+
+  it("writes an fMP4 event playlist with the init segment and a zero-padded segment pattern", () => {
+    const args = buildHlsFfmpegArgs("/in.mkv", "/cache/film-1", remuxPlan, null, "original");
+    expect(args.slice(0, 5)).toEqual(["-y", "-nostats", "-loglevel", "error", "-i"]);
+    expect(args).toEqual(expect.arrayContaining(["-f", "hls", "-hls_segment_type", "fmp4", "-hls_playlist_type", "event"]));
+    expect(args[args.indexOf("-hls_fmp4_init_filename") + 1]).toBe("init.mp4");
+    expect(args[args.indexOf("-hls_segment_filename") + 1]).toBe("/cache/film-1/seg_%05d.m4s");
+    expect(args[args.length - 1]).toBe("/cache/film-1/index.m3u8");
+    expect(args[args.indexOf("-hls_time") + 1]).toBe("6");
+  });
+
+  it("copies both streams for an original-variant remux and still drops chapters", () => {
+    const args = buildHlsFfmpegArgs("/in.mkv", "/out", remuxPlan, null, "original");
+    expect(args).toEqual(expect.arrayContaining(["-c:v", "copy", "-c:a", "copy"]));
+    expect(args[args.indexOf("-map_chapters") + 1]).toBe("-1");
+    expect(args).not.toContain("-vf");
+  });
+
+  it("encodes the remote variant at 720p under a bitrate ceiling with stereo AAC, keyframes on segment boundaries", () => {
+    const args = buildHlsFfmpegArgs("/in.mkv", "/out", remuxPlan, 6, "remote");
+    expect(args[args.indexOf("-vf") + 1]).toBe("scale=-2:min(720\\,ih)");
+    expect(args).toEqual(expect.arrayContaining(["-c:v", "libx264", "-maxrate", "3M", "-c:a", "aac", "-ac", "2", "-b:a", "128k"]));
+    expect(args[args.indexOf("-force_key_frames") + 1]).toBe("expr:gte(t,n_forced*6)");
+    expect(args).not.toContain("copy");
+  });
+
+  it("transcodes video for an original-variant MPEG-2 source with segment-aligned keyframes", () => {
+    const plan = planVideoPlayback({
+      videoCodec: "mpeg2video",
+      container: "vob",
+      audioTracks: [{ streamIdx: 1, codec: "ac3", profile: null, channels: 2 }],
+    })!;
+    const args = buildHlsFfmpegArgs("/in.vob", "/out", plan, null, "original");
+    expect(args).toEqual(expect.arrayContaining(["-c:v", "libx264", "-crf", "18", "-threads", "2", "-c:a", "copy"]));
+    expect(args).toContain("-force_key_frames");
+  });
+
+  it("keeps the hvc1 tag for copied HEVC", () => {
+    const plan = planVideoPlayback({
+      videoCodec: "hevc",
+      container: "mkv",
+      audioTracks: [{ streamIdx: 1, codec: "eac3", profile: null, channels: 6 }],
+    })!;
+    const args = buildHlsFfmpegArgs("/in.mkv", "/out", plan, null, "original");
+    expect(args[args.indexOf("-tag:v") + 1]).toBe("hvc1");
+  });
+});
+
+describe("parseVariant", () => {
+  it("accepts exactly the two variants", () => {
+    expect(parseVariant("original")).toBe("original");
+    expect(parseVariant("remote")).toBe("remote");
+    expect(parseVariant("REMOTE")).toBeNull();
+    expect(parseVariant("")).toBeNull();
+    expect(parseVariant(null)).toBeNull();
+    expect(parseVariant(undefined)).toBeNull();
+  });
+});
 
 describe("planVideoPlayback", () => {
   it("returns null when the file hasn't been probed yet", () => {
