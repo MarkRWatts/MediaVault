@@ -15,13 +15,18 @@ const BBFC_FILES: Record<string, string> = {
 };
 
 export const BBFC_ICON_HEIGHT = 30;
+/** Cards use a smaller symbol than the detail pages. */
+export const BBFC_CARD_ICON_HEIGHT = 24;
 
 export default function CertificationBadge({
   certification,
   className = "",
+  height = BBFC_ICON_HEIGHT,
 }: {
   certification: string | null;
   className?: string;
+  /** Symbol height in px; the BBFC recommends 30. */
+  height?: number;
 }) {
   if (!certification) return null;
   const key = certification.toUpperCase();
@@ -44,9 +49,9 @@ export default function CertificationBadge({
       src={`/bbfc/${file}.svg`}
       alt={title}
       title={title}
-      height={BBFC_ICON_HEIGHT}
+      height={height}
       className={`inline-block w-auto shrink-0 ${className}`}
-      style={{ height: BBFC_ICON_HEIGHT }}
+      style={{ height }}
     />
   );
 }
