@@ -109,6 +109,9 @@ describe("buildFfmpegArgs", () => {
     const args = buildFfmpegArgs("/in.mkv", "/out.mp4", plan);
     expect(args).toEqual([
       "-y",
+      "-nostats",
+      "-loglevel",
+      "error",
       "-i",
       "/in.mkv",
       "-map",

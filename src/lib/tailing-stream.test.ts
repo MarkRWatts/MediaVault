@@ -67,6 +67,25 @@ describe("createTailingStream", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
+  // A job that finishes normally is removed from the caller's job table,
+  // which its hasErrored callback reports as "stopped" -- so done must win
+  // whenever both are true, or every successful prepare would end its
+  // live viewer's stream with an error at the last byte.
+  it("ends cleanly when the file is done, even if hasErrored would also report something", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "tailing-"));
+    const file = path.join(dir, "out.bin");
+    await writeFile(file, "complete");
+
+    const stream = createTailingStream(file, {
+      isDone: () => true,
+      hasErrored: () => "job no longer running",
+    });
+    const result = await collect(stream);
+
+    expect(result.toString()).toBe("complete");
+    await rm(dir, { recursive: true, force: true });
+  });
+
   it("honours a non-zero start offset", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "tailing-"));
     const file = path.join(dir, "out.bin");

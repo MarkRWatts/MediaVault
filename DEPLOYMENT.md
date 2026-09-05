@@ -270,10 +270,24 @@ No `FFPROBE_DOCKER_IMAGE` needed — the runner image installs ffmpeg.
 
 The SQLite database (`mediavault.db`) and cached TMDB posters live in the `mediavault_data` named Docker volume (pinned explicitly in `docker-compose.yml` — see the [rename migration](#renaming-an-existing-filmdb-deployment-to-mediavault-one-time) note above for why), mounted at `/app/data` inside the container. On the VM, this volume is stored on the host filesystem (usually `/var/lib/docker/volumes/mediavault_data/_data`), so it persists across container restarts and redeploys (as long as you don't `docker volume rm`).
 
-For off-VM backup, copy the volume to external storage:
+The same volume also holds `video-cache/` — the on-demand ffmpeg
+remux/transcode output (up to `VIDEO_CACHE_MAX_BYTES`, 10 GiB by default,
+plus any in-flight file). That's a pure derivative of the media share and
+must **not** be backed up: a backup that includes it is 10+ GB every time,
+and a daily one fills an 80 GB VM disk in about a week. Exclude it, and
+rotate old archives:
 
 ```bash
-docker run --rm -v mediavault_data:/data -v "$HOME":/backup alpine tar czf /backup/mediavault-data-$(date +%Y-%m-%d).tar.gz -C /data .
+docker run --rm -v mediavault_data:/data -v "$HOME":/backup alpine \
+  tar czf /backup/mediavault-data-$(date +%Y-%m-%d).tar.gz -C /data --exclude=./video-cache .
+find "$HOME" -maxdepth 1 -name 'mediavault-data-*.tar.gz' -mtime +14 -delete
+```
+
+If the disk has already filled, the cache is safe to empty outright while
+the app is running — anything mid-play is re-prepared on the next Play:
+
+```bash
+docker run --rm -v mediavault_data:/data alpine sh -c 'rm -rf /data/video-cache/*'
 ```
 
 To restore from a backup:

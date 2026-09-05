@@ -157,7 +157,12 @@ export function buildFfmpegArgs(
   plan: VideoPlaybackPlan,
   sourceAudioChannels?: number | null,
 ): string[] {
-  const args = ["-y", "-i", input, "-map", "0:v:0"];
+  // -nostats / -loglevel error: the child's stderr is buffered in memory by
+  // execFile for the whole run, and the default per-frame progress line
+  // adds up over a two-hour transcode. With only real errors printed, what
+  // remains is exactly the text worth showing a viewer when a prepare
+  // fails (see runTrackedProcess in video-cache.ts).
+  const args = ["-y", "-nostats", "-loglevel", "error", "-i", input, "-map", "0:v:0"];
 
   if (plan.audioStreamIndex !== null) {
     args.push("-map", `0:${plan.audioStreamIndex}`);

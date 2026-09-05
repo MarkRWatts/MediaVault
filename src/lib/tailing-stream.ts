@@ -64,14 +64,17 @@ export function createTailingStream(path: string, opts: TailOptions): Readable {
       }
 
       // No bytes available right now -- figure out why before deciding
-      // whether that's "done" or "not yet".
+      // whether that's "done" or "not yet". Done is checked first: a job
+      // that has just finished may already be gone from the caller's
+      // job table (which its hasErrored treats as "stopped"), and a
+      // completed file must end the stream cleanly, never with an error.
+      if (await opts.isDone()) {
+        self.push(null);
+        return;
+      }
       const error = opts.hasErrored();
       if (error) {
         self.destroy(new Error(error));
-        return;
-      }
-      if (await opts.isDone()) {
-        self.push(null);
         return;
       }
       pendingTimeout = setTimeout(() => pump(self), pollIntervalMs);
