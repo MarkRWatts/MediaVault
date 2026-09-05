@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import FilmCard from "@/components/FilmCard";
 import FilmShelf from "@/components/FilmShelf";
+import SectionHeader from "@/components/SectionHeader";
 import { CARD_COLUMNS, CARD_GRID } from "@/lib/card-grid";
 import StackedFilmCard from "@/components/StackedFilmCard";
 import { videoCodecLabel } from "@/lib/constants";
@@ -103,43 +104,6 @@ function formatSectionFor(film: LibraryFilm): FormatSectionKey {
   return "Other";
 }
 
-function ChevronIcon({ collapsed }: { collapsed: boolean }) {
-  return (
-    <svg
-      aria-hidden
-      viewBox="0 0 20 20"
-      className={`h-4 w-4 text-text-faint transition-transform ${collapsed ? "-rotate-90" : ""}`}
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.8}
-    >
-      <path d="M5 8l5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function SectionHeader({
-  title,
-  count,
-  collapsed,
-  onToggle,
-}: {
-  title: string;
-  count: number;
-  collapsed: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <button type="button" onClick={onToggle} aria-expanded={!collapsed} className="flex items-center gap-2 text-left">
-      <ChevronIcon collapsed={collapsed} />
-      <h2 className="font-display text-xl tracking-wide">{title}</h2>
-      <span className="font-mono text-xs text-text-faint">
-        {count} film{count === 1 ? "" : "s"}
-      </span>
-    </button>
-  );
-}
-
 const FILTERS: { key: FilterKey; label: string }[] = [
   { key: "all", label: "All" },
   { key: "collection", label: "In a collection" },
@@ -147,6 +111,7 @@ const FILTERS: { key: FilterKey; label: string }[] = [
 ];
 
 const COLLECTIONS_SECTION = "Collections";
+const COLLAPSED_KEY = "mv-collapsed-sections";
 
 export default function LibraryBrowser({
   films,
@@ -169,13 +134,32 @@ export default function LibraryBrowser({
   const [audioFormat, setAudioFormat] = useState(ALL_CODECS);
   const [sort, setSort] = useState<SortKey>("title");
   const [stack, setStack] = useState(true);
+  // Which sections (shelves and grid groups, by title) are folded away.
+  // Remembered per browser; read after mount so the server render and the
+  // first client render agree.
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(COLLAPSED_KEY);
+      // Deliberately a post-mount setState: reading storage in the
+      // initializer would make the server and client renders disagree.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (raw) setCollapsedSections(new Set(JSON.parse(raw) as string[]));
+    } catch {
+      // No stored value, or storage unavailable: everything stays open.
+    }
+  }, []);
 
   function toggleSection(key: string) {
     setCollapsedSections((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else next.add(key);
+      try {
+        localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...next]));
+      } catch {
+        // Per-browser convenience only.
+      }
       return next;
     });
   }
@@ -384,10 +368,22 @@ export default function LibraryBrowser({
         )}
       </p>
 
-      <FilmShelf title="Continue watching" films={continueWatching} />
-      <FilmShelf title="New releases" films={newReleases} />
-      <FilmShelf title="Recently added" films={recentlyAdded} />
-      <FilmShelf title="Favourites" films={favourites} />
+      {(
+        [
+          ["Continue watching", continueWatching],
+          ["New releases", newReleases],
+          ["Recently added", recentlyAdded],
+          ["Favourites", favourites],
+        ] as const
+      ).map(([title, list]) => (
+        <FilmShelf
+          key={title}
+          title={title}
+          films={list}
+          collapsed={collapsedSections.has(title)}
+          onToggle={() => toggleSection(title)}
+        />
+      ))}
 
       {filtered.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-1 py-24 text-center">
