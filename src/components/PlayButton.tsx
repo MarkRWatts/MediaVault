@@ -13,13 +13,18 @@ export default function PlayButton({
   source = "local",
   audioTracks,
   size = "sm",
+  basePath,
+  label = "Play",
 }: {
+  /** Version id for films; EpisodeFile id with basePath "/api/tv-video". */
   versionId: number;
   title: string;
   source?: PlaybackSource;
   audioTracks?: { streamIdx: number; label: string }[];
-  /** "sm" is the per-version chip; "lg" is the film page's main button. */
+  /** "sm" is the per-version chip; "lg" is the film/show page's main button. */
   size?: "sm" | "lg";
+  basePath?: string;
+  label?: string;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -32,10 +37,17 @@ export default function PlayButton({
     <>
       <button type="button" onClick={() => setOpen(true)} title={`Play ${title}`} className={className}>
         <Play aria-hidden className={size === "lg" ? "h-4 w-4 fill-current" : "h-2.5 w-2.5 fill-current"} />
-        Play
+        {label}
       </button>
       {open && (
-        <VideoPlayer versionId={versionId} title={title} source={source} audioTracks={audioTracks} onClose={() => setOpen(false)} />
+        <VideoPlayer
+          versionId={versionId}
+          title={title}
+          source={source}
+          audioTracks={audioTracks}
+          basePath={basePath}
+          onClose={() => setOpen(false)}
+        />
       )}
     </>
   );

@@ -223,6 +223,11 @@ export default function VideoPlayer({
   const [jfSession, setJfSession] = useState<{ playlistUrl: string; playSessionId: string } | null>(null);
   // Chosen audio stream index for Jellyfin mode; null = Jellyfin's default.
   const [audioIdx, setAudioIdx] = useState<number | null>(null);
+  // Audio tracks as Jellyfin lists them for the item, from /jf/session --
+  // used when the caller didn't pass its own (episodes have no AudioTrack
+  // rows; Jellyfin's DisplayTitle is a good label either way).
+  const [sessionAudio, setSessionAudio] = useState<{ streamIdx: number; label: string }[]>([]);
+  const audioOptions = audioTracks.length > 0 ? audioTracks : sessionAudio;
 
   const streamUrl = `${basePath}/${versionId}/stream`;
   const playlistUrl = (v: Variant) => `${basePath}/${versionId}/hls/${v}/index.m3u8`;
@@ -323,6 +328,7 @@ export default function VideoPlayer({
           typeof status.durationSecs === "number" && status.durationSecs > 0 ? status.durationSecs : null;
         mseMimeRef.current = null;
         setJfSession({ playlistUrl: status.playlistUrl, playSessionId: status.playSessionId });
+        if (Array.isArray(status.audioTracks)) setSessionAudio(status.audioTracks);
       }
 
       if (source === "local" && status.state === "not-found") {
@@ -673,7 +679,7 @@ export default function VideoPlayer({
         <div className="flex items-center justify-between gap-3">
           <p className="min-w-0 truncate text-sm font-medium text-white">{title}</p>
           <div className="flex shrink-0 items-center gap-2">
-            {source === "jellyfin" && audioTracks.length > 1 && (
+            {source === "jellyfin" && audioOptions.length > 1 && (
               <label className="flex items-center gap-1.5 text-xs text-white/70">
                 Audio
                 <select
@@ -684,7 +690,7 @@ export default function VideoPlayer({
                   className="max-w-[16rem] rounded-md border border-white/20 bg-black/60 px-2 py-1 text-xs text-white focus-visible:outline-none disabled:opacity-40"
                 >
                   <option value="">Default</option>
-                  {audioTracks.map((t) => (
+                  {audioOptions.map((t) => (
                     <option key={t.streamIdx} value={String(t.streamIdx)}>
                       {t.label}
                     </option>

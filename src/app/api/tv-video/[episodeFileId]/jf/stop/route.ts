@@ -1,4 +1,4 @@
-// POST /api/video/:versionId/jf/stop?playSessionId=… — stop that transcode now.
+// POST /api/tv-video/:episodeFileId/jf/stop?playSessionId=…
 
 import { jfStop } from "@/lib/jf-routes";
 

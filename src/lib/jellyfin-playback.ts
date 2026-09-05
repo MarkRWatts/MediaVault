@@ -67,6 +67,22 @@ export interface JellyfinPlayback {
   playlistPath: string;
   runtimeSecs: number | null;
   transcodeReasons: string[];
+  /** The item's audio streams as Jellyfin describes them, for the player's
+   *  Audio dropdown: stream index + Jellyfin's own display title
+   *  ("English - DTS-HD MA - 7.1 - Default"). */
+  audioTracks: { streamIdx: number; label: string }[];
+}
+
+interface MediaStream {
+  Type: string;
+  Index: number;
+  Codec?: string;
+  Profile?: string;
+  Channels?: number;
+  Language?: string;
+  Title?: string;
+  DisplayTitle?: string;
+  IsDefault?: boolean;
 }
 
 interface PlaybackInfoResponse {
@@ -77,7 +93,14 @@ interface PlaybackInfoResponse {
     TranscodingUrl?: string;
     RunTimeTicks?: number;
     TranscodeReasons?: string[] | string;
+    MediaStreams?: MediaStream[];
   }[];
+}
+
+function audioLabel(stream: MediaStream): string {
+  if (stream.DisplayTitle) return stream.DisplayTitle;
+  const parts = [stream.Profile || (stream.Codec ?? "").toUpperCase(), stream.Channels ? `${stream.Channels}ch` : null, stream.Language, stream.Title];
+  return parts.filter(Boolean).join(" · ") || `Track ${stream.Index}`;
 }
 
 /** Remove Jellyfin's `ApiKey=`/`api_key=` query parameter wherever it
@@ -106,6 +129,9 @@ export function playbackFromInfo(info: PlaybackInfoResponse): JellyfinPlayback {
     playlistPath,
     runtimeSecs: source.RunTimeTicks ? source.RunTimeTicks / 10_000_000 : null,
     transcodeReasons: Array.isArray(reasons) ? reasons : reasons ? reasons.split(",") : [],
+    audioTracks: (source.MediaStreams ?? [])
+      .filter((m) => m.Type === "Audio")
+      .map((m) => ({ streamIdx: m.Index, label: audioLabel(m) })),
   };
 }
 

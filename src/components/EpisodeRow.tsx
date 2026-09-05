@@ -2,25 +2,15 @@ import Image from "next/image";
 import FormatBadge from "@/components/FormatBadge";
 import ResolutionBadge from "@/components/ResolutionBadge";
 import HdrBadge from "@/components/HdrBadge";
-import { jellyfinPlayUrl } from "@/lib/jellyfin";
+import PlayButton from "@/components/PlayButton";
 import type { EpisodeFileView, EpisodeView } from "@/lib/queries";
 
 // One file's specs on an owned episode row — badges + audio summary + size +
-// an optional Jellyfin deep link. An episode normally has a single file, but
-// multi-cut episodes (theatrical + extended rips of the same episode) render
-// one FileLine per file, stacked, so nothing gets silently dropped.
-function FileLine({
-  file,
-  jellyfinServerId,
-}: {
-  file: EpisodeFileView;
-  jellyfinServerId: string | null;
-}) {
-  const href =
-    file.jellyfinId && jellyfinServerId
-      ? jellyfinPlayUrl(file.jellyfinId, jellyfinServerId)
-      : null;
-
+// an in-app Play button (through Jellyfin, /api/tv-video) when the file has
+// a Jellyfin item. An episode normally has a single file, but multi-cut
+// episodes (theatrical + extended rips of the same episode) render one
+// FileLine per file, stacked, so nothing gets silently dropped.
+function FileLine({ file, playable, playTitle }: { file: EpisodeFileView; playable: boolean; playTitle: string }) {
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       <FormatBadge kind={file.format} />
@@ -32,18 +22,8 @@ function FileLine({
         </span>
       )}
       <span className="font-mono text-[11px] text-text-faint">{file.sizeLabel}</span>
-      {href && (
-        <a
-          href={href}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-[10px] font-medium text-text-muted transition-colors hover:border-accent-border hover:text-accent-bright"
-        >
-          <svg aria-hidden viewBox="0 0 12 12" className="h-2.5 w-2.5 fill-current">
-            <path d="M2.5 1.2c0-.55.6-.9 1.08-.62l6.2 3.8c.46.28.46.94 0 1.22l-6.2 3.8c-.48.28-1.08-.07-1.08-.62V1.2z" />
-          </svg>
-          Play in Jellyfin
-        </a>
+      {playable && file.jellyfinId && (
+        <PlayButton versionId={file.id} title={playTitle} source="jellyfin" basePath="/api/tv-video" />
       )}
     </div>
   );
@@ -51,12 +31,18 @@ function FileLine({
 
 export default function EpisodeRow({
   episode,
-  jellyfinServerId,
+  playable,
+  showTitle,
+  seasonNumber,
 }: {
   episode: EpisodeView;
-  jellyfinServerId: string | null;
+  /** Jellyfin is configured, so files with a Jellyfin item get Play. */
+  playable: boolean;
+  showTitle: string;
+  seasonNumber: number;
 }) {
   const { episodeNumber, name, stillPath, owned, files } = episode;
+  const playTitle = `${showTitle} S${padded(seasonNumber)}E${padded(episodeNumber)}${name ? ` · ${name}` : ""}`;
 
   return (
     <li className="flex items-start gap-3 p-2.5 sm:p-3">
@@ -80,7 +66,7 @@ export default function EpisodeRow({
           files.length > 0 ? (
             <div className="flex flex-col gap-1">
               {files.map((f) => (
-                <FileLine key={f.id} file={f} jellyfinServerId={jellyfinServerId} />
+                <FileLine key={f.id} file={f} playable={playable} playTitle={playTitle} />
               ))}
             </div>
           ) : (

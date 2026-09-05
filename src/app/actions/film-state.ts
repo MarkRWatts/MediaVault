@@ -39,3 +39,29 @@ export async function resetFilmWatched(filmId: number): Promise<{ cleared: numbe
   revalidatePath("/");
   return { cleared: result.count };
 }
+
+export async function toggleShowFavourite(showId: number): Promise<{ favourite: boolean }> {
+  if (!Number.isInteger(showId)) throw new Error("invalid show id");
+  const userId = await currentUserId();
+  const existing = await prisma.showFavourite.findUnique({ where: { userId_showId: { userId, showId } } });
+  if (existing) {
+    await prisma.showFavourite.delete({ where: { userId_showId: { userId, showId } } });
+  } else {
+    await prisma.showFavourite.create({ data: { userId, showId } });
+  }
+  revalidatePath(`/shows/${showId}`);
+  revalidatePath("/shows");
+  return { favourite: !existing };
+}
+
+/** Drop the person's WatchProgress rows for every episode file of the show. */
+export async function resetShowWatched(showId: number): Promise<{ cleared: number }> {
+  if (!Number.isInteger(showId)) throw new Error("invalid show id");
+  const userId = await currentUserId();
+  const result = await prisma.watchProgress.deleteMany({
+    where: { userId, episodeFile: { episode: { season: { showId } } } },
+  });
+  revalidatePath(`/shows/${showId}`);
+  revalidatePath("/shows");
+  return { cleared: result.count };
+}
