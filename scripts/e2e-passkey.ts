@@ -180,6 +180,8 @@ async function passkeySignInAttempt(page: Page): Promise<"autofill" | "button"> 
   await page.goto("/signin");
   const button = page.getByRole("button", { name: "Sign in with a passkey" });
   await button.waitFor({ state: "visible", timeout: 15_000 });
+  // E2E_SCREENSHOT=<path.png>: the styled sign-in card, for a visual check.
+  if (process.env.E2E_SCREENSHOT) await page.screenshot({ path: process.env.E2E_SCREENSHOT });
   try {
     await page.waitForURL((url) => url.pathname !== "/signin", { timeout: 2_500 });
     return "autofill";
