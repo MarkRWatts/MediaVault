@@ -4,7 +4,11 @@ export const dynamic = "force-dynamic";
 
 import ShowCard from "@/components/ShowCard";
 import { CARD_COLUMNS, CARD_GRID } from "@/lib/card-grid";
-import { getShows } from "@/lib/queries";
+import { getContinueWatchingEpisodes, getShows } from "@/lib/queries";
+import { jellyfinConfigured } from "@/lib/jellyfin";
+import CollapsibleSection from "@/components/CollapsibleSection";
+import EpisodeCard from "@/components/EpisodeCard";
+import { SHELF_ITEM } from "@/lib/card-grid";
 import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { getShowIdsState } from "@/lib/film-user-state";
@@ -12,7 +16,13 @@ import { getShowIdsState } from "@/lib/film-user-state";
 export default async function ShowsPage() {
   const shows = await getShows();
   const session = await auth.api.getSession({ headers: await headers() });
-  const ids = session?.user?.id ? await getShowIdsState(session.user.id) : null;
+  const [ids, continueEpisodes] = session?.user?.id
+    ? await Promise.all([
+        getShowIdsState(session.user.id),
+        getContinueWatchingEpisodes(session.user.id),
+      ])
+    : [null, []];
+  const playable = jellyfinConfigured();
   const favouriteSet = new Set(ids?.favouriteIds ?? []);
   const watchedSet = new Set(ids?.watchedIds ?? []);
   const episodesOnDisk = shows.reduce((sum, s) => sum + s.ownedEpisodeCount, 0);
@@ -23,7 +33,8 @@ export default async function ShowsPage() {
         <h1 className="font-display text-3xl tracking-wide">Shows</h1>
         {shows.length > 0 && (
           <p className="mt-1 pb-6 font-mono text-xs text-text-faint">
-            {shows.length} show{shows.length === 1 ? "" : "s"} · {episodesOnDisk} episode
+            {shows.length} show{shows.length === 1 ? "" : "s"} ·{" "}
+            {episodesOnDisk} episode
             {episodesOnDisk === 1 ? "" : "s"} on disk
           </p>
         )}
@@ -40,14 +51,42 @@ export default async function ShowsPage() {
           </p>
         </div>
       ) : (
-        <div className={`${CARD_GRID} ${CARD_COLUMNS} px-4 py-6 sm:px-6`}>
-          {shows.map((s) => (
-            <ShowCard
-              key={s.id}
-              show={s}
-              state={ids ? { favourite: favouriteSet.has(s.id), watched: watchedSet.has(s.id) } : undefined}
-            />
-          ))}
+        <div
+          className={`flex flex-col gap-8 px-4 py-6 sm:px-6 ${CARD_COLUMNS}`}
+        >
+          {continueEpisodes.length > 0 && (
+            <CollapsibleSection
+              storageKey="shows:Continue watching"
+              title="Continue watching"
+              count={continueEpisodes.length}
+            >
+              <div className="flex gap-3 overflow-x-auto pb-2">
+                {continueEpisodes.map((item) => (
+                  <div key={item.episodeFileId} className={SHELF_ITEM}>
+                    <EpisodeCard
+                      item={{ ...item, playable: playable && item.playable }}
+                    />
+                  </div>
+                ))}
+              </div>
+            </CollapsibleSection>
+          )}
+          <div className={CARD_GRID}>
+            {shows.map((s) => (
+              <ShowCard
+                key={s.id}
+                show={s}
+                state={
+                  ids
+                    ? {
+                        favourite: favouriteSet.has(s.id),
+                        watched: watchedSet.has(s.id),
+                      }
+                    : undefined
+                }
+              />
+            ))}
+          </div>
         </div>
       )}
     </div>
