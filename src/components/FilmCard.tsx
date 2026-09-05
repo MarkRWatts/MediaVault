@@ -2,6 +2,7 @@ import Link from "next/link";
 import PosterImage from "@/components/PosterImage";
 import FormatBadge from "@/components/FormatBadge";
 import CardActions, { type CardState } from "@/components/CardActions";
+import CertificationBadge from "@/components/CertificationBadge";
 import type { LibraryFilm } from "@/lib/queries";
 
 export default function FilmCard({
@@ -23,13 +24,13 @@ export default function FilmCard({
   ).slice(0, 3);
 
   return (
-    <div className="relative">
+    <div className="relative h-full">
       {state && (
         <CardActions filmId={film.id} title={film.title} state={state} />
       )}
       <Link
         href={`/film/${film.id}`}
-        className="hover-lift group flex flex-col overflow-hidden rounded-lg border border-border bg-bg-elevated"
+        className="hover-lift group flex h-full flex-col overflow-hidden rounded-lg border border-border bg-bg-elevated"
       >
         <PosterImage
           posterPath={film.posterPath}
@@ -41,16 +42,19 @@ export default function FilmCard({
         <div
           className={`flex flex-1 flex-col gap-1.5 ${compact ? "p-1.5" : "p-2.5"}`}
         >
+          {/* Two lines of title always, so every card in a row is the same height; longer titles clip to an ellipsis with the full title in the tooltip. */}
           <h3
-            className={`line-clamp-2 font-semibold leading-snug text-text ${compact ? "min-h-[2lh] text-xs" : "text-sm"}`}
+            title={film.title}
+            className={`line-clamp-2 min-h-[2lh] font-semibold leading-snug text-text ${compact ? "text-xs" : "text-sm"}`}
           >
             {film.title}
           </h3>
           <div className="mt-auto flex items-center justify-between gap-2">
             <span
-              className={`font-mono text-text-faint ${compact ? "text-[10px]" : "text-xs"}`}
+              className={`flex items-center gap-1.5 font-mono text-text-faint ${compact ? "text-[10px]" : "text-xs"}`}
             >
               {film.year ?? "—"}
+              <CertificationBadge certification={film.certification} />
             </span>
             {formatChips.length > 0 && (
               <div className="flex flex-wrap justify-end gap-1">

@@ -51,6 +51,7 @@ model Film {
   releaseDate     DateTime?
   runtimeMins     Int?
   rating          Float? // TMDB vote_average
+  certification   String? // UK (BBFC) certificate from TMDB release_dates: U, PG, 12A, 12, 15, 18, R18
   genres          String? // comma-separated
   owned           Boolean            @default(true)
   matchConfidence String             @default("UNMATCHED")
@@ -151,6 +152,7 @@ model Show {
   backdropPath    String?
   firstAirDate    DateTime?
   status          String? // "Ended", "Returning Series", …
+  certification   String? // UK rating from TMDB content_ratings (BBFC certificate where one exists)
   rating          Float?
   genres          String?
   matchConfidence String       @default("UNMATCHED")

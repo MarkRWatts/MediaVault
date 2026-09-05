@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import PosterImage from "@/components/PosterImage";
 import VersionCard from "@/components/VersionCard";
 import FilmActions from "@/components/FilmActions";
+import CertificationBadge from "@/components/CertificationBadge";
 import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { getFilmUserState } from "@/lib/film-user-state";
@@ -93,6 +94,7 @@ export default async function FilmPage({
                   {film.title}
                 </h1>
                 <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-sm text-text-muted">
+                  <CertificationBadge certification={film.certification} size="md" />
                   <span>{film.year ?? "Year unknown"}</span>
                   {film.runtimeLabel !== "—" && (
                     <>

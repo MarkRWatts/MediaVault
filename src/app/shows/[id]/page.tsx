@@ -6,6 +6,7 @@ import SeasonSection from "@/components/SeasonSection";
 import { getShowDetail } from "@/lib/queries";
 import { jellyfinConfigured } from "@/lib/jellyfin";
 import FilmActions from "@/components/FilmActions";
+import CertificationBadge from "@/components/CertificationBadge";
 import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { getNextEpisodeFile, getShowUserState } from "@/lib/film-user-state";
@@ -75,6 +76,7 @@ export default async function ShowPage({
                   {show.title}
                 </h1>
                 <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-sm text-text-muted">
+                  <CertificationBadge certification={show.certification} size="md" />
                   <span>{show.year ?? "Year unknown"}</span>
                   {show.status && (
                     <>
