@@ -10,6 +10,17 @@
 // WKWebView play HLS natively; every other browser gets hls.js, loaded on
 // demand so it never ships to the browsers that don't need it.
 //
+// The native player and an event playlist: until ffmpeg writes ENDLIST the
+// playlist looks like a live broadcast to Apple's player -- duration is
+// Infinity, playback wants to start at the newest segment, and a seek past
+// what it has fetched is clamped without a word. Left alone that means a
+// fresh play starts near the edge and freezes when it catches ffmpeg, a
+// resume lands wherever the edge happens to be, and a quality switch falls
+// back to 0:00. So every source load carries a pending seek (0 for a fresh
+// play), applied only once the element's *seekable* range covers it, with
+// the player paused and a "preparing up to" note until it does. See
+// src/lib/pending-seek.ts.
+//
 // Quality: "Original" keeps the source's video and best compatible audio;
 // "Remote" is a 720p ~3 Mbps encode for links that can't carry a Blu-ray
 // bitrate. It is always the viewer's choice (over a VPN the server can't
@@ -28,6 +39,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type Hls from "hls.js";
 import { WATCH_PROGRESS_MIN_SECS, WATCH_PROGRESS_REPORT_INTERVAL_SECS } from "@/lib/constants";
+import { decidePendingSeek, formatClock, timeRangesToArray } from "@/lib/pending-seek";
 
 type UiState = "checking" | "playing" | "handed-off" | "error";
 type Tier = "direct" | "prepare";
@@ -152,6 +164,19 @@ export default function VideoPlayer({
   // switched quality.
   const seekOnLoadRef = useRef<number | null>(null);
   const stallTimesRef = useRef<number[]>([]);
+  // While the pending seek points past what ffmpeg has written: the target
+  // and how far is ready, for the overlay; the poll that re-checks; and when
+  // the ready point last moved, so a hold that stops growing (a finished
+  // playlist whose end the target overshoots) is given up rather than kept
+  // forever.
+  const [holdingFor, setHoldingFor] = useState<{ target: number; readyUpTo: number | null } | null>(null);
+  const holdPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const holdProgressRef = useRef<{ readyUpTo: number | null; since: number }>({ readyUpTo: null, since: 0 });
+  // Whether a finite duration reported by the element is the film's real
+  // end: true for direct play and a fully prepared playlist (status said
+  // so), false while preparing, when hls.js reports the written length as a
+  // finite but growing duration.
+  const durationIsFinalRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -190,6 +215,7 @@ export default function VideoPlayer({
       }
       const resolvedTier: Tier = status.state === "direct" ? "direct" : "prepare";
       setTier(resolvedTier);
+      durationIsFinalRef.current = status.state === "direct" || status.state === "ready";
 
       if (progressRes?.ok) {
         const progress = await progressRes.json().catch(() => null);
@@ -226,6 +252,29 @@ export default function VideoPlayer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [versionId, title, onClose, streamUrl, basePath, trackProgress]);
 
+  // Flush whatever position the <video> element is currently at. Called on
+  // pause, on the modal's own Close button, and on unmount (covers a parent
+  // unmounting this component some other way, e.g. route navigation) — so a
+  // viewer who stops early doesn't lose more than the last throttled tick's
+  // worth of progress. Declared before the attach effect on purpose: React
+  // runs unmount cleanups in declaration order, and this one has to read
+  // the position before the attach cleanup clears the source.
+  const flushProgress = useCallback(() => {
+    if (!trackProgress) return;
+    // Until the pending seek has landed the element's position is wherever
+    // the source happened to load at (the live edge, or 0:00), not where
+    // the viewer is -- reporting it would overwrite the real resume point.
+    if (seekOnLoadRef.current !== null) return;
+    const v = videoRef.current;
+    if (!v || !Number.isFinite(v.duration) || v.duration <= 0) return;
+    lastReportedPosRef.current = v.currentTime;
+    reportProgress(basePath, versionId, v.currentTime, v.duration, false);
+  }, [basePath, versionId, trackProgress]);
+
+  useEffect(() => {
+    return () => flushProgress();
+  }, [flushProgress]);
+
   // Attach the source to the <video> whenever what we should be playing
   // changes. Direct-play: plain src. HLS: native where the browser can, else
   // hls.js. hls.js is torn down and rebuilt on a quality switch.
@@ -240,6 +289,11 @@ export default function VideoPlayer({
     async function attach() {
       if (!video) return;
       if (!useHls || canPlayHlsNatively(video)) {
+        // A fresh play of an in-progress playlist must be pinned to 0:00,
+        // or the native player starts at the live edge (see the header).
+        // Harmless for a finished playlist or direct play, which start
+        // there anyway.
+        if (useHls && seekOnLoadRef.current === null) seekOnLoadRef.current = 0;
         video.src = sourceUrl;
         return;
       }
@@ -283,27 +337,26 @@ export default function VideoPlayer({
     attach();
     return () => {
       disposed = true;
-      hlsRef.current?.destroy();
-      hlsRef.current = null;
+      stopHoldPoll();
+      // Actually stop the element, not just drop our references to it. On
+      // WebKit a <video> that leaves the DOM with a live src keeps its media
+      // loader going until it is garbage-collected -- seen in production as
+      // an iPhone still fetching one film's segments minutes after the
+      // viewer had closed it and opened another, which kept an abandoned
+      // transcode alive on the server (every segment request resets the
+      // idle-cancel timer). pause + remove src + load() is the standard
+      // teardown that releases the loader now. Same on a quality switch, so
+      // the outgoing playlist stops downloading before the new one starts.
+      video.pause();
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      } else {
+        video.removeAttribute("src");
+        video.load();
+      }
     };
   }, [uiState, tier, sourceUrl, streamUrl]);
-
-  // Flush whatever position the <video> element is currently at. Called on
-  // pause, on the modal's own Close button, and on unmount (covers a parent
-  // unmounting this component some other way, e.g. route navigation) — so a
-  // viewer who stops early doesn't lose more than the last throttled tick's
-  // worth of progress.
-  const flushProgress = useCallback(() => {
-    if (!trackProgress) return;
-    const v = videoRef.current;
-    if (!v || !Number.isFinite(v.duration) || v.duration <= 0) return;
-    lastReportedPosRef.current = v.currentTime;
-    reportProgress(basePath, versionId, v.currentTime, v.duration, false);
-  }, [basePath, versionId, trackProgress]);
-
-  useEffect(() => {
-    return () => flushProgress();
-  }, [flushProgress]);
 
   function handleClose() {
     flushProgress();
@@ -318,21 +371,88 @@ export default function VideoPlayer({
     seekOnLoadRef.current = v && v.currentTime > 0 ? v.currentTime : null;
     stallTimesRef.current = [];
     setShowRemoteNudge(false);
+    // The other variant is its own playlist, possibly only just started: its
+    // duration is not final until a fresh status says so.
+    durationIsFinalRef.current = false;
+    stopHoldPoll();
     rememberQuality(next);
     setVariant(next);
+  }
+
+  function stopHoldPoll() {
+    if (holdPollRef.current !== null) clearInterval(holdPollRef.current);
+    holdPollRef.current = null;
+    holdProgressRef.current = { readyUpTo: null, since: 0 };
+    setHoldingFor(null);
+  }
+
+  // A hold whose ready point hasn't moved for this long is a playlist that
+  // has finished short of the target (or a job that died): give the target
+  // up and play what there is rather than wait forever. Long enough that a
+  // slow Remote transcode over a few segments doesn't trip it.
+  const HOLD_STALL_MS = 45_000;
+
+  // Keep the element paused and re-check every second until the target is
+  // written. Native HLS refreshes a live playlist while paused, so the
+  // seekable range keeps growing without the element playing anything.
+  function holdUntilWritten(v: HTMLVideoElement, target: number, readyUpTo: number | null) {
+    if (!v.paused) v.pause();
+    const progress = holdProgressRef.current;
+    const now = Date.now();
+    if (readyUpTo !== progress.readyUpTo || progress.since === 0) {
+      holdProgressRef.current = { readyUpTo, since: now };
+    } else if (now - progress.since > HOLD_STALL_MS) {
+      seekOnLoadRef.current = null;
+      stopHoldPoll();
+      v.play().catch(() => {});
+      return;
+    }
+    setHoldingFor({ target, readyUpTo });
+    if (holdPollRef.current === null) {
+      holdPollRef.current = setInterval(() => {
+        const el = videoRef.current;
+        if (!el) return stopHoldPoll();
+        applyPendingSeek(el);
+      }, 1000);
+    }
   }
 
   function applyPendingSeek(v: HTMLVideoElement) {
     const target = seekOnLoadRef.current;
     if (target === null) return;
-    // Never past the very end, in case the duration was probed slightly
-    // differently than what the browser reports here. While a file is still
-    // being prepared the duration grows; keep the target until it fits.
-    if (Number.isFinite(v.duration) && target < v.duration) {
-      v.currentTime = target;
-      lastReportedPosRef.current = target;
-      seekOnLoadRef.current = null;
+    const decision = decidePendingSeek(target, timeRangesToArray(v.seekable), v.duration, durationIsFinalRef.current);
+    switch (decision.action) {
+      case "seek": {
+        v.currentTime = decision.position;
+        lastReportedPosRef.current = decision.position;
+        seekOnLoadRef.current = null;
+        stopHoldPoll();
+        // Paused by a hold, or by the onPlay guard during one: resume.
+        if (v.paused) v.play().catch(() => {});
+        return;
+      }
+      case "drop": {
+        seekOnLoadRef.current = null;
+        stopHoldPoll();
+        if (v.paused) v.play().catch(() => {});
+        return;
+      }
+      case "wait":
+        holdUntilWritten(v, target, decision.readyUpTo);
+        return;
+      case "not-ready":
+        holdUntilWritten(v, target, null);
+        return;
     }
+  }
+
+  // The viewer's way out of a long hold: forget the resume point and play
+  // from the start of what's ready.
+  function playFromStart() {
+    const v = videoRef.current;
+    if (!v) return;
+    seekOnLoadRef.current = 0;
+    applyPendingSeek(v);
   }
 
   function noteStall() {
@@ -392,9 +512,16 @@ export default function VideoPlayer({
                 onWaiting={noteStall}
                 onLoadedMetadata={(e) => applyPendingSeek(e.currentTarget)}
                 onDurationChange={(e) => applyPendingSeek(e.currentTarget)}
+                onPlay={(e) => {
+                  // The native controls' play button during a hold would
+                  // play from the live edge; the overlay explains why not.
+                  if (holdPollRef.current !== null) e.currentTarget.pause();
+                }}
                 onPlaying={() => {
                   setBuffering(false);
-                  if (trackProgress && !hasReportedStartRef.current) {
+                  // The first-play report carries a position; wait for the
+                  // pending seek so it isn't the live edge (see flushProgress).
+                  if (trackProgress && !hasReportedStartRef.current && seekOnLoadRef.current === null) {
                     hasReportedStartRef.current = true;
                     const v = videoRef.current;
                     if (v && Number.isFinite(v.duration) && v.duration > 0) {
@@ -405,7 +532,7 @@ export default function VideoPlayer({
                 }}
                 onCanPlay={() => setBuffering(false)}
                 onTimeUpdate={(e) => {
-                  if (!trackProgress) return;
+                  if (!trackProgress || seekOnLoadRef.current !== null) return;
                   const v = e.currentTarget;
                   if (!Number.isFinite(v.duration) || v.duration <= 0) return;
                   // Throttle: only report once real playback time has
@@ -436,10 +563,29 @@ export default function VideoPlayer({
                   );
                 }}
               />
-              {buffering && (
-                <p className="pointer-events-none absolute bottom-3 left-3 rounded-full bg-black/60 px-3 py-1 text-xs text-white/80">
-                  Buffering…
-                </p>
+              {holdingFor ? (
+                <div
+                  role="status"
+                  className="absolute inset-x-0 bottom-0 flex flex-wrap items-center justify-between gap-2 bg-black/70 px-4 py-2 text-xs text-white/85"
+                >
+                  <span>
+                    Preparing… resumes at {formatClock(holdingFor.target)}
+                    {holdingFor.readyUpTo !== null ? `, ready up to ${formatClock(holdingFor.readyUpTo)}` : ""}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={playFromStart}
+                    className="rounded-md border border-white/30 px-2.5 py-1 font-medium text-white transition-colors hover:border-white/60"
+                  >
+                    Play from the start instead
+                  </button>
+                </div>
+              ) : (
+                buffering && (
+                  <p className="pointer-events-none absolute bottom-3 left-3 rounded-full bg-black/60 px-3 py-1 text-xs text-white/80">
+                    Buffering…
+                  </p>
+                )
               )}
             </>
           )}

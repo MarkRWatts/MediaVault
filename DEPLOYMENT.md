@@ -301,3 +301,17 @@ To restore from a backup:
 ```bash
 docker run --rm -v mediavault_data:/data -v "$HOME":/backup alpine tar xzf /backup/mediavault-data-YYYY-MM-DD.tar.gz -C /data
 ```
+
+### Docker build cache
+
+Every `up -d --build` in [Updating the deployment](#updating-the-deployment)
+leaves its layer cache behind, and on an 80 GB VM this grows much faster
+than `video-cache/` ever does — `docker system df` has shown 20+ GB of
+build cache (mostly reclaimable) versus a few GB of actual video cache.
+It's unrelated to the app's own housekeeping (E of `docs/TEST_PLAN_2026-09.md`
+only covers `video-cache/`), so prune it by hand occasionally, especially
+if a prepare is refused for lack of disk space:
+
+```bash
+docker builder prune -f
+```
