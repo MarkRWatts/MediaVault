@@ -281,7 +281,14 @@ async function main(): Promise<void> {
     check("seeking backwards while preparing plays on from there", afterSeekStart < before && tSeek > 2.5 && tSeek < before + 5,
       `seeked to ${afterSeekStart.toFixed(1)}s, now ${tSeek.toFixed(1)}s`);
     check("quality choice remembered per device", (await page.evaluate(() => localStorage.getItem("mv-video-quality"))) === "remote");
+    // Closing must actually stop the element: a <video> left with a live
+    // src keeps fetching after it leaves the DOM (WebKit especially), which
+    // keeps the server's ffmpeg job alive for nobody.
+    const beforeClose = requests.length;
     await page.getByRole("button", { name: "Close" }).click();
+    await new Promise((r) => setTimeout(r, 4000));
+    const afterClose = requests.slice(beforeClose).filter((u) => u.includes("/hls/"));
+    check("closing the player stops HLS fetches", afterClose.length === 0, afterClose.length ? `still fetched ${afterClose.slice(0, 3).join(", ")}` : "none in 4s");
     await ctxA.close();
 
     // ---- C. A direct-playable file plays from /stream with byte ranges, never HLS
