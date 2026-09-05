@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useSyncExternalStore } from "react";
+import { UserKey } from "lucide-react";
 import Link from "next/link";
 import { usePasskeySupport } from "@/lib/use-passkey-support";
 
@@ -53,8 +54,9 @@ export function PasskeyNudge() {
         <Link
           href="/account#passkeys"
           onClick={dismiss}
-          className="inline-flex min-h-10 items-center justify-center rounded-md border border-accent px-3 py-1.5 text-xs font-medium text-accent transition-colors hover:bg-accent/10 sm:min-h-0"
+          className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-md border border-accent px-3 py-1.5 text-xs font-medium text-accent transition-colors hover:bg-accent/10 sm:min-h-0"
         >
+          <UserKey aria-hidden className="h-3.5 w-3.5" />
           Add a passkey
         </Link>
         <button

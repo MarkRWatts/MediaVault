@@ -10,17 +10,21 @@ import { useFormStatus } from "react-dom";
 export function SubmitButton({
   children,
   pendingText = "Working…",
+  icon,
 }: {
   children: React.ReactNode;
   pendingText?: string;
+  /** Leading icon (a Lucide element), shown in both states. */
+  icon?: React.ReactNode;
 }) {
   const { pending } = useFormStatus();
   return (
     <button
       type="submit"
       disabled={pending}
-      className="inline-flex min-h-10 w-full items-center justify-center rounded-md border border-accent px-4 py-2 text-sm font-medium text-accent transition-colors hover:bg-accent/10 disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0"
+      className="inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-md border border-accent px-4 py-2 text-sm font-medium text-accent transition-colors hover:bg-accent/10 disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0"
     >
+      {icon}
       {pending ? pendingText : children}
     </button>
   );

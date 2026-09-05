@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useRef, useState, type FormEvent } from "react";
+import { UserKey } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { PASSKEY_NAME_MAX_LENGTH, suggestPasskeyName } from "@/lib/passkey-label";
@@ -139,8 +140,9 @@ export function PasskeyManager({ passkeys }: { passkeys: PasskeyRow[] }) {
           <button
             type="button"
             onClick={() => setAdding(true)}
-            className="inline-flex min-h-10 items-center justify-center rounded-md border border-accent px-4 py-2 text-sm font-medium text-accent transition-colors hover:bg-accent/10 sm:min-h-0"
+            className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-accent px-4 py-2 text-sm font-medium text-accent transition-colors hover:bg-accent/10 sm:min-h-0"
           >
+            <UserKey aria-hidden className="h-4 w-4" />
             Add a passkey for this device
           </button>
         </div>
