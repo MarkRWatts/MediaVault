@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { UserKey } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { usePasskeySupport } from "@/lib/use-passkey-support";
@@ -93,8 +94,9 @@ export function PasskeySignInButton({ callbackURL }: { callbackURL: string }) {
         type="button"
         onClick={signIn}
         disabled={pending}
-        className="inline-flex min-h-10 w-full items-center justify-center rounded-md border border-border px-4 py-2.5 text-sm font-medium text-text-muted transition-colors hover:border-border-strong hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+        className="inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-md border border-border px-4 py-2.5 text-sm font-medium text-text-muted transition-colors hover:border-border-strong hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
       >
+        <UserKey aria-hidden className="h-4 w-4" />
         {pending ? "Waiting for your device…" : "Sign in with a passkey"}
       </button>
       {error && <p className="text-sm text-missing">{error}</p>}

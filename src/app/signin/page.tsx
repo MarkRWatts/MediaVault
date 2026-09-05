@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Mail } from "lucide-react";
 import AuthLogo from "@/components/AuthLogo";
 import { headers, cookies } from "next/headers";
 import { redirect } from "next/navigation";
@@ -146,7 +147,9 @@ export default async function SignInPage({
                 placeholder="Your name (new accounts only)"
                 className="w-full rounded-md border border-border bg-bg-elevated-2 px-4 py-2.5 text-sm text-text placeholder:text-text-faint focus-visible:outline-none"
               />
-              <SubmitButton pendingText="Sending…">Email me a sign-in code</SubmitButton>
+              <SubmitButton icon={<Mail aria-hidden className="h-4 w-4" />} pendingText="Sending…">
+                Email me a sign-in code
+              </SubmitButton>
             </form>
             {/* Not on a Jellyfin-SSO sign-in (PASSKEYS_PLAN.md "Auth &
                 gating"): whether oauthProvider's hooks see oauth_query on

@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
+import { Mail } from "lucide-react";
 import { verifyOTP, type ActionState } from "@/app/actions/auth-flow";
 
 /** Step 2 of both sign-in and sign-up: type the six digits from the email.
@@ -37,8 +38,9 @@ export function OTPForm({
       <button
         type="submit"
         disabled={pending}
-        className="inline-flex min-h-10 items-center justify-center rounded-md border border-accent px-4 py-2 text-sm font-medium text-accent transition-colors hover:bg-accent/10 disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0"
+        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-accent px-4 py-2 text-sm font-medium text-accent transition-colors hover:bg-accent/10 disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0"
       >
+        <Mail aria-hidden className="h-4 w-4" />
         {pending ? "Checking…" : "Sign in"}
       </button>
       {state?.error && <p className="text-sm text-missing">{state.error}</p>}
