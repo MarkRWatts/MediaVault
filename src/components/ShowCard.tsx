@@ -1,7 +1,7 @@
 import Link from "next/link";
 import PosterImage from "@/components/PosterImage";
 import CardActions, { type CardState } from "@/components/CardActions";
-import CertificationBadge from "@/components/CertificationBadge";
+import CertificationBadge, { BBFC_CARD_ICON_HEIGHT } from "@/components/CertificationBadge";
 import type { ShowSummary } from "@/lib/queries";
 
 export default function ShowCard({
@@ -49,7 +49,7 @@ export default function ShowCard({
             {title}
           </h3>
           <span className="flex items-center gap-1.5 font-mono text-xs text-text-faint">
-            <CertificationBadge certification={certification} />
+            <CertificationBadge certification={certification} height={BBFC_CARD_ICON_HEIGHT} />
             {year ?? "—"}
           </span>
           <div className="mt-auto flex flex-col gap-1.5">

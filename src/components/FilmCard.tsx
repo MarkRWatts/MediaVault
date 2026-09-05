@@ -2,7 +2,7 @@ import Link from "next/link";
 import PosterImage from "@/components/PosterImage";
 import FormatBadge from "@/components/FormatBadge";
 import CardActions, { type CardState } from "@/components/CardActions";
-import CertificationBadge from "@/components/CertificationBadge";
+import CertificationBadge, { BBFC_CARD_ICON_HEIGHT } from "@/components/CertificationBadge";
 import type { LibraryFilm } from "@/lib/queries";
 
 export default function FilmCard({
@@ -53,7 +53,7 @@ export default function FilmCard({
             <span
               className={`flex items-center gap-1.5 font-mono text-text-faint ${compact ? "text-[10px]" : "text-xs"}`}
             >
-              <CertificationBadge certification={film.certification} />
+              <CertificationBadge certification={film.certification} height={BBFC_CARD_ICON_HEIGHT} />
               {film.year ?? "—"}
             </span>
             {formatChips.length > 0 && (
