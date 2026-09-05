@@ -254,6 +254,69 @@ export async function getWatchedFilmIds(userId: string): Promise<number[]> {
 }
 
 // ---------------------------------------------------------------------------
+// Continue watching, episodes ("/shows" — one card per show, the most
+// recently watched unfinished episode)
+// ---------------------------------------------------------------------------
+
+export interface ContinueEpisode {
+  episodeFileId: number;
+  show: { id: number; title: string; posterPath: string | null };
+  seasonNumber: number;
+  episodeNumber: number;
+  name: string | null;
+  stillPath: string | null;
+  positionSecs: number;
+  durationSecs: number | null;
+  playable: boolean;
+}
+
+export async function getContinueWatchingEpisodes(userId: string): Promise<ContinueEpisode[]> {
+  const rows = await prisma.watchProgress.findMany({
+    where: { userId, episodeFileId: { not: null }, completed: false, positionSecs: { gte: WATCH_PROGRESS_MIN_SECS } },
+    orderBy: { updatedAt: "desc" },
+    select: {
+      positionSecs: true,
+      episodeFile: {
+        select: {
+          id: true,
+          durationSecs: true,
+          jellyfinId: true,
+          episode: {
+            select: {
+              episodeNumber: true,
+              name: true,
+              stillPath: true,
+              season: { select: { seasonNumber: true, show: { select: { id: true, title: true, posterPath: true } } } },
+            },
+          },
+        },
+      },
+    },
+  });
+  const seen = new Set<number>();
+  const out: ContinueEpisode[] = [];
+  for (const r of rows) {
+    const f = r.episodeFile;
+    if (!f) continue;
+    const show = f.episode.season.show;
+    if (seen.has(show.id)) continue;
+    seen.add(show.id);
+    out.push({
+      episodeFileId: f.id,
+      show: { id: show.id, title: show.title, posterPath: show.posterPath },
+      seasonNumber: f.episode.season.seasonNumber,
+      episodeNumber: f.episode.episodeNumber,
+      name: f.episode.name,
+      stillPath: f.episode.stillPath,
+      positionSecs: r.positionSecs,
+      durationSecs: f.durationSecs,
+      playable: f.jellyfinId !== null,
+    });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // Film detail ("/film/[id]")
 // ---------------------------------------------------------------------------
 
