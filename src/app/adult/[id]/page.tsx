@@ -7,6 +7,7 @@ import { requireAdultAccessOrRedirect } from "@/lib/require-member";
 import { resolutionTier, formatLabel, videoCodecLabel } from "@/lib/constants";
 import { getJellyfinServerInfo, jellyfinPlayUrl } from "@/lib/jellyfin";
 import AdultPlayButton from "@/components/AdultPlayButton";
+import CertificationBadge from "@/components/CertificationBadge";
 
 export default async function SceneDetailPage({ params }: { params: Promise<{ id: string }> }) {
   await requireAdultAccessOrRedirect();
@@ -49,7 +50,10 @@ export default async function SceneDetailPage({ params }: { params: Promise<{ id
         )}
 
         <div className="flex flex-1 flex-col gap-3">
-          <h1 className="font-display text-3xl tracking-wide text-text">{scene.title}</h1>
+          <div className="flex items-center gap-3">
+            <CertificationBadge certification="R18" />
+            <h1 className="font-display text-3xl tracking-wide text-text">{scene.title}</h1>
+          </div>
 
           <div className="flex flex-wrap items-center gap-2 text-xs text-text-faint">
             {scene.studio && <span>{scene.studio.name}</span>}

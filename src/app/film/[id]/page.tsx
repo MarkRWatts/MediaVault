@@ -94,7 +94,7 @@ export default async function FilmPage({
                   {film.title}
                 </h1>
                 <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-sm text-text-muted">
-                  <CertificationBadge certification={film.certification} size="md" />
+                  <CertificationBadge certification={film.certification} />
                   <span>{film.year ?? "Year unknown"}</span>
                   {film.runtimeLabel !== "—" && (
                     <>
