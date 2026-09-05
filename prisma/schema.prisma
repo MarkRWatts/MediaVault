@@ -159,6 +159,7 @@ model Show {
   updatedAt       DateTime     @updatedAt
 
   @@index([sortTitle])
+  favourites      ShowFavourite[]
 }
 
 model ShowSeason {
@@ -673,6 +674,17 @@ model FilmFavourite {
   createdAt DateTime @default(now())
 
   @@id([userId, filmId])
+  @@index([userId])
+}
+
+// A person's favourite shows -- the same idea as FilmFavourite.
+model ShowFavourite {
+  userId    String // BetterAuth User.id
+  showId    Int
+  show      Show     @relation(fields: [showId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([userId, showId])
   @@index([userId])
 }
 

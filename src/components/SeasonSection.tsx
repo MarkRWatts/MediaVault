@@ -4,10 +4,12 @@ import type { SeasonView } from "@/lib/queries";
 
 export default function SeasonSection({
   season,
-  jellyfinServerId,
+  playable,
+  showTitle,
 }: {
   season: SeasonView;
-  jellyfinServerId: string | null;
+  playable: boolean;
+  showTitle: string;
 }) {
   const { seasonNumber, name, posterPath, airYear, ownedCount, totalCount, episodes } = season;
   const missing = totalCount > 0 && ownedCount === 0;
@@ -50,7 +52,7 @@ export default function SeasonSection({
       </div>
       <ul className="flex flex-col divide-y divide-border rounded-lg border border-border bg-bg-elevated">
         {episodes.map((ep) => (
-          <EpisodeRow key={ep.id} episode={ep} jellyfinServerId={jellyfinServerId} />
+          <EpisodeRow key={ep.id} episode={ep} playable={playable} showTitle={showTitle} seasonNumber={seasonNumber} />
         ))}
       </ul>
     </section>

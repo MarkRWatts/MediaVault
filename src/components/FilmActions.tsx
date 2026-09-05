@@ -11,7 +11,7 @@ import { useRouter } from "next/navigation";
 import { EyeOff, Eye, HeartMinus, HeartPlus } from "lucide-react";
 import PlayButton from "@/components/PlayButton";
 import type { PlaybackSource } from "@/components/VideoPlayer";
-import { resetFilmWatched, toggleFilmFavourite } from "@/app/actions/film-state";
+import { resetFilmWatched, resetShowWatched, toggleFilmFavourite, toggleShowFavourite } from "@/app/actions/film-state";
 
 export default function FilmActions({
   filmId,
@@ -19,14 +19,27 @@ export default function FilmActions({
   play,
   favourite: initialFavourite,
   watched: initialWatched,
+  kind = "film",
 }: {
+  /** Film id, or show id with kind "show". */
   filmId: number;
   title: string;
-  /** null when no version of the film is playable in-app. */
-  play: { versionId: number; source: PlaybackSource; audioTracks: { streamIdx: number; label: string }[] } | null;
+  /** null when nothing is playable in-app. For a show, `versionId` is the
+   *  next episode's file id and `basePath` is "/api/tv-video". */
+  play: {
+    versionId: number;
+    source: PlaybackSource;
+    audioTracks: { streamIdx: number; label: string }[];
+    basePath?: string;
+    label?: string;
+    playTitle?: string;
+  } | null;
   favourite: boolean;
   watched: boolean;
+  kind?: "film" | "show";
 }) {
+  const toggleFavourite = kind === "show" ? toggleShowFavourite : toggleFilmFavourite;
+  const resetWatched = kind === "show" ? resetShowWatched : resetFilmWatched;
   const [favourite, setFavourite] = useState(initialFavourite);
   const [watched, setWatched] = useState(initialWatched);
   const [pending, startTransition] = useTransition();
@@ -37,7 +50,17 @@ export default function FilmActions({
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      {play && <PlayButton versionId={play.versionId} title={title} source={play.source} audioTracks={play.audioTracks} size="lg" />}
+      {play && (
+        <PlayButton
+          versionId={play.versionId}
+          title={play.playTitle ?? title}
+          source={play.source}
+          audioTracks={play.audioTracks}
+          basePath={play.basePath}
+          label={play.label}
+          size="lg"
+        />
+      )}
 
       <button
         type="button"
@@ -50,7 +73,7 @@ export default function FilmActions({
             const next = !favourite;
             setFavourite(next);
             try {
-              const result = await toggleFilmFavourite(filmId);
+              const result = await toggleFavourite(filmId);
               setFavourite(result.favourite);
               router.refresh();
             } catch {
@@ -75,7 +98,7 @@ export default function FilmActions({
         onClick={() =>
           startTransition(async () => {
             try {
-              await resetFilmWatched(filmId);
+              await resetWatched(filmId);
               setWatched(false);
               router.refresh();
             } catch {

@@ -4,7 +4,11 @@ import { notFound } from "next/navigation";
 import PosterImage from "@/components/PosterImage";
 import SeasonSection from "@/components/SeasonSection";
 import { getShowDetail } from "@/lib/queries";
-import { getJellyfinServerInfo } from "@/lib/jellyfin";
+import { jellyfinConfigured } from "@/lib/jellyfin";
+import FilmActions from "@/components/FilmActions";
+import { headers } from "next/headers";
+import { auth } from "@/lib/auth";
+import { getNextEpisodeFile, getShowUserState } from "@/lib/film-user-state";
 
 export default async function ShowPage({
   params,
@@ -20,7 +24,13 @@ export default async function ShowPage({
 
   // Only build deep links when the server is actually reachable — no error
   // state in the UI, episodes without a match simply get no chip.
-  const jellyfinServer = await getJellyfinServerInfo();
+  const playable = jellyfinConfigured();
+  const session = await auth.api.getSession({ headers: await headers() });
+  const userId = session?.user?.id ?? null;
+  const [userState, next] = await Promise.all([
+    userId ? getShowUserState(userId, show.id) : Promise.resolve({ favourite: false, watched: false }),
+    playable ? getNextEpisodeFile(userId, show.id) : Promise.resolve(null),
+  ]);
 
   const complete = show.totalEpisodeCount > 0 && show.ownedEpisodeCount === show.totalEpisodeCount;
 
@@ -116,6 +126,26 @@ export default async function ShowPage({
                 </div>
               )}
 
+              <FilmActions
+                kind="show"
+                filmId={show.id}
+                title={show.title}
+                play={
+                  next
+                    ? {
+                        versionId: next.episodeFileId,
+                        source: "jellyfin",
+                        audioTracks: [],
+                        basePath: "/api/tv-video",
+                        label: `Play ${next.label.split(" · ")[0]}`,
+                        playTitle: `${show.title} ${next.label}`,
+                      }
+                    : null
+                }
+                favourite={userState.favourite}
+                watched={userState.watched}
+              />
+
               {show.overview && (
                 <p className="max-w-2xl text-sm leading-relaxed text-text-muted">
                   {show.overview}
@@ -133,11 +163,7 @@ export default async function ShowPage({
           </p>
         ) : (
           show.seasons.map((season) => (
-            <SeasonSection
-              key={season.id}
-              season={season}
-              jellyfinServerId={jellyfinServer?.serverId ?? null}
-            />
+            <SeasonSection key={season.id} season={season} playable={playable} showTitle={show.title} />
           ))
         )}
       </div>

@@ -48,6 +48,27 @@ describe("playbackFromInfo", () => {
     }
   });
 
+  it("lists the item's audio streams with Jellyfin's display titles", () => {
+    const withStreams = {
+      ...info,
+      MediaSources: [
+        {
+          ...info.MediaSources[0],
+          MediaStreams: [
+            { Type: "Video", Index: 0, Codec: "h264" },
+            { Type: "Audio", Index: 1, Codec: "dts", DisplayTitle: "English - DTS-HD MA - 7.1 - Default" },
+            { Type: "Audio", Index: 3, Codec: "ac3", Channels: 2, Language: "eng", Title: "Stereo" },
+            { Type: "Subtitle", Index: 5, Codec: "pgssub" },
+          ],
+        },
+      ],
+    };
+    expect(playbackFromInfo(withStreams).audioTracks).toEqual([
+      { streamIdx: 1, label: "English - DTS-HD MA - 7.1 - Default" },
+      { streamIdx: 3, label: "AC3 · 2ch · eng · Stereo" },
+    ]);
+  });
+
   it("refuses an item with no HLS offer or an error code", () => {
     expect(() => playbackFromInfo({ PlaySessionId: "x", MediaSources: [{ Id: "m" }] })).toThrow(/no HLS stream/);
     expect(() => playbackFromInfo({ ErrorCode: "NotAllowed" })).toThrow(/NotAllowed/);

@@ -5,9 +5,16 @@ export const dynamic = "force-dynamic";
 import ShowCard from "@/components/ShowCard";
 import { CARD_COLUMNS, CARD_GRID } from "@/lib/card-grid";
 import { getShows } from "@/lib/queries";
+import { headers } from "next/headers";
+import { auth } from "@/lib/auth";
+import { getShowIdsState } from "@/lib/film-user-state";
 
 export default async function ShowsPage() {
   const shows = await getShows();
+  const session = await auth.api.getSession({ headers: await headers() });
+  const ids = session?.user?.id ? await getShowIdsState(session.user.id) : null;
+  const favouriteSet = new Set(ids?.favouriteIds ?? []);
+  const watchedSet = new Set(ids?.watchedIds ?? []);
   const episodesOnDisk = shows.reduce((sum, s) => sum + s.ownedEpisodeCount, 0);
 
   return (
@@ -35,7 +42,11 @@ export default async function ShowsPage() {
       ) : (
         <div className={`${CARD_GRID} ${CARD_COLUMNS} px-4 py-6 sm:px-6`}>
           {shows.map((s) => (
-            <ShowCard key={s.id} show={s} />
+            <ShowCard
+              key={s.id}
+              show={s}
+              state={ids ? { favourite: favouriteSet.has(s.id), watched: watchedSet.has(s.id) } : undefined}
+            />
           ))}
         </div>
       )}

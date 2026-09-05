@@ -9,14 +9,27 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Eye, HeartMinus, HeartPlus } from "lucide-react";
-import { resetFilmWatched, toggleFilmFavourite } from "@/app/actions/film-state";
+import { resetFilmWatched, resetShowWatched, toggleFilmFavourite, toggleShowFavourite } from "@/app/actions/film-state";
 
 export interface CardState {
   favourite: boolean;
   watched: boolean;
 }
 
-export default function CardActions({ filmId, title, state }: { filmId: number; title: string; state: CardState }) {
+export default function CardActions({
+  filmId,
+  title,
+  state,
+  kind = "film",
+}: {
+  /** Film id, or show id with kind "show". */
+  filmId: number;
+  title: string;
+  state: CardState;
+  kind?: "film" | "show";
+}) {
+  const toggleFavourite = kind === "show" ? toggleShowFavourite : toggleFilmFavourite;
+  const resetWatched = kind === "show" ? resetShowWatched : resetFilmWatched;
   const [favourite, setFavourite] = useState(state.favourite);
   const [watched, setWatched] = useState(state.watched);
   const [pending, startTransition] = useTransition();
@@ -36,7 +49,7 @@ export default function CardActions({ filmId, title, state }: { filmId: number; 
           onClick={() =>
             startTransition(async () => {
               try {
-                await resetFilmWatched(filmId);
+                await resetWatched(filmId);
                 setWatched(false);
                 router.refresh();
               } catch {
@@ -60,7 +73,7 @@ export default function CardActions({ filmId, title, state }: { filmId: number; 
             const next = !favourite;
             setFavourite(next);
             try {
-              const result = await toggleFilmFavourite(filmId);
+              const result = await toggleFavourite(filmId);
               setFavourite(result.favourite);
               router.refresh();
             } catch {
