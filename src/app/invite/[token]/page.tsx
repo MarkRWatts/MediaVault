@@ -1,4 +1,5 @@
 import Link from "next/link";
+import AuthLogo from "@/components/AuthLogo";
 import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
@@ -36,6 +37,7 @@ export default async function InvitePage({
   return (
     <main className="flex min-h-[calc(100vh-4rem)] flex-col items-center justify-center px-4 py-10">
       <div className="flex w-full max-w-sm flex-col items-center gap-6 rounded-lg border border-border bg-bg-elevated p-8 text-center shadow-lg shadow-black/30">
+        <AuthLogo />
         {invalid ? (
           <>
             <h1 className="font-display text-3xl tracking-wide text-text">

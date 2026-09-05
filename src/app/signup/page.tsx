@@ -1,4 +1,5 @@
 import Link from "next/link";
+import AuthLogo from "@/components/AuthLogo";
 import { headers, cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
@@ -30,6 +31,7 @@ export default async function SignUpPage({
   return (
     <main className="flex min-h-[calc(100vh-4rem)] flex-col items-center justify-center px-4 py-10">
       <div className="flex w-full max-w-sm flex-col items-center gap-6 rounded-lg border border-border bg-bg-elevated p-8 text-center shadow-lg shadow-black/30">
+        <AuthLogo />
         <div className="flex flex-col items-center gap-2">
           <h1 className="font-display text-3xl tracking-wide text-text">Set up your account</h1>
           <p className="text-sm text-text-muted">
