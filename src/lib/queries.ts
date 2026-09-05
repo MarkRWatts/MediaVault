@@ -243,6 +243,16 @@ export async function getFavouriteFilms(userId: string): Promise<LibraryFilm[]> 
   return rows.map((r) => shapeLibraryFilm(r.film));
 }
 
+/** Ids of the films this person has any watch record for (in progress or
+ *  completed), for the card overlay's reset-viewed button. */
+export async function getWatchedFilmIds(userId: string): Promise<number[]> {
+  const rows = await prisma.watchProgress.findMany({
+    where: { userId, versionId: { not: null } },
+    select: { version: { select: { filmId: true } } },
+  });
+  return [...new Set(rows.map((r) => r.version?.filmId).filter((id): id is number => typeof id === "number"))];
+}
+
 // ---------------------------------------------------------------------------
 // Film detail ("/film/[id]")
 // ---------------------------------------------------------------------------

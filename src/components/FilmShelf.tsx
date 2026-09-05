@@ -1,6 +1,7 @@
 import FilmCard from "@/components/FilmCard";
 import SectionHeader from "@/components/SectionHeader";
 import type { LibraryFilm } from "@/lib/queries";
+import type { CardState } from "@/components/CardActions";
 import { SHELF_ITEM } from "@/lib/card-grid";
 
 // Horizontal-scrolling highlight row (Continue watching / New releases /
@@ -14,11 +15,14 @@ export default function FilmShelf({
   films,
   collapsed = false,
   onToggle,
+  stateFor,
 }: {
   title: string;
   films: LibraryFilm[];
   collapsed?: boolean;
   onToggle?: () => void;
+  /** Per-film favourite/watched state for the card overlay. */
+  stateFor?: (filmId: number) => CardState | undefined;
 }) {
   if (films.length === 0) return null;
 
@@ -29,7 +33,7 @@ export default function FilmShelf({
         <div className="flex gap-3 overflow-x-auto pb-2">
           {films.map((film) => (
             <div key={film.id} className={SHELF_ITEM}>
-              <FilmCard film={film} />
+              <FilmCard film={film} state={stateFor?.(film.id)} />
             </div>
           ))}
         </div>

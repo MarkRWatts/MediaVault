@@ -117,6 +117,8 @@ export default function LibraryBrowser({
   films,
   continueWatching = [],
   favourites = [],
+  favouriteIds = [],
+  watchedIds = [],
 }: {
   films: LibraryFilm[];
   /** Signed-in user's in-progress films (see getContinueWatchingFilms) —
@@ -127,6 +129,10 @@ export default function LibraryBrowser({
   /** Signed-in user's hearted films (see getFavouriteFilms), shelved
    *  after "Recently added". Empty list = no shelf. */
   favourites?: LibraryFilm[];
+  /** Films the signed-in user has favourited / has a watch record for,
+   *  for the per-card overlay (CardActions). Both empty when signed out. */
+  favouriteIds?: number[];
+  watchedIds?: number[];
 }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<FilterKey>("all");
@@ -137,6 +143,10 @@ export default function LibraryBrowser({
   // Which sections (shelves and grid groups, by title) are folded away.
   // Remembered per browser; read after mount so the server render and the
   // first client render agree.
+  const favouriteSet = useMemo(() => new Set(favouriteIds), [favouriteIds]);
+  const watchedSet = useMemo(() => new Set(watchedIds), [watchedIds]);
+  const stateFor = (filmId: number) => ({ favourite: favouriteSet.has(filmId), watched: watchedSet.has(filmId) });
+
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
   useEffect(() => {
     try {
@@ -382,6 +392,7 @@ export default function LibraryBrowser({
           films={list}
           collapsed={collapsedSections.has(title)}
           onToggle={() => toggleSection(title)}
+          stateFor={stateFor}
         />
       ))}
 
@@ -426,7 +437,7 @@ export default function LibraryBrowser({
               {!collapsedSections.has(key) && (
                 <div className={CARD_GRID}>
                   {items.map((item) => (
-                    <FilmCard key={item.film.id} film={item.film} />
+                    <FilmCard key={item.film.id} film={item.film} state={stateFor(item.film.id)} />
                   ))}
                 </div>
               )}
