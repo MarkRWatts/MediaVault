@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import FilmCard from "@/components/FilmCard";
 import FilmShelf from "@/components/FilmShelf";
+import { CARD_COLUMNS, CARD_GRID } from "@/lib/card-grid";
 import StackedFilmCard from "@/components/StackedFilmCard";
 import { videoCodecLabel } from "@/lib/constants";
 import type { LibraryFilm } from "@/lib/queries";
@@ -269,7 +270,7 @@ export default function LibraryBrowser({
   }
 
   return (
-    <div className="flex flex-1 flex-col gap-6 px-4 py-6 sm:px-6">
+    <div className={`flex flex-1 flex-col gap-6 px-4 py-6 sm:px-6 ${CARD_COLUMNS}`}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-1 flex-wrap items-center gap-2">
           <div className="relative">
@@ -404,7 +405,7 @@ export default function LibraryBrowser({
                 onToggle={() => toggleSection(COLLECTIONS_SECTION)}
               />
               {!collapsedSections.has(COLLECTIONS_SECTION) && (
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
+                <div className={CARD_GRID}>
                   {sortedCollectionItems.map((item) => (
                     <StackedFilmCard
                       key={`c${item.collectionId}`}
@@ -427,7 +428,7 @@ export default function LibraryBrowser({
                 onToggle={() => toggleSection(key)}
               />
               {!collapsedSections.has(key) && (
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
+                <div className={CARD_GRID}>
                   {items.map((item) => (
                     <FilmCard key={item.film.id} film={item.film} />
                   ))}

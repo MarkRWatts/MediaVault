@@ -254,8 +254,17 @@ async function main(): Promise<void> {
     // E2E_SCREENSHOT=<path.png>: save the film page as rendered (the action
     // row above the overview, version cards) for a visual check.
     if (process.env.E2E_SCREENSHOT) {
+      const base = process.env.E2E_SCREENSHOT.replace(/\.png$/, "");
       await page.setViewportSize({ width: 1200, height: 900 });
-      await page.screenshot({ path: process.env.E2E_SCREENSHOT, fullPage: true });
+      await page.screenshot({ path: `${base}.png`, fullPage: true });
+      // The home page at a wide monitor and a laptop width, for card sizing.
+      for (const width of [2560, 1200]) {
+        await page.setViewportSize({ width, height: 1000 });
+        await page.goto("/");
+        await page.screenshot({ path: `${base}-home-${width}.png`, fullPage: false });
+      }
+      await page.setViewportSize({ width: 1200, height: 900 });
+      await page.goto(`/film/${remuxFilmId}`);
     }
     await page.getByRole("button", { name: "Play" }).first().click();
     await page.locator("video").waitFor({ timeout: 20_000 });
