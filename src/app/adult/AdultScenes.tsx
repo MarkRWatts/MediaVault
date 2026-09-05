@@ -2,6 +2,7 @@
 
 import { useSyncExternalStore } from "react";
 import Link from "next/link";
+import CertificationBadge from "@/components/CertificationBadge";
 
 const BLUR_STORAGE_KEY = "adult-blur-posters";
 const BLUR_CHANGE_EVENT = "adult-blur-posters-change";
@@ -85,8 +86,11 @@ export function AdultScenes({ scenes }: { scenes: Scene[] }) {
                   </div>
                 )}
                 <div className="flex flex-1 flex-col gap-1.5 p-3">
-                  <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-text">{s.title}</h3>
-                  {s.studio && <span className="mt-auto font-mono text-xs text-text-faint">{s.studio.name}</span>}
+                  <h3 title={s.title} className="line-clamp-2 min-h-[2lh] text-sm font-semibold leading-snug text-text">{s.title}</h3>
+                  <span className="mt-auto flex items-center justify-between gap-2 font-mono text-xs text-text-faint">
+                    <span className="truncate">{s.studio?.name ?? ""}</span>
+                    <CertificationBadge certification="R18" />
+                  </span>
                 </div>
               </Link>
             ))}

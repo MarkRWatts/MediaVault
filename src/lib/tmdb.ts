@@ -23,7 +23,7 @@ function authMode(key: string): "bearer" | "query" {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function tmdbFetch(pathname: string, params: Record<string, string> = {}): Promise<any> {
+export async function tmdbFetch(pathname: string, params: Record<string, string> = {}): Promise<any> {
   const key = process.env.TMDB_API_KEY;
   if (!key) throw new Error("TMDB_API_KEY not set");
 

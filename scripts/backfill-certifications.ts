@@ -8,18 +8,9 @@
 
 import "dotenv/config";
 import { prisma } from "@/lib/db";
-import { ukCertification, ukTvRating } from "@/lib/tmdb";
+import { tmdbFetch, ukCertification, ukTvRating } from "@/lib/tmdb";
 
-const TMDB = "https://api.themoviedb.org/3";
-
-async function tmdb(pathname: string, append: string): Promise<unknown> {
-  const key = process.env.TMDB_API_KEY;
-  if (!key) throw new Error("TMDB_API_KEY not set");
-  const url = `${TMDB}${pathname}?api_key=${key}&append_to_response=${append}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`TMDB ${pathname} -> HTTP ${res.status}`);
-  return res.json();
-}
+const tmdb = (pathname: string, append: string): Promise<unknown> => tmdbFetch(pathname, { append_to_response: append });
 
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
