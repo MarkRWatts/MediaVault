@@ -179,6 +179,14 @@ deploy to prepare again.
   rendition in the same playlist rather than a third variant.
 - **Resume beyond the written edge waits for the encoder** (see above);
   `-ss` at the resume point is the follow-up.
+- **VC-1 sources always pay the full video-transcode cost, even on
+  Original.** Confirmed against a real title (Bourne Identity, VC-1
+  1080p): since VC-1 isn't browser-playable, the "copy where possible"
+  planning in `video-playback.ts` falls to `-c:v libx264 -preset veryfast
+  -crf 18` the same way an MPEG-2 DVD source does — there's no faster
+  "Original" tier for VC-1, only Original (transcoded) vs Remote
+  (transcoded, smaller/720p). Same CPU-bound, watchable-but-slow-to-seek-
+  ahead profile as the DVD MPEG-2 case above.
 
 ## Rollout phases
 
@@ -202,6 +210,21 @@ position, direct play by byte range). D is the manual pass in
   `liveSyncDuration`; the default live-edge chasing is for real live
   streams and will make it stall waiting for the edge. Test seeking
   backwards during preparation specifically.
+- **Event playlists in Apple's native player** (Safari, iOS, the tvOS
+  WKWebView) are the harder case, and the one every play in an all-MKV
+  library takes. Until ENDLIST lands the player treats the playlist as a
+  live broadcast: duration is Infinity, playback starts near the newest
+  segment, a seek past what it has fetched is clamped silently, and the
+  controls show "Live Broadcast" with no timeline. Seen in production on
+  5 Sep 2026 as a fresh play that froze on catching ffmpeg, a resume that
+  landed ~20 minutes late, and a quality switch that fell back to 0:00.
+  VideoPlayer.tsx now pins every native load to a pending seek (0 for a
+  fresh play) and applies it only once the element's `seekable` range
+  covers it, holding paused with a "preparing up to" note until then
+  (src/lib/pending-seek.ts). The native controls still say "Live
+  Broadcast" without a scrubber while a prepare is in flight — that label
+  is the browser's, and only a finished playlist (or a switch to hls.js
+  over MSE on Safari desktop, not done) changes it.
 - **`-hls_time` and keyframes**: for stream-copied video, segment
   boundaries land on source keyframes, so segments can be longer than 6s
   on sources with sparse keyframes (some Blu-ray encodes use 2–5s GOPs,
