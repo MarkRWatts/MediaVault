@@ -7,6 +7,7 @@
 // the page; the Play button opens the in-app player.
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { EyeOff, Eye, HeartMinus, HeartPlus } from "lucide-react";
 import PlayButton from "@/components/PlayButton";
 import type { PlaybackSource } from "@/components/VideoPlayer";
@@ -29,6 +30,7 @@ export default function FilmActions({
   const [favourite, setFavourite] = useState(initialFavourite);
   const [watched, setWatched] = useState(initialWatched);
   const [pending, startTransition] = useTransition();
+  const router = useRouter();
 
   const iconButton =
     "inline-flex h-10 w-10 items-center justify-center rounded-full border transition-colors disabled:cursor-default disabled:opacity-40";
@@ -50,6 +52,7 @@ export default function FilmActions({
             try {
               const result = await toggleFilmFavourite(filmId);
               setFavourite(result.favourite);
+              router.refresh();
             } catch {
               setFavourite(!next);
             }
@@ -74,6 +77,7 @@ export default function FilmActions({
             try {
               await resetFilmWatched(filmId);
               setWatched(false);
+              router.refresh();
             } catch {
               // Leave the state as it was; the page re-render is the truth.
             }

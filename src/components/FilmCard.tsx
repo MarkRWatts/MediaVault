@@ -1,51 +1,67 @@
 import Link from "next/link";
 import PosterImage from "@/components/PosterImage";
 import FormatBadge from "@/components/FormatBadge";
+import CardActions, { type CardState } from "@/components/CardActions";
 import type { LibraryFilm } from "@/lib/queries";
 
 export default function FilmCard({
   film,
   compact = false,
+  state,
 }: {
   film: LibraryFilm;
   compact?: boolean;
+  /** The viewer's favourite/watched state for this film; when given, the
+   *  card shows the CardActions overlay in its top-right corner. */
+  state?: CardState;
 }) {
   // A disc you've logged but never ripped: no Version rows (so film.formats
   // is empty), just a FilmPhysicalCopy. Falls back to the physical medium so
   // it still gets a format chip instead of showing nothing.
-  const formatChips = (film.formats.length > 0 ? film.formats : film.physicalMedia).slice(0, 3);
+  const formatChips = (
+    film.formats.length > 0 ? film.formats : film.physicalMedia
+  ).slice(0, 3);
 
   return (
-    <Link
-      href={`/film/${film.id}`}
-      className="hover-lift group flex flex-col overflow-hidden rounded-lg border border-border bg-bg-elevated"
-    >
-      <PosterImage
-        posterPath={film.posterPath}
-        title={film.title}
-        year={film.year}
-        sizes={compact ? "140px" : undefined}
-        className="aspect-2/3 w-full border-b border-border"
-      />
-      <div className={`flex flex-1 flex-col gap-1.5 ${compact ? "p-1.5" : "p-2.5"}`}>
-        <h3
-          className={`line-clamp-2 font-semibold leading-snug text-text ${compact ? "min-h-[2lh] text-xs" : "text-sm"}`}
+    <div className="relative">
+      {state && (
+        <CardActions filmId={film.id} title={film.title} state={state} />
+      )}
+      <Link
+        href={`/film/${film.id}`}
+        className="hover-lift group flex flex-col overflow-hidden rounded-lg border border-border bg-bg-elevated"
+      >
+        <PosterImage
+          posterPath={film.posterPath}
+          title={film.title}
+          year={film.year}
+          sizes={compact ? "140px" : undefined}
+          className="aspect-2/3 w-full border-b border-border"
+        />
+        <div
+          className={`flex flex-1 flex-col gap-1.5 ${compact ? "p-1.5" : "p-2.5"}`}
         >
-          {film.title}
-        </h3>
-        <div className="mt-auto flex items-center justify-between gap-2">
-          <span className={`font-mono text-text-faint ${compact ? "text-[10px]" : "text-xs"}`}>
-            {film.year ?? "—"}
-          </span>
-          {formatChips.length > 0 && (
-            <div className="flex flex-wrap justify-end gap-1">
-              {formatChips.map((f) => (
-                <FormatBadge key={f} kind={f} />
-              ))}
-            </div>
-          )}
+          <h3
+            className={`line-clamp-2 font-semibold leading-snug text-text ${compact ? "min-h-[2lh] text-xs" : "text-sm"}`}
+          >
+            {film.title}
+          </h3>
+          <div className="mt-auto flex items-center justify-between gap-2">
+            <span
+              className={`font-mono text-text-faint ${compact ? "text-[10px]" : "text-xs"}`}
+            >
+              {film.year ?? "—"}
+            </span>
+            {formatChips.length > 0 && (
+              <div className="flex flex-wrap justify-end gap-1">
+                {formatChips.map((f) => (
+                  <FormatBadge key={f} kind={f} />
+                ))}
+              </div>
+            )}
+          </div>
         </div>
-      </div>
-    </Link>
+      </Link>
+    </div>
   );
 }
