@@ -11,6 +11,7 @@ import { RenameHouseholdForm } from "@/components/household/RenameHouseholdForm"
 import { getAuthenticatorName } from "@better-auth/passkey";
 import { DeleteAccountButton } from "@/components/account/DeleteAccountButton";
 import { EditNameForm } from "@/components/account/EditNameForm";
+import { UserAvatar } from "@/components/UserAvatar";
 import { AdultAccessToggle } from "@/components/account/AdultAccessToggle";
 import { PasskeyManager } from "@/components/account/PasskeyManager";
 
@@ -72,6 +73,9 @@ export default async function AccountPage() {
       </header>
 
       <section className="flex items-center gap-4 rounded-lg border border-border bg-bg-elevated p-4">
+        {/* The same avatar the nav shows — the name edited here is what the
+            whole household sees up there. */}
+        <UserAvatar name={user.name} email={user.email} image={null} size={48} />
         <div className="flex min-w-0 flex-1 flex-col">
           <EditNameForm name={user.name} />
           {user.email && <span className="text-sm text-text-muted">{user.email}</span>}
