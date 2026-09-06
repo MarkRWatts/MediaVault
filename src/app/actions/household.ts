@@ -204,6 +204,12 @@ export async function acceptInvitation(formData: FormData): Promise<void> {
   const userId = session?.user?.id;
   if (!userId) redirect(`/signin?callbackURL=${encodeURIComponent(`/invite/${token}`)}`);
 
+  // An invitee's first sign-in creates a nameless account (the sign-in page
+  // asks for email only), so the invite page asks their name as they join.
+  // Only ever fills a blank — an existing name is never overwritten.
+  const name = String(formData.get("name") ?? "").trim();
+  if (isTooLong(name)) redirect(`/invite/${encodeURIComponent(token)}?error=name-too-long`);
+
   const invitation = await prisma.invitation.findUnique({ where: { id: token } });
   if (!invitation || invitation.status !== "pending" || invitation.expiresAt < new Date()) {
     redirect(`/invite/${encodeURIComponent(token)}?error=invalid`);
@@ -259,6 +265,14 @@ export async function acceptInvitation(formData: FormData): Promise<void> {
           },
         });
         await tx.invitation.update({ where: { id: invitation.id }, data: { status: "accepted" } });
+        if (name) {
+          // User.name is non-nullable here (unlike jinglejotter.com's), and
+          // BetterAuth stores "" for an OTP-created account with no name.
+          await tx.user.updateMany({
+            where: { id: userId, name: "" },
+            data: { name },
+          });
+        }
       },
       { isolationLevel: "Serializable" },
     );

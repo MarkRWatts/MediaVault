@@ -142,15 +142,6 @@ export default async function SignInPage({
                 placeholder="you@example.com"
                 className="w-full rounded-md border border-border bg-bg-elevated-2 px-4 py-2.5 text-sm text-text placeholder:text-text-faint focus-visible:outline-none"
               />
-              {/* Only used if this email has no account yet (an invitee's
-                  first sign-in) — an existing user's name is never touched. */}
-              <input
-                type="text"
-                name="name"
-                maxLength={256}
-                placeholder="Your name (new accounts only)"
-                className="w-full rounded-md border border-border bg-bg-elevated-2 px-4 py-2.5 text-sm text-text placeholder:text-text-faint focus-visible:outline-none"
-              />
               <SubmitButton icon={<Mail aria-hidden className="h-4 w-4" />} pendingText="Sending…">
                 Email me a sign-in code
               </SubmitButton>

@@ -4,7 +4,9 @@
 // jinglejotter.com's app/actions/auth-flow.ts (auth-mechanism code, not
 // app-domain-specific). Three steps across two pages:
 //
-//   /signin step 1: requestOTP — email (+ optional name for new accounts)
+//   /signin step 1: requestOTP — email only (an invitee's first sign-in
+//                   creates a nameless account; the invite page asks their
+//                   name as they join — see acceptInvitation)
 //   /signup step 1: beginSignup — name + email + access code (the trust
 //                   boundary for brand-new households; invitees don't need
 //                   it and just use /signin, vouched by their invitation)
@@ -101,7 +103,6 @@ export async function requestOTP(formData: FormData): Promise<void> {
   // an attacker controls).
   const page = formData.get("flow") === "signup" ? "/signup" : "/signin";
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
-  const name = String(formData.get("name") ?? "").trim().slice(0, 256);
   const callbackURL = safeCallbackURL(String(formData.get("callbackURL") ?? ""));
   // Present only for a Jellyfin-SSO-style sign-in (see /signin's own
   // comment) — must ride every redirect this action makes back to /signin,
@@ -121,10 +122,11 @@ export async function requestOTP(formData: FormData): Promise<void> {
     redirect(`${page}?error=SendFailed${params}`);
   }
 
+  // The name cookie is beginSignup's alone and deliberately untouched here:
+  // /signup's "Resend the code" comes through this action too, and clearing
+  // it would lose the name typed on step 1.
   const store = await cookies();
   store.set(OTP_EMAIL_COOKIE, email, FLOW_COOKIE_OPTS);
-  if (name) store.set(OTP_NAME_COOKIE, name, FLOW_COOKIE_OPTS);
-  else store.delete(OTP_NAME_COOKIE);
   redirect(`${page}?otp=1${params}`);
 }
 
