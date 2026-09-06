@@ -10,6 +10,7 @@
 
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { fetchImage, safeCacheSegment } from "@/lib/fetch-image";
 import { prisma } from "@/lib/db";
 import { normalizeTitle, sortTitle, VIDEO_EXTENSIONS } from "@/lib/parse";
 import type { Scene } from "@/generated/prisma/client";
@@ -130,8 +131,14 @@ export function cleanTitleForSearch(fileName: string, folder: string | null): st
 
 async function cacheImage(url: string | null | undefined, kind: "scenes" | "performers" | "studios", id: string | number): Promise<string | null> {
   if (!url) return null;
-  const rel = `${kind}/${id}.jpg`;
-  const dest = path.join(IMAGE_CACHE_DIR, rel);
+  // The id is ThePornDB's (a UUID-ish string) — upstream data, so it's held
+  // to one safe path segment before it names a file.
+  const safeId = safeCacheSegment(id);
+  if (!safeId) return null;
+  const rel = `${kind}/${safeId}.jpg`;
+  const root = path.resolve(IMAGE_CACHE_DIR);
+  const dest = path.resolve(root, rel);
+  if (!dest.startsWith(root + path.sep)) return null;
 
   try {
     await fs.access(dest);
@@ -140,15 +147,16 @@ async function cacheImage(url: string | null | undefined, kind: "scenes" | "perf
     // fall through and download
   }
 
+  // Best-effort, same posture as tmdb.ts's cachePoster; fetchImage applies
+  // the timeout, size cap and content-type check.
+  const buf = await fetchImage(url);
+  if (!buf) return null;
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
-    if (!res.ok) throw new Error(`image fetch HTTP ${res.status}`);
-    const buf = Buffer.from(await res.arrayBuffer());
     await fs.mkdir(path.dirname(dest), { recursive: true });
     await fs.writeFile(dest, buf);
     return rel;
   } catch {
-    return null; // best-effort, same posture as tmdb.ts's cachePoster
+    return null;
   }
 }
 

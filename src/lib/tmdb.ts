@@ -3,6 +3,7 @@
 
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { fetchImage, safeCacheSegment } from "@/lib/fetch-image";
 import { prisma } from "@/lib/db";
 import { normalizeTitle, sortTitle } from "@/lib/parse";
 import type { Film, Show } from "@/generated/prisma/client";
@@ -46,8 +47,13 @@ export async function tmdbFetch(pathname: string, params: Record<string, string>
 
 async function cachePoster(tmdbPath: string | null | undefined, size: "w300" | "w342" | "w780"): Promise<void> {
   if (!tmdbPath) return;
-  const rel = tmdbPath.replace(/^\//, "");
-  const dest = path.join(POSTER_CACHE_DIR, size, rel);
+  // TMDB's path is "/<file>"; the file name is upstream data, so it is held
+  // to a single safe segment before it goes anywhere near the filesystem.
+  const rel = safeCacheSegment(tmdbPath.replace(/^\//, ""));
+  if (!rel) return;
+  const root = path.resolve(POSTER_CACHE_DIR);
+  const dest = path.resolve(root, size, rel);
+  if (!dest.startsWith(root + path.sep)) return;
 
   try {
     await fs.access(dest);
@@ -56,14 +62,15 @@ async function cachePoster(tmdbPath: string | null | undefined, size: "w300" | "
     // fall through and download
   }
 
+  // Best-effort (timeout, size cap and content-type check inside fetchImage);
+  // a missing poster shouldn't fail enrichment.
+  const buf = await fetchImage(`${TMDB_IMAGE_BASE}/${size}/${rel}`);
+  if (!buf) return;
   try {
-    const res = await fetch(`${TMDB_IMAGE_BASE}/${size}${tmdbPath}`);
-    if (!res.ok) throw new Error(`image fetch HTTP ${res.status}`);
-    const buf = Buffer.from(await res.arrayBuffer());
     await fs.mkdir(path.dirname(dest), { recursive: true });
     await fs.writeFile(dest, buf);
   } catch {
-    // Poster caching is best-effort; a missing poster shouldn't fail enrichment.
+    // ignore
   }
 }
 

@@ -1,4 +1,3 @@
-import Image from "next/image";
 import EpisodeRow from "@/components/EpisodeRow";
 import type { SeasonView } from "@/lib/queries";
 
@@ -20,12 +19,12 @@ export default function SeasonSection({
       <div className="flex items-center gap-3 border-b border-border pb-2">
         {posterPath && (
           <div className="relative aspect-2/3 w-9 shrink-0 overflow-hidden rounded border border-border">
-            <Image
+            <img
               src={`/api/poster/w342${posterPath}`}
               alt=""
-              fill
-              sizes="36px"
-              className={`object-cover ${missing ? "grayscale opacity-45" : ""}`}
+              loading="lazy"
+              decoding="async"
+              className={`absolute inset-0 h-full w-full object-cover ${missing ? "grayscale opacity-45" : ""}`}
             />
           </div>
         )}

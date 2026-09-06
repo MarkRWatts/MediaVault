@@ -1,3 +1,23 @@
+import { NextResponse } from "next/server";
+
+/** Parse a route handler's JSON body and insist it is a plain object — a
+ *  body of `null`, `[]` or `"str"` used to reach `body.field` and blow up
+ *  as a generic 500. Returns the 400 to send when it isn't. */
+export async function readJsonObject(
+  req: Request,
+): Promise<{ ok: true; body: Record<string, unknown> } | { ok: false; response: NextResponse }> {
+  let parsed: unknown;
+  try {
+    parsed = await req.json();
+  } catch {
+    return { ok: false, response: NextResponse.json({ error: "invalid JSON body" }, { status: 400 }) };
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { ok: false, response: NextResponse.json({ error: "expected a JSON object" }, { status: 400 }) };
+  }
+  return { ok: true, body: parsed as Record<string, unknown> };
+}
+
 /** Shared input bounds for free-text form fields, enforced server-side in
  *  every action (client `maxLength` is a UX nicety, not a backstop — it's
  *  trivially bypassed by posting straight to the action). Schema columns are

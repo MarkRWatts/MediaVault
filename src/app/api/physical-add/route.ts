@@ -6,23 +6,18 @@
 // createPhysicalOnlyAlbum in src/lib/discogs.ts.
 
 import { NextRequest, NextResponse } from "next/server";
+import { withLookupSlot } from "@/lib/semaphore";
 import { createPhysicalOnlyAlbum, type PhysicalFields, type PhysicalMedium } from "@/lib/discogs";
 import { requireOwnerOrResponse } from "@/lib/require-member";
-import { MAX_NOTES_LENGTH, MAX_TEXT_LENGTH, readTextFields } from "@/lib/validation";
+import { MAX_NOTES_LENGTH, MAX_TEXT_LENGTH, readJsonObject, readTextFields } from "@/lib/validation";
 
-export async function POST(req: NextRequest) {
+async function handlePost(req: NextRequest) {
   const member = await requireOwnerOrResponse();
   if (member instanceof NextResponse) return member;
 
-  let body: Record<string, unknown>;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
-  }
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    return NextResponse.json({ error: "expected a JSON object" }, { status: 400 });
-  }
+  const parsed = await readJsonObject(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body;
 
   const text = readTextFields(body, {
     discogsUrl: 512,
@@ -61,3 +56,6 @@ export async function POST(req: NextRequest) {
   }
   return NextResponse.json(result.album);
 }
+
+// Bounded concurrency for owner-driven metadata lookups — see lookupSemaphore.
+export const POST = withLookupSlot(handlePost);

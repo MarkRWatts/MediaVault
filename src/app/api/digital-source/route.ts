@@ -4,6 +4,7 @@
 // physically-owned LP — pair it with a VINYL copy via POST /api/physical.
 
 import { NextRequest, NextResponse } from "next/server";
+import { readJsonObject } from "@/lib/validation";
 import { prisma } from "@/lib/db";
 import { DIGITAL_SOURCES } from "@/lib/digital-source";
 import { requireOwnerOrResponse } from "@/lib/require-member";
@@ -12,12 +13,9 @@ export async function POST(req: NextRequest) {
   const member = await requireOwnerOrResponse();
   if (member instanceof NextResponse) return member;
 
-  let body: Record<string, unknown>;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
-  }
+  const parsed = await readJsonObject(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body;
 
   const albumId = Number(body.albumId);
   const source = body.source === null ? null : typeof body.source === "string" ? body.source : undefined;

@@ -17,6 +17,7 @@ import { promisify } from "node:util";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fetchImage } from "@/lib/fetch-image";
 import { prisma } from "@/lib/db";
 
 const execFileAsync = promisify(execFile);
@@ -147,14 +148,7 @@ async function fetchItunesCover(artistName: string, title: string): Promise<Buff
     if (!best?.artworkUrl100) return null;
 
     const artUrl = best.artworkUrl100.replace("100x100bb", "300x300bb");
-    const imgRes = await fetch(artUrl, {
-      headers: { "User-Agent": USER_AGENT },
-      signal: AbortSignal.timeout(30_000),
-    });
-    if (!imgRes.ok) return null;
-    const buf = Buffer.from(await imgRes.arrayBuffer());
-    if (buf.byteLength < MIN_COVER_BYTES) return null;
-    return buf;
+    return fetchImage(artUrl, { headers: { "User-Agent": USER_AGENT }, minBytes: MIN_COVER_BYTES });
   } catch {
     return null;
   }
@@ -341,18 +335,13 @@ export async function fetchDiscogsPhysicalCopyCover(copy: {
 }): Promise<CoverResult | null> {
   if (copy.coverSource === "manual") return null;
 
-  try {
-    const res = await fetch(copy.coverUrl, {
-      headers: { "User-Agent": USER_AGENT },
-      signal: AbortSignal.timeout(60_000),
-    });
-    if (!res.ok) return null;
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.byteLength < MIN_COVER_BYTES) return null;
-    return cachePhysicalCopyCover(copy.albumId, copy.medium, buf, "discogs");
-  } catch {
-    return null;
-  }
+  const buf = await fetchImage(copy.coverUrl, {
+    headers: { "User-Agent": USER_AGENT },
+    timeoutMs: 60_000,
+    minBytes: MIN_COVER_BYTES,
+  });
+  if (!buf) return null;
+  return cachePhysicalCopyCover(copy.albumId, copy.medium, buf, "discogs");
 }
 
 /**
@@ -367,13 +356,12 @@ export async function fetchDiscogsPhysicalCopyCover(copy: {
  */
 export async function fetchDiscogsAlbumCover(albumId: number, coverUrl: string): Promise<CoverResult | null> {
   try {
-    const res = await fetch(coverUrl, {
+    const buf = await fetchImage(coverUrl, {
       headers: { "User-Agent": USER_AGENT },
-      signal: AbortSignal.timeout(60_000),
+      timeoutMs: 60_000,
+      minBytes: MIN_COVER_BYTES,
     });
-    if (!res.ok) return null;
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.byteLength < MIN_COVER_BYTES) return null;
+    if (!buf) return null;
     const fileName = `${albumId}.jpg`;
     await fs.mkdir(COVERS_DIR, { recursive: true });
     await fs.writeFile(path.join(COVERS_DIR, fileName), buf);

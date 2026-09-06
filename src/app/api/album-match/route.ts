@@ -6,19 +6,18 @@
 // identity. See applyManualAlbumDiscogsMatch in src/lib/discogs.ts.
 
 import { NextRequest, NextResponse } from "next/server";
+import { withLookupSlot } from "@/lib/semaphore";
+import { readJsonObject } from "@/lib/validation";
 import { applyManualAlbumDiscogsMatch } from "@/lib/discogs";
 import { requireOwnerOrResponse } from "@/lib/require-member";
 
-export async function POST(req: NextRequest) {
+async function handlePost(req: NextRequest) {
   const member = await requireOwnerOrResponse();
   if (member instanceof NextResponse) return member;
 
-  let body: { albumId?: unknown; discogsUrl?: unknown };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
-  }
+  const parsed = await readJsonObject(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body as { albumId?: unknown; discogsUrl?: unknown };
   const albumId = Number(body.albumId);
   const discogsUrl = typeof body.discogsUrl === "string" ? body.discogsUrl : "";
   if (!Number.isInteger(albumId) || !discogsUrl) {
@@ -31,3 +30,6 @@ export async function POST(req: NextRequest) {
   }
   return NextResponse.json(result.album);
 }
+
+// Bounded concurrency for owner-driven metadata lookups — see lookupSemaphore.
+export const POST = withLookupSlot(handlePost);

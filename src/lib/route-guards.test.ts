@@ -46,9 +46,6 @@ const PAGE_GUARDS = [
 // Routes that are public ON PURPOSE. Keep this list short and explained.
 const PUBLIC_ROUTES = new Set([
   "api/auth/[...all]/route.ts", // BetterAuth itself — sign-in has to be reachable signed-out
-  "api/poster/[...path]/route.ts", // next/image optimizer fetches server-side without cookies; see the route's header comment
-  "api/cover/[albumId]/route.ts", // same
-  "api/physical-cover/[copyId]/route.ts", // same
 ]);
 // Pages that manage their own session handling (pre-auth flow, or
 // signed-in-but-no-household states that requireMemberOrRedirect would

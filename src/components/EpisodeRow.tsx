@@ -1,4 +1,3 @@
-import Image from "next/image";
 import FormatBadge from "@/components/FormatBadge";
 import ResolutionBadge from "@/components/ResolutionBadge";
 import HdrBadge from "@/components/HdrBadge";
@@ -55,7 +54,13 @@ export default function EpisodeRow({
             owned ? "" : "grayscale opacity-45"
           }`}
         >
-          <Image src={`/api/poster/w300${stillPath}`} alt="" fill sizes="64px" className="object-cover" />
+          <img
+            src={`/api/poster/w300${stillPath}`}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            className="absolute inset-0 h-full w-full object-cover"
+          />
         </div>
       )}
       <div className="flex min-w-0 flex-1 flex-col gap-1">

@@ -4,16 +4,23 @@
 // Album.coverPath first — covers are fetched/cached during enrichment
 // (src/lib/discogs.ts + src/lib/cover-art.ts), not on demand here.
 // Rejects any resolved path that would land outside the covers cache dir.
+// Household-member gated like every other library read: images are plain
+// <img> tags now (no next/image optimizer, which fetched server-side
+// without cookies), so the browser's session cookie arrives here.
 
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { requireMemberOrResponse } from "@/lib/require-member";
 
 const POSTER_CACHE_DIR = process.env.POSTER_CACHE_DIR ?? "./data/posters";
 const COVERS_DIR = path.resolve(POSTER_CACHE_DIR, "covers");
 
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ albumId: string }> }) {
+  const gate = await requireMemberOrResponse();
+  if (gate instanceof NextResponse) return gate;
+
   const { albumId: albumIdParam } = await ctx.params;
   const albumId = Number(albumIdParam);
   if (!Number.isInteger(albumId)) {
@@ -51,7 +58,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ albumId: s
   return new NextResponse(new Uint8Array(buf), {
     headers: {
       "Content-Type": "image/jpeg",
-      "Cache-Control": "public, max-age=0, must-revalidate",
+      "Cache-Control": "private, max-age=0, must-revalidate",
       ETag: etag,
     },
   });

@@ -1,7 +1,12 @@
 "use client";
 
+// A plain <img>, not next/image: the optimizer fetched sources server-side
+// with none of the browser's cookies, which forced /api/poster to be public.
+// TMDB already serves posters at the sizes the cards need (w342 for grids,
+// w780 for hero art), so nothing is lost by skipping it. `sizes` is still
+// accepted from callers for compatibility but no longer means anything.
+
 import { useState } from "react";
-import Image from "next/image";
 import NoPoster from "@/components/NoPoster";
 
 export default function PosterImage({
@@ -9,7 +14,6 @@ export default function PosterImage({
   title,
   year,
   size = "w342",
-  sizes,
   priority = false,
   className = "",
 }: {
@@ -29,13 +33,13 @@ export default function PosterImage({
       {showFallback ? (
         <NoPoster title={title} year={year} />
       ) : (
-        <Image
+        <img
           src={`/api/poster/${size}${posterPath}`}
           alt={`${title} poster`}
-          fill
-          sizes={sizes ?? "(min-width: 1280px) 180px, (min-width: 640px) 22vw, 42vw"}
-          priority={priority}
-          className="object-cover"
+          loading={priority ? "eager" : "lazy"}
+          fetchPriority={priority ? "high" : "auto"}
+          decoding="async"
+          className="absolute inset-0 h-full w-full object-cover"
           onError={() => setErrored(true)}
         />
       )}

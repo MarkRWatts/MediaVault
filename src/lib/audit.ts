@@ -7,6 +7,13 @@
 
 import { prisma } from "@/lib/db";
 
+// Retention: rows older than a year are swept opportunistically, once every
+// SWEEP_EVERY writes (no scheduler in this app). Content-free rows, so this
+// is about the table not growing forever, not about disclosure.
+const RETENTION_MS = 365 * 24 * 60 * 60_000;
+const SWEEP_EVERY = 200;
+let writesSinceSweep = 0;
+
 /** Awaitable but never-throwing: an audit failure must not fail (or roll
  *  back) the action being audited, so call sites `await logAudit(...)`
  *  AFTER their own mutation has committed, outside any transaction. */
@@ -27,6 +34,10 @@ export async function logAudit(entry: {
         entityId: entry.entityId ?? null,
       },
     });
+    if (++writesSinceSweep >= SWEEP_EVERY) {
+      writesSinceSweep = 0;
+      await prisma.auditLog.deleteMany({ where: { createdAt: { lt: new Date(Date.now() - RETENTION_MS) } } });
+    }
   } catch {
     // Swallowed deliberately — see above.
   }

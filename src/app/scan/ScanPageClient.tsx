@@ -111,7 +111,6 @@ function Thumb({
       {!src || errored ? (
         <NoPoster title={title} year={year} />
       ) : (
-        // eslint-disable-next-line @next/next/no-img-element
         <img
           src={src}
           alt={`${title} cover`}

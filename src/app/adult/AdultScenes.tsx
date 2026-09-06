@@ -72,7 +72,6 @@ export function AdultScenes({ scenes }: { scenes: Scene[] }) {
                 className="hover-lift group flex flex-col overflow-hidden rounded-lg border border-border bg-bg-elevated"
               >
                 {s.posterPath ? (
-                  // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={`/api/adult-image/${s.posterPath}`}
                     alt={s.title}

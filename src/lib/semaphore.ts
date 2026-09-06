@@ -1,3 +1,5 @@
+import { NextResponse } from "next/server";
+
 // A counting semaphore for the ffmpeg work an authenticated member can start
 // on demand (src/lib/video-cache.ts prepares, src/lib/audio-stream.ts
 // remuxes). Without one, every Play/album-track click spawned another
@@ -83,4 +85,33 @@ export function prepareSemaphore(): Semaphore {
  *  Never queued: the route answers 503 and the player retries. */
 export function audioSemaphore(): Semaphore {
   return (registry.audio ??= new Semaphore(envInt("AUDIO_CONCURRENCY", 4), 0));
+}
+
+/** Concurrent owner-driven metadata lookups (barcode / Discogs / TMDB
+ *  searches, manual matches, physical-copy adds). Each request can fan out
+ *  into several upstream calls behind a 2.5 s Discogs serialiser, so an
+ *  unbounded burst queued minutes of work; over the cap the route answers
+ *  429 straight away instead. LOOKUP_CONCURRENCY overrides. */
+export function lookupSemaphore(): Semaphore {
+  return (registry.lookup ??= new Semaphore(envInt("LOOKUP_CONCURRENCY", 4), 0));
+}
+
+/** Wrap a route handler so it holds a lookup slot for its duration. */
+export function withLookupSlot<A extends unknown[]>(
+  handler: (...args: A) => Promise<Response>,
+): (...args: A) => Promise<Response> {
+  return async (...args: A) => {
+    const release = lookupSemaphore().tryAcquire();
+    if (!release) {
+      return NextResponse.json(
+        { error: "Too many lookups are running at once — try again in a moment." },
+        { status: 429, headers: { "Retry-After": "3" } },
+      );
+    }
+    try {
+      return await handler(...args);
+    } finally {
+      release();
+    }
+  };
 }

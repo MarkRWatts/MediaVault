@@ -3,6 +3,8 @@
 // resets a stuck/errored item back to pending.
 
 import { NextRequest, NextResponse } from "next/server";
+import { hideError } from "@/lib/user-facing-error";
+import { readJsonObject } from "@/lib/validation";
 import { prisma } from "@/lib/db";
 import { shapeScanQueueItem } from "@/lib/scan-resolve";
 import { requireOwnerOrResponse } from "@/lib/require-member";
@@ -24,7 +26,7 @@ export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ id: str
     if (error instanceof Error && "code" in error && error.code === "P2025") {
       return NextResponse.json({ ok: true });
     }
-    return NextResponse.json({ error: error instanceof Error ? error.message : "unknown error" }, { status: 500 });
+    return NextResponse.json({ error: hideError(error, "api/scan-queue/[id]") }, { status: 500 });
   }
 
   return NextResponse.json({ ok: true });
@@ -40,12 +42,9 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     return NextResponse.json({ error: "invalid id" }, { status: 400 });
   }
 
-  let body: Record<string, unknown>;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
-  }
+  const parsed = await readJsonObject(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body;
   if (body.action !== "retry") {
     return NextResponse.json({ error: "expected { action: 'retry' }" }, { status: 400 });
   }
@@ -60,6 +59,6 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     if (error instanceof Error && "code" in error && error.code === "P2025") {
       return NextResponse.json({ error: "not found" }, { status: 404 });
     }
-    return NextResponse.json({ error: error instanceof Error ? error.message : "unknown error" }, { status: 500 });
+    return NextResponse.json({ error: hideError(error, "api/scan-queue/[id]") }, { status: 500 });
   }
 }

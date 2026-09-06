@@ -170,7 +170,7 @@ export default async function ArtistPage({
 
         {artist.hasBackdrop && (
           // One hero image per artist page load, not worth next/image's machinery.
-          // eslint-disable-next-line @next/next/no-img-element
+           
           <img
             src={`/api/artist-image/${artist.id}/backdrop`}
             alt=""
@@ -180,7 +180,6 @@ export default async function ArtistPage({
 
         <div className="flex items-center gap-4">
           {artist.hasPhoto && (
-            // eslint-disable-next-line @next/next/no-img-element
             <img
               src={`/api/artist-image/${artist.id}/photo`}
               alt={`${artist.name} portrait`}

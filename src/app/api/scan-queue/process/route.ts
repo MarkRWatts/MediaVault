@@ -7,11 +7,12 @@
 // without any additional locking.
 
 import { NextResponse } from "next/server";
+import { withLookupSlot } from "@/lib/semaphore";
 import { prisma } from "@/lib/db";
 import { resolveBarcode, shapeScanQueueItem } from "@/lib/scan-resolve";
 import { requireOwnerOrResponse } from "@/lib/require-member";
 
-export async function POST() {
+async function handlePost() {
   const member = await requireOwnerOrResponse();
   if (member instanceof NextResponse) return member;
 
@@ -47,3 +48,6 @@ export async function POST() {
     return NextResponse.json({ done: false, item: shapeScanQueueItem(updated) });
   }
 }
+
+// Bounded concurrency for owner-driven metadata lookups — see lookupSemaphore.
+export const POST = withLookupSlot(handlePost);

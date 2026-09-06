@@ -8,6 +8,7 @@
 // cover — no separate attach step needed here).
 
 import { NextRequest, NextResponse } from "next/server";
+import { readJsonObject } from "@/lib/validation";
 import { prisma } from "@/lib/db";
 import { findOrCreateFilmByTmdbId } from "@/lib/tmdb";
 import { createPhysicalOnlyAlbum, normalizeBarcode, type PhysicalMedium } from "@/lib/discogs";
@@ -19,16 +20,10 @@ export async function POST(req: NextRequest) {
   const member = await requireOwnerOrResponse();
   if (member instanceof NextResponse) return member;
 
-  let body: Record<string, unknown>;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
-  }
+  const parsed = await readJsonObject(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body;
 
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    return NextResponse.json({ error: "expected a JSON object" }, { status: 400 });
-  }
 
   // Digits-only, as every barcode lookup expects (normalizeBarcode); a
   // scanned code that doesn't reduce to a valid EAN/UPC length is refused

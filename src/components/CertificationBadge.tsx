@@ -44,7 +44,6 @@ export default function CertificationBadge({
     );
   }
   return (
-    // eslint-disable-next-line @next/next/no-img-element -- static SVG symbol, no optimisation wanted
     <img
       src={`/bbfc/${file}.svg`}
       alt={title}

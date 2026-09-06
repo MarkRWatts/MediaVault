@@ -43,7 +43,6 @@ export default async function SceneDetailPage({ params }: { params: Promise<{ id
     <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-4 py-10 sm:px-6">
       <div className="flex flex-col gap-6 sm:flex-row">
         {scene.posterPath ? (
-          // eslint-disable-next-line @next/next/no-img-element
           <img
             src={`/api/adult-image/${scene.posterPath}`}
             alt={scene.title}

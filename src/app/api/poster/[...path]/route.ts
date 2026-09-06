@@ -1,35 +1,25 @@
 // Serves cached poster/backdrop/still images, e.g. /api/poster/w342/abc123.jpg.
 //
-// Deliberately reachable without a session (src/proxy.ts) because
-// next/image's optimizer fetches these SERVER-SIDE with none of the
-// browser's cookies — gating it broke every optimized poster app-wide. That
-// makes anything this route does on a cache MISS an anonymous capability,
-// and the previous version would fetch ANY path from TMDB's image CDN and
-// write the result to disk: an unauthenticated disk-fill and outbound-
-// bandwidth amplifier once internet-facing (also reachable through
-// /_next/image, adding optimizer CPU on top).
+// Household-member gated like every other library read. (It used to be
+// public because next/image's optimizer fetched it server-side without
+// cookies; the app now renders plain <img> tags, so the session cookie
+// arrives here and there is nothing left that has to be anonymous.)
 //
-// Now:
 //   - The path must be exactly <size>/<file> with `size` from TMDB's fixed
 //     list and `file` a bare TMDB-style filename — nothing else is looked
 //     up on disk, let alone fetched.
-//   - A cache HIT is served to anyone (that's the next/image requirement;
-//     it's film artwork, not the media itself).
-//   - A cache MISS is filled from TMDB only for (a) a signed-in household
-//     member — the /scan page's candidate thumbnails are plain <img> tags
-//     from an owner's browser, so they carry cookies — or (b) a file some
-//     row in the database actually references (posterPath/backdropPath/
-//     stillPath), which is what next/image's cookie-less optimizer needs
-//     for artwork enrichment cached at a size it didn't pre-fetch. Either
-//     way the fetch has a timeout, a byte cap and an image content-type
-//     check. Anyone else gets a plain 404.
+//   - A cache HIT is served to any member.
+//   - A cache MISS is filled from TMDB only for the app owner (the /scan
+//     page's candidate thumbnails, for films not yet in the library) or for
+//     a file some database row actually references — never for an
+//     arbitrary path a member types in. The fetch has a timeout, a byte cap
+//     and an image content-type check.
 
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
-import { headers } from "next/headers";
-import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { requireMemberOrResponse, requireOwnerOrResponse } from "@/lib/require-member";
 
 const POSTER_CACHE_DIR = process.env.POSTER_CACHE_DIR ?? "./data/posters";
 const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p";
@@ -65,13 +55,8 @@ async function isReferencedImage(file: string): Promise<boolean> {
   return Boolean(film || collection || show || season || episode);
 }
 
-async function hasSession(): Promise<boolean> {
-  try {
-    const session = await auth.api.getSession({ headers: await headers() });
-    return Boolean(session?.user?.id);
-  } catch {
-    return false;
-  }
+async function isAppOwner(): Promise<boolean> {
+  return !((await requireOwnerOrResponse()) instanceof NextResponse);
 }
 
 async function fetchFromTmdb(size: string, file: string): Promise<Buffer | null> {
@@ -88,6 +73,9 @@ async function fetchFromTmdb(size: string, file: string): Promise<Buffer | null>
 }
 
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {
+  const gate = await requireMemberOrResponse();
+  if (gate instanceof NextResponse) return gate;
+
   const { path: segments } = await ctx.params;
   if (!segments || segments.length !== 2) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
@@ -115,7 +103,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ path: stri
     if (!process.env.TMDB_API_KEY) {
       return NextResponse.json({ error: "not found" }, { status: 404 });
     }
-    const allowed = (await hasSession()) || (await isReferencedImage(file));
+    const allowed = (await isAppOwner()) || (await isReferencedImage(file));
     if (!allowed) {
       return NextResponse.json({ error: "not found" }, { status: 404 });
     }
@@ -133,7 +121,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ path: stri
   return new NextResponse(new Uint8Array(buf), {
     headers: {
       "Content-Type": contentTypeFor(file),
-      "Cache-Control": "public, max-age=31536000, immutable",
+      "Cache-Control": "private, max-age=31536000, immutable",
     },
   });
 }

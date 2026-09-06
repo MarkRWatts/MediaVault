@@ -37,7 +37,7 @@ export default async function Nav() {
       <div className="mx-auto flex max-w-[1600px] flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 sm:gap-x-6 sm:px-6 lg:flex-nowrap lg:py-3">
         <Link href="/" className="shrink-0" aria-label="MediaVault — home">
           {/* Logo PNG is transparent, so it sits flush against --bg. */}
-          {/* eslint-disable-next-line @next/next/no-img-element */}
+          { }
           <img src="/logo.png" alt="MediaVault" className="h-8 w-auto sm:h-10" />
         </Link>
         <NavLinks signedIn={Boolean(session?.user)} isOwner={isOwner} hasAdultAccess={hasAdultAccess} />

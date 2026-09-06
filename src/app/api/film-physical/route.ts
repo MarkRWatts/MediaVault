@@ -4,10 +4,11 @@
 // record for one (film, medium) pair, DELETE to remove it.
 
 import { NextRequest, NextResponse } from "next/server";
+import { hideError } from "@/lib/user-facing-error";
 import { prisma } from "@/lib/db";
 import { requireOwnerOrResponse } from "@/lib/require-member";
 import { normalizeBarcode } from "@/lib/discogs";
-import { MAX_NOTES_LENGTH, readTextFields } from "@/lib/validation";
+import { MAX_NOTES_LENGTH, readJsonObject, readTextFields } from "@/lib/validation";
 
 const MEDIA = new Set(["DVD", "BLURAY", "UHD"]);
 
@@ -20,15 +21,9 @@ export async function POST(req: NextRequest) {
   const member = await requireOwnerOrResponse();
   if (member instanceof NextResponse) return member;
 
-  let body: Record<string, unknown>;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
-  }
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    return NextResponse.json({ error: "expected a JSON object" }, { status: 400 });
-  }
+  const parsed = await readJsonObject(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body;
 
   const filmId = Number(body.filmId);
   const medium = parseMedium(body.medium);
@@ -82,7 +77,7 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "unknown error" },
+      { error: hideError(error, "api/film-physical") },
       { status: 500 },
     );
   }
