@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { JF_PATH_RE, VARIANT_MAX_BITRATE, deviceProfile, playbackFromInfo, stripApiKey } from "./jellyfin-playback";
 
 describe("stripApiKey", () => {
@@ -131,5 +131,49 @@ describe("playback-session registry (what the proxy may forward)", async () => {
     registerPlaybackSession("ps-c", "dev-1", "master.m3u8?PlaySessionId=ps-c", 0);
     expect(lookupPlaybackSession("ps-c", "dev-1", 11 * 60 * 60_000)).not.toBeNull(); // touched at 11h
     expect(lookupPlaybackSession("ps-c", "dev-1", 24 * 60 * 60_000)).toBeNull(); // 13h after the touch
+  });
+});
+
+describe("concurrent-stream cap (liveSessionCount)", async () => {
+  const { registerPlaybackSession, lookupPlaybackSession, forgetPlaybackSession, liveSessionCount, jellyfinMaxSessions, clearPlaybackSessions } =
+    await import("./jellyfin-playback");
+  // The registry is module state; the describe above leaves sessions in it.
+  beforeEach(() => clearPlaybackSessions());
+
+  it("counts other devices' recently-used sessions, never the caller's own", () => {
+    registerPlaybackSession("cap-a", "dev-a", "master.m3u8?PlaySessionId=cap-a", 1_000);
+    registerPlaybackSession("cap-b", "dev-b", "master.m3u8?PlaySessionId=cap-b", 1_000);
+    expect(liveSessionCount("dev-c", 1_000)).toBe(2);
+    expect(liveSessionCount("dev-a", 1_000)).toBe(1);
+    forgetPlaybackSession("cap-a");
+    forgetPlaybackSession("cap-b");
+  });
+
+  it("stops counting a session nobody has fetched from for a few minutes, and resumes if it comes back", () => {
+    registerPlaybackSession("cap-idle", "dev-a", "master.m3u8?PlaySessionId=cap-idle", 0);
+    expect(liveSessionCount("dev-z", 2 * 60_000)).toBe(1);
+    expect(liveSessionCount("dev-z", 4 * 60_000)).toBe(0); // paused/abandoned: slot is free again
+    lookupPlaybackSession("cap-idle", "dev-a", 5 * 60_000); // a segment fetch touches it
+    expect(liveSessionCount("dev-z", 5 * 60_000 + 1)).toBe(1);
+    forgetPlaybackSession("cap-idle");
+  });
+
+  it("stop frees the slot immediately", () => {
+    registerPlaybackSession("cap-stop", "dev-a", "master.m3u8?PlaySessionId=cap-stop", 0);
+    expect(liveSessionCount("dev-z", 1)).toBe(1);
+    forgetPlaybackSession("cap-stop");
+    expect(liveSessionCount("dev-z", 1)).toBe(0);
+  });
+
+  it("defaults the cap to 2 and honours JELLYFIN_MAX_SESSIONS", () => {
+    const prev = process.env.JELLYFIN_MAX_SESSIONS;
+    delete process.env.JELLYFIN_MAX_SESSIONS;
+    expect(jellyfinMaxSessions()).toBe(2);
+    process.env.JELLYFIN_MAX_SESSIONS = "4";
+    expect(jellyfinMaxSessions()).toBe(4);
+    process.env.JELLYFIN_MAX_SESSIONS = "nope";
+    expect(jellyfinMaxSessions()).toBe(2);
+    if (prev === undefined) delete process.env.JELLYFIN_MAX_SESSIONS;
+    else process.env.JELLYFIN_MAX_SESSIONS = prev;
   });
 });

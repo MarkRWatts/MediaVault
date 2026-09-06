@@ -3,6 +3,7 @@ import { headers } from "next/headers";
 import { Fredoka, JetBrains_Mono } from "next/font/google";
 import Nav from "@/components/Nav";
 import { isPreAuthPath } from "@/lib/public-paths";
+import { networkKind } from "@/lib/request-network";
 import "./globals.css";
 
 // Used for both --font-display and --font-sans (see globals.css) — one
@@ -30,12 +31,18 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
   // renders this layout without going through proxy.ts first — since that's
   // the safer default (a signed-out visit to a real page just bounces via
   // proxy.ts regardless; the failure mode of concern is only the reverse).
-  const pathname = (await headers()).get("x-pathname") ?? "";
+  const requestHeaders = await headers();
+  const pathname = requestHeaders.get("x-pathname") ?? "";
   const showNav = !isPreAuthPath(pathname);
+  // "remote" when the page came in through the Cloudflare Tunnel — read by
+  // VideoPlayer to default to the 720p rendition off the LAN (see
+  // src/lib/request-network.ts).
+  const network = networkKind(requestHeaders);
 
   return (
     <html
       lang="en"
+      data-network={network}
       className={`${fredoka.variable} ${jbMono.variable} h-full`}
     >
       <body className="min-h-full flex flex-col antialiased">

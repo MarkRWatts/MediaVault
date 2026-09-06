@@ -58,22 +58,39 @@ interface SavedProgress {
   completed: boolean;
 }
 
-const QUALITY_KEY = "mv-video-quality";
+// The quality preference is remembered per NETWORK, not per browser: the
+// same laptop wants Original at home and 720p from a hotel, and a choice
+// made on one must not leak into the other. Which network this page load
+// came over is stamped on <html data-network> by app/layout.tsx (see
+// src/lib/request-network.ts); off the LAN the default is the 720p
+// rendition, since a Blu-ray remux won't fit through a home upload link.
+const QUALITY_KEY = "mv-video-quality"; // LAN (pre-existing key, so old choices survive)
+const QUALITY_KEY_REMOTE = "mv-video-quality-remote";
 // Stalls within this window before the Remote nudge appears.
 const STALL_WINDOW_MS = 60_000;
 const STALL_NUDGE_COUNT = 3;
 
+function networkKind(): "lan" | "remote" {
+  return typeof document !== "undefined" && document.documentElement.dataset.network === "remote" ? "remote" : "lan";
+}
+
+function qualityKey(): string {
+  return networkKind() === "remote" ? QUALITY_KEY_REMOTE : QUALITY_KEY;
+}
+
 function readQuality(): Variant {
   try {
-    return localStorage.getItem(QUALITY_KEY) === "remote" ? "remote" : "original";
+    const stored = localStorage.getItem(qualityKey());
+    if (stored === "remote" || stored === "original") return stored;
   } catch {
-    return "original";
+    // fall through to the network default
   }
+  return networkKind() === "remote" ? "remote" : "original";
 }
 
 function rememberQuality(variant: Variant): void {
   try {
-    localStorage.setItem(QUALITY_KEY, variant);
+    localStorage.setItem(qualityKey(), variant);
   } catch {
     // Per-device convenience only; nothing depends on it persisting.
   }
@@ -707,8 +724,8 @@ export default function VideoPlayer({
                 aria-label="Playback quality"
                 className="rounded-md border border-white/20 bg-black/60 px-2 py-1 text-xs text-white focus-visible:outline-none disabled:opacity-40"
               >
-                <option value="original">Original</option>
-                <option value="remote">Remote (720p)</option>
+                <option value="original">Original (full bitrate)</option>
+                <option value="remote">720p (~3 Mbps)</option>
               </select>
             </label>
             <button
@@ -833,14 +850,14 @@ export default function VideoPlayer({
             role="status"
             className="flex items-center justify-between gap-3 rounded-md border border-white/15 bg-black/60 px-3 py-2 text-xs text-white/80"
           >
-            <span>Buffering a lot? Remote quality (720p, ~3 Mbps) is made for slower connections.</span>
+            <span>Buffering a lot? 720p (~3 Mbps) is made for slower connections.</span>
             <div className="flex shrink-0 items-center gap-2">
               <button
                 type="button"
                 onClick={() => changeQuality("remote")}
                 className="rounded-md border border-white/30 px-2.5 py-1 font-medium text-white transition-colors hover:border-white/60"
               >
-                Switch to Remote
+                Switch to 720p
               </button>
               <button
                 type="button"

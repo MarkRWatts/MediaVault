@@ -5,7 +5,13 @@
 
 import { NextResponse } from "next/server";
 import { jellyfinConfigured } from "@/lib/jellyfin";
-import { proxyJellyfinHls, startJellyfinPlayback, stopJellyfinPlayback } from "@/lib/jellyfin-playback";
+import {
+  jellyfinMaxSessions,
+  liveSessionCount,
+  proxyJellyfinHls,
+  startJellyfinPlayback,
+  stopJellyfinPlayback,
+} from "@/lib/jellyfin-playback";
 import { parseVariant } from "@/lib/video-playback";
 import { currentViewer } from "@/lib/jf-viewer";
 
@@ -26,6 +32,18 @@ export async function jfSession(req: Request, idParam: string, resolveItem: Reso
   const audioStreamIndex = audioParam === null || audioParam === "" ? null : Number(audioParam);
   if (audioStreamIndex !== null && (!Number.isInteger(audioStreamIndex) || audioStreamIndex < 0 || audioStreamIndex > 999)) {
     return NextResponse.json({ error: "invalid audio stream index" }, { status: 400 });
+  }
+
+  // Concurrent-stream cap (see liveSessionCount): each session is a
+  // transcode on the Jellyfin host. The player shows this message as-is.
+  const max = jellyfinMaxSessions();
+  if (liveSessionCount(viewer.deviceId) >= max) {
+    return NextResponse.json(
+      {
+        error: `Playback is limited to ${max} simultaneous stream${max === 1 ? "" : "s"} and ${max === 1 ? "it's" : "they're all"} in use right now — try again in a few minutes.`,
+      },
+      { status: 503, headers: { "Retry-After": "60" } },
+    );
   }
 
   try {

@@ -183,6 +183,41 @@ export function forgetPlaybackSession(playSessionId: string): void {
   sessions.delete(playSessionId);
 }
 
+/** Tests only: the registry is module state shared across a test file. */
+export function clearPlaybackSessions(): void {
+  sessions.clear();
+}
+
+// ---- Concurrent-stream cap -------------------------------------------------
+// Every session is a transcode (or at least a remux) on the Jellyfin host,
+// and a remote viewer's 720p rendition is a full re-encode; the NAS can do
+// a couple at once, not a household's worth. Counted from this registry:
+// a session is "live" if the proxy has served it a playlist or segment
+// within LIVE_WINDOW_MS (a playing client asks every ~6 s; hls.js stops
+// asking once its buffer is full on pause). A viewer's own sessions never
+// count against them — a quality switch stops the old one first, but even
+// if it didn't, one person is one stream. The cap is checked when a
+// session STARTS; an already-running stream is never cut off by it.
+
+const LIVE_WINDOW_MS = 3 * 60_000;
+const DEFAULT_MAX_SESSIONS = 2;
+
+/** JELLYFIN_MAX_SESSIONS, default 2. */
+export function jellyfinMaxSessions(): number {
+  const n = Number(process.env.JELLYFIN_MAX_SESSIONS);
+  return Number.isInteger(n) && n > 0 ? n : DEFAULT_MAX_SESSIONS;
+}
+
+/** Sessions other devices have used within the live window. */
+export function liveSessionCount(excludeDeviceId: string, now = Date.now()): number {
+  let live = 0;
+  for (const s of sessions.values()) {
+    if (s.deviceId === excludeDeviceId) continue;
+    if (now - s.touchedAt <= LIVE_WINDOW_MS) live++;
+  }
+  return live;
+}
+
 /** The stored query for a session this device started, or null. */
 export function lookupPlaybackSession(playSessionId: string, deviceId: string, now = Date.now()): URLSearchParams | null {
   const s = sessions.get(playSessionId);
