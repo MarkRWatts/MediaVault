@@ -8,8 +8,16 @@
 
 import { NextResponse } from "next/server";
 import { getLibraryFilms } from "@/lib/queries";
+import { requireMemberOrResponse } from "@/lib/require-member";
 
+// Household-member gated like every other library read (a real session,
+// not just src/proxy.ts's cookie check). A native client must therefore
+// carry a genuine session cookie — obtained via the same email-OTP sign-in
+// — on these requests.
 export async function GET() {
+  const gate = await requireMemberOrResponse();
+  if (gate instanceof NextResponse) return gate;
+
   const { films } = await getLibraryFilms();
   return NextResponse.json({
     films: films.map((f) => ({

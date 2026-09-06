@@ -13,4 +13,10 @@ export default defineConfig({
       "@": path.resolve(import.meta.dirname, "./src"),
     },
   },
+  test: {
+    // Local git worktrees live under .claude/worktrees; without this, vitest
+    // picks up THEIR test files but resolves "@/..." to THIS checkout's src,
+    // producing failures that belong to neither tree.
+    exclude: ["**/node_modules/**", "**/.next/**", ".claude/**"],
+  },
 });

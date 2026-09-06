@@ -82,6 +82,10 @@ export default async function SignInPage({
           <p className="w-full rounded-md border border-missing-border bg-missing-bg px-4 py-3 text-sm text-missing">
             Enter an email address first.
           </p>
+        ) : error === "TooMany" ? (
+          <p className="text-sm text-danger">
+            Too many sign-in codes requested — wait a little and try again.
+          </p>
         ) : error === "SendFailed" ? (
           <p className="w-full rounded-md border border-missing-border bg-missing-bg px-4 py-3 text-sm text-missing">
             Couldn&apos;t send your code — try again in a moment.

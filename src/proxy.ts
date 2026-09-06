@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { getSessionCookie } from "better-auth/cookies";
 import { PUBLIC_PATHS, PUBLIC_PATH_PREFIXES as PAGE_PUBLIC_PATH_PREFIXES } from "@/lib/public-paths";
+import { verifySessionCookie } from "@/lib/session-cookie";
 
 // Ported from jinglejotter.com's proxy.ts (this Next.js version renamed
 // middleware.ts -> proxy.ts, exporting `proxy` instead of `middleware` — see
@@ -29,25 +30,46 @@ const PUBLIC_PATH_PREFIXES = [
   "/api/physical-cover/",
 ];
 
-// Optimistic only — checks cookie presence, never hits the DB (this runs on
-// every request, including prefetches, and must stay edge-safe — no Prisma
-// adapter import here). getSessionCookie is BetterAuth's own helper for
-// exactly this: it knows the actual cookie name/prefix (including the
-// `__Secure-` variant used over https/production) for the installed
-// version, rather than this file hardcoding a name that could drift out of
-// sync with a future better-auth upgrade. Real authorization happens via
-// auth.api.getSession() in server components/route handlers, which checks
-// the session against the database.
+// BetterAuth plugin HTTP endpoints this app never calls from a browser —
+// every organization operation goes through server actions (which call
+// auth.api.* in-process, not over HTTP, so this deny-list doesn't affect
+// them). Left reachable, the plugin's own /organization/create and
+// /invite-member let any bare session mint a household without an access
+// code and vouch arbitrary emails into the web of trust; accept-invitation
+// skips the one-household rule; update-member-role can hand out the
+// plugin's hidden "admin" role. 404 rather than 403 so the surface simply
+// isn't there.
+const DENIED_AUTH_PREFIXES = ["/api/auth/organization/"];
+
+// Cheap, DB-free gate (this runs on every request, including prefetches):
+// the session cookie must exist AND carry a valid HMAC from this server's
+// BETTER_AUTH_SECRET — see src/lib/session-cookie.ts. getSessionCookie is
+// BetterAuth's own helper for locating the cookie: it knows the actual
+// name/prefix (including the `__Secure-` variant used over https) for the
+// installed version, rather than this file hardcoding a name that could
+// drift out of sync with a future better-auth upgrade. It does NOT verify
+// anything itself — an earlier version of this file treated its presence
+// as "signed in", which any request could satisfy by sending a made-up
+// cookie of that name.
 //
-// /api/* is deliberately IN scope here (unlike an earlier version of this
-// file) — video/audio/poster/cover/films are meant to require *some*
-// signed-in member, not be reachable by anyone who has the URL. The
-// separate owner-only gate (requireOwnerOrResponse, Phase 5) still applies
-// on top of this for the library-mutation routes; this layer is the floor
-// every route sits on.
-export function proxy(request: NextRequest) {
+// This is still not authorization: a revoked or expired session carries a
+// valid signature. Real authorization happens via auth.api.getSession() in
+// every page and route handler (src/lib/require-member.ts — enforced by
+// src/lib/route-guards.test.ts), which checks the session against the
+// database. This layer just means a forged cookie gets nobody past the
+// front door, and unauthenticated traffic never reaches a handler.
+//
+// /api/* is deliberately IN scope here — video/audio/films are meant to
+// require a signed-in household member, not be reachable by anyone who has
+// the URL. The separate owner-only gate (requireOwnerOrResponse) still
+// applies on top of this for the library-mutation routes.
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  const authenticated = Boolean(getSessionCookie(request));
+  if (DENIED_AUTH_PREFIXES.some((prefix) => pathname.startsWith(prefix))) {
+    return NextResponse.json({ error: "not found" }, { status: 404 });
+  }
+
+  const authenticated = await verifySessionCookie(getSessionCookie(request), process.env.BETTER_AUTH_SECRET);
   const isPublic =
     PUBLIC_PATHS.includes(pathname) ||
     PUBLIC_PATH_PREFIXES.some((prefix) => pathname.startsWith(prefix));

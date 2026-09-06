@@ -8,8 +8,12 @@
 import { NextResponse } from "next/server";
 import { resolveVideoStream } from "@/lib/video-cache";
 import { serveFile } from "@/lib/serve-file";
+import { requireMemberOrResponse } from "@/lib/require-member";
 
 export async function GET(req: Request, ctx: { params: Promise<{ versionId: string }> }) {
+  const gate = await requireMemberOrResponse();
+  if (gate instanceof NextResponse) return gate;
+
   const { versionId: versionIdParam } = await ctx.params;
   const versionId = Number(versionIdParam);
   if (!Number.isInteger(versionId)) {

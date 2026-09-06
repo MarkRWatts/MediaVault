@@ -63,6 +63,32 @@ export async function requireMemberOrRedirect(): Promise<Member> {
   return { userId, householdId: member.householdId, role: member.role };
 }
 
+/** Route-handler variant of requireMember(): the floor every library API
+ *  route sits on — a REAL session (auth.api.getSession, checked against
+ *  the database) plus household membership. Returns the Member or a
+ *  NextResponse the caller should return as-is: 401 with no session, 403
+ *  with a session but no household.
+ *
+ *  Exists because src/proxy.ts's cookie check is deliberately cheap and is
+ *  NOT authorization: it establishes that the cookie was signed by this
+ *  server, not that the session is still live or that the person is still
+ *  a member. Every /api route that isn't owner-only or adult-gated must call
+ *  this first (src/lib/route-guards.test.ts enforces it). */
+export async function requireMemberOrResponse(): Promise<Member | NextResponse> {
+  const session = await auth.api.getSession({ headers: await headers() });
+  const userId = session?.user?.id;
+  if (!userId) {
+    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  }
+
+  const member = await prisma.member.findFirst({ where: { userId } });
+  if (!member) {
+    return NextResponse.json({ error: "Not a household member" }, { status: 403 });
+  }
+
+  return { userId, householdId: member.householdId, role: member.role };
+}
+
 /** Route-handler variant: gates an owner-only API route (media
  *  scan/enrich/report/admin). Route handlers can't throw-to-error-page or
  *  redirect the way a server action/page can — the caller needs a Response

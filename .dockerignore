@@ -2,8 +2,12 @@ node_modules
 .next
 .git
 data
-.env
-.env.local
-.env.*.local
+# Every env file — .env.docker (the real production env, created next to
+# the compose files on the VM) was previously NOT excluded, so the builder
+# stage's `COPY . .` copied every secret into a cached image layer. Only the
+# two committed templates are allowed through.
+.env*
+!.env.example
+!.env.docker.example
 src/generated
 *.md

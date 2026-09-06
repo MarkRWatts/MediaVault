@@ -9,6 +9,10 @@
 # can bind ports 443/80. Deliberately not merged into the base
 # docker-compose.yml, which the Mac's local/dev setup also uses with no
 # proxy at all (see docker-compose.override.yml).
+#
+# For internet exposure through a Cloudflare Tunnel, layer
+# docker-compose.cloudflared.yml on top as well — see DEPLOYMENT.md
+# "Exposing to the internet (Cloudflare Tunnel)".
 services:
   app:
     networks:
@@ -16,6 +20,28 @@ services:
       edge:
         aliases:
           - mediavault
+    # --- Container hardening -------------------------------------------
+    # The image already switches to the unprivileged `node` user (uid 1000);
+    # pinning it here too means a future image change can't silently undo
+    # that. The data volume must be owned by 1000:1000 — one-time chown, see
+    # DEPLOYMENT.md "Running as non-root".
+    user: "1000:1000"
+    # Nothing in the image is written at runtime except the data volume,
+    # Next's own cache and scratch space, so the root filesystem is
+    # read-only and those two get in-memory tmpfs mounts. /tmp also hosts
+    # the audio WAV fallback's temp files and tsx's compile cache.
+    read_only: true
+    tmpfs:
+      - /tmp:size=512m
+      - /app/.next/cache:size=256m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/signin"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
     # The VM has no host-level SMB mount (deploy has no sudo, by design).
     # Instead the Docker daemon itself mounts the NAS share as a CIFS
     # named volume — a read-only, purpose-made SMB account, credentials in
@@ -28,6 +54,11 @@ services:
       MOVIES_PATH: /media-share/Movies
       TVSHOWS_PATH: /media-share/TV Shows
       MUSIC_PATH: /media-share/Music
+      # Fail the deploy loudly if either is missing instead of booting a
+      # server whose passkey origin falls back to trusting the request's
+      # Origin header and whose emailed links point nowhere.
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET in .env.docker}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:?set BETTER_AUTH_URL in .env.docker}
     volumes:
       - movies:/media-share:ro
 
@@ -37,7 +68,9 @@ volumes:
     driver_opts:
       type: cifs
       device: //${MOVIES_SMB_HOST:?set MOVIES_SMB_HOST in .env.docker}/${MOVIES_SMB_SHARE:-media}
-      o: "addr=${MOVIES_SMB_HOST},username=${MOVIES_SMB_USERNAME:?set MOVIES_SMB_USERNAME},password=${MOVIES_SMB_PASSWORD:?set MOVIES_SMB_PASSWORD},ro,vers=3.1.1,iocharset=utf8"
+      # uid/gid 1000: the files must be readable by the container's
+      # non-root `node` user, and CIFS ownership is whatever the mount says.
+      o: "addr=${MOVIES_SMB_HOST},username=${MOVIES_SMB_USERNAME:?set MOVIES_SMB_USERNAME},password=${MOVIES_SMB_PASSWORD:?set MOVIES_SMB_PASSWORD},ro,vers=3.1.1,iocharset=utf8,uid=1000,gid=1000"
 
 networks:
   edge:

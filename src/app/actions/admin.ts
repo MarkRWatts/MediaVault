@@ -16,6 +16,7 @@ import { sendAccessCodeEmail } from "@/lib/email";
 import { logAudit } from "@/lib/audit";
 import { isTooLong } from "@/lib/validation";
 import { MAX_ROWS, rowCapMessage } from "@/lib/limits";
+import { revokeSessionsIfNoLongerVouched } from "@/lib/revoke-sessions";
 
 export type AdminActionState = { error?: string; minted?: string } | null;
 
@@ -192,12 +193,18 @@ export async function deleteAccessCode(
   const codeId = String(formData.get("codeId") ?? "").trim();
   if (!codeId) return { error: "Missing code." };
 
+  // An email-bound code vouches that address into the web of trust while it
+  // lives; read it before the delete so any session it alone was vouching
+  // for can be ended afterwards (src/lib/revoke-sessions.ts).
+  const row = await prisma.accessCode.findUnique({ where: { id: codeId }, select: { email: true } });
+
   const deleted = await prisma.accessCode.deleteMany({
     where: { id: codeId, redeemedCount: 0 },
   });
   if (deleted.count === 0) {
     return { error: "Only unused codes can be revoked — redeemed ones are the audit trail." };
   }
+  if (row?.email) await revokeSessionsIfNoLongerVouched(row.email);
 
   await logAudit({ userId: admin.userId, action: "access-code.revoke", entityId: codeId });
   revalidatePath("/admin");

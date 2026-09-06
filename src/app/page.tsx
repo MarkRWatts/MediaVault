@@ -2,20 +2,20 @@
 // (the Docker image is built with no database present).
 export const dynamic = "force-dynamic";
 
-import { cookies, headers } from "next/headers";
+import { cookies } from "next/headers";
 import LibraryBrowser from "@/components/LibraryBrowser";
 import { PasskeyNudge } from "@/components/auth/PasskeyNudge";
-import { auth } from "@/lib/auth";
+import { requireMemberOrRedirect } from "@/lib/require-member";
 import { PASSKEY_NUDGE_COOKIE } from "@/lib/flow-cookies";
 import { getContinueWatchingFilms, getFavouriteFilms, getLibraryFilms, getWatchedFilmIds } from "@/lib/queries";
 
 export default async function LibraryPage() {
-  // proxy.ts already guarantees a signed-in session got this far; still
-  // read it directly rather than requireMemberOrRedirect() (this page has
-  // never required household membership specifically, only a session) —
-  // just enough to scope the continue-watching query to the right user.
-  const session = await auth.api.getSession({ headers: await headers() });
-  const userId = session?.user?.id ?? null;
+  // A real session check, not proxy.ts's cookie gate (which only proves the
+  // cookie was signed by this server, not that the session is live or the
+  // person still a member). Membership is what vouches someone into the
+  // web of trust, so the library requires it; a signed-in non-member is
+  // sent to /onboarding, same as every other library page.
+  const { userId } = await requireMemberOrRedirect();
   // Set by an email-code sign-in (see verifyOTP); the strip itself decides
   // whether this device can make a passkey and whether it's been dismissed.
   const nudgePasskey = (await cookies()).has(PASSKEY_NUDGE_COOKIE);

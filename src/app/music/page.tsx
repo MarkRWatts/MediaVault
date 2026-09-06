@@ -6,8 +6,10 @@ import Link from "next/link";
 import CoverImage from "@/components/CoverImage";
 import PhysicalAddForm from "@/components/PhysicalAddForm";
 import { getMusicIndex, getArtistDetail } from "@/lib/queries-music";
+import { requireMemberOrRedirect } from "@/lib/require-member";
 
 export default async function MusicPage() {
+  await requireMemberOrRedirect();
   const { totals, artists } = await getMusicIndex();
 
   // The Compilations pseudo-artist (various=true) skips Discogs matching

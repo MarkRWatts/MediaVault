@@ -8,6 +8,7 @@
 
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { forwardedIpHeaders } from "@/lib/client-ip";
 
 export async function decideConsent(formData: FormData): Promise<void> {
   const accept = formData.get("accept") === "true";
@@ -35,6 +36,9 @@ export async function decideConsent(formData: FormData): Promise<void> {
       // Session-protected, state-changing endpoint — BetterAuth's
       // origin/CSRF check rejects a server-side fetch with no Origin.
       origin: base,
+      // Carry the real client's IP through, or BetterAuth's rate limiter
+      // sees every consent as coming from 127.0.0.1 (one shared bucket).
+      ...forwardedIpHeaders(reqHeaders),
     },
     body: JSON.stringify({ accept, oauth_query: oauthQuery }),
   });

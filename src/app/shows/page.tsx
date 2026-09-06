@@ -9,19 +9,16 @@ import { jellyfinConfigured } from "@/lib/jellyfin";
 import CollapsibleSection from "@/components/CollapsibleSection";
 import EpisodeCard from "@/components/EpisodeCard";
 import { SHELF_ITEM } from "@/lib/card-grid";
-import { headers } from "next/headers";
-import { auth } from "@/lib/auth";
+import { requireMemberOrRedirect } from "@/lib/require-member";
 import { getShowIdsState } from "@/lib/film-user-state";
 
 export default async function ShowsPage() {
+  const { userId } = await requireMemberOrRedirect();
   const shows = await getShows();
-  const session = await auth.api.getSession({ headers: await headers() });
-  const [ids, continueEpisodes] = session?.user?.id
-    ? await Promise.all([
-        getShowIdsState(session.user.id),
-        getContinueWatchingEpisodes(session.user.id),
-      ])
-    : [null, []];
+  const [ids, continueEpisodes] = await Promise.all([
+    getShowIdsState(userId),
+    getContinueWatchingEpisodes(userId),
+  ]);
   const playable = jellyfinConfigured();
   const favouriteSet = new Set(ids?.favouriteIds ?? []);
   const watchedSet = new Set(ids?.watchedIds ?? []);

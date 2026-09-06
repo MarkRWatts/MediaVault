@@ -147,6 +147,119 @@ A single Caddy instance on the VM fronts **every** app — currently jobAppTrack
    cd ~/edge && docker compose up -d --build
    ```
 
+## Running as non-root
+
+The image runs the server as the unprivileged `node` user (uid/gid 1000)
+with a read-only root filesystem, no capabilities and `no-new-privileges`
+(`Dockerfile`, `docker-compose.prod.yml`). Two consequences on an existing
+deployment:
+
+1. **The data volume must be owned by 1000:1000.** It was created by the
+   old root-running container, so do this once before the first
+   non-root deploy (the app can't create `mediavault.db` or write posters
+   otherwise):
+   ```bash
+   docker run --rm -v mediavault_data:/data alpine chown -R 1000:1000 /data
+   ```
+2. **Owner-run scripts call `tsx` directly**, not through `npx` (which
+   wants a writable cache under `$HOME` that the read-only filesystem
+   doesn't give it):
+   ```bash
+   docker compose --env-file .env.docker -f docker-compose.yml -f docker-compose.prod.yml \
+     exec app node_modules/.bin/tsx scripts/gen-access-code.ts --email someone@example.com
+   ```
+
+The CIFS volume options include `uid=1000,gid=1000` for the same reason.
+
+## Exposing to the internet (Cloudflare Tunnel)
+
+The LAN setup above terminates TLS on the VM's Caddy behind a private-IP
+DNS record. To make the app reachable from anywhere **without** opening a
+port, run a Cloudflare Tunnel connector next to the app
+(`docker-compose.cloudflared.yml`) and let Cloudflare front it. Do these in
+order; the app-side hardening this depends on (real session checks on
+every route, HMAC-verified session cookie at the proxy, `cf-connecting-ip`
+as the rate-limit key, security headers) is already in the code.
+
+### 1. Create the tunnel
+
+Cloudflare dashboard → Zero Trust → Networks → Tunnels → **Create a
+tunnel** (Cloudflared connector). Copy the token from the "Install and run
+a connector" step into `.env.docker` as `CLOUDFLARE_TUNNEL_TOKEN`. Under
+**Public Hostname** add `mediavault.markrwatts.com` → service
+`http://app:3000` (the compose service name; cloudflared shares the app's
+network). Cloudflare creates the proxied CNAME for you — delete the old
+private-IP `A` record for the same name if you keep it public only via the
+tunnel, or see "LAN path" below.
+
+`BETTER_AUTH_URL` stays `https://mediavault.markrwatts.com`; the app derives
+`__Secure-` cookies, the passkey origin and `trustedOrigins` from it.
+
+### 2. Bring it up
+
+```bash
+cd ~/MediaVault
+docker compose --env-file .env.docker \
+  -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.cloudflared.yml up -d --build
+```
+
+The `cloudflared` container waits for `app`'s healthcheck before
+connecting. `docker compose … logs cloudflared` should show
+"Registered tunnel connection".
+
+### 3. Put Cloudflare Access in front (strongly recommended)
+
+Zero Trust → Access → Applications → **Add an application** → Self-hosted,
+domain `mediavault.markrwatts.com`. Policy: **Allow**, include *Emails* =
+the same list as `ALLOWED_EMAILS` plus every household member (or *Emails
+ending in* your family domain), login method *One-time PIN*. Session
+duration a week is fine — this is a second factor in front of the app's own
+sign-in, and it keeps unauthenticated traffic (scanners, credential
+stuffing against `/api/auth/*`) from ever reaching the origin.
+
+At minimum, if you want the app's own sign-in to be the only gate, protect
+`/admin*` and `/scan*` with an Access policy restricted to the app owner.
+
+### 4. WAF and rate limiting
+
+Security → WAF:
+
+- **Managed rules**: turn on the Cloudflare Managed Ruleset (free tier
+  includes the essentials).
+- **Rate limiting rules** (the app's own limits cover sign-in only, and
+  Next.js has none built in):
+  - `/api/auth/*` — 10 requests / minute / IP, block for 10 minutes.
+  - `/api/*` — 300 requests / minute / IP (HLS segments are small and
+    frequent; a player fetches one every ~6 s per stream).
+- **Cache Rules**: bypass cache for `/api/video/*`, `/api/tv-video/*`,
+  `/api/audio/*` and `/api/auth/*`. Video through the proxy is a lot of
+  bytes; check your plan's limits on non-HTML traffic and the 100 s
+  origin-response timeout (the HLS playlist route waits up to 30 s for a
+  first segment, which is inside it).
+
+### 5. The LAN path
+
+With the tunnel up, the old direct route (LAN DNS → Caddy → `app`) still
+works if you keep the private-IP `A` record and the `edge` network. It
+bypasses Access, WAF and rate limiting — fine for devices on the home
+network, but decide that explicitly. To make the origin tunnel-only,
+remove the Caddy site block and the `edge` network membership from
+`docker-compose.prod.yml`; nothing else is listening on the host.
+
+If Caddy stays in front on the LAN, it rewrites `X-Forwarded-For` to the
+client's LAN IP (single value), which the app accepts as a fallback when
+`cf-connecting-ip` is absent — so rate limiting keys correctly on both
+paths.
+
+### 6. Verify
+
+From outside the LAN (phone on mobile data):
+
+```bash
+curl -sSI https://mediavault.markrwatts.com/signin | grep -iE "strict-transport|x-frame|content-security|cf-ray"
+curl -sS -o /dev/null -w "%{http_code}\n" -H 'Cookie: __Secure-better-auth.session_token=forged' https://mediavault.markrwatts.com/api/films   # 401 (or Access's 302 if Access is on)
+```
+
 ## Renaming an existing filmDB deployment to MediaVault (one-time)
 
 This app was previously deployed as **filmDB**. The rename touches the repo,
@@ -248,6 +361,8 @@ works.
 
 ### VM deployment (in `.env.docker`)
 
+- `BETTER_AUTH_SECRET` / `BETTER_AUTH_URL`: required — the prod overlay refuses to start without them.
+- `CLOUDFLARE_TUNNEL_TOKEN`: only with `docker-compose.cloudflared.yml` (see [Exposing to the internet](#exposing-to-the-internet-cloudflare-tunnel)).
 - `DATABASE_URL`: `file:/app/data/mediavault.db` (set in the base `docker-compose.yml`).
 - `MOVIES_PATH`: `/media-share/Movies` on the VM (the CIFS named volume; the base compose default `/movies` applies only to local dev).
 - `POSTER_CACHE_DIR`: `/app/data/posters` (set in the base `docker-compose.yml`).

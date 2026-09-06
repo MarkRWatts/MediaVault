@@ -1,0 +1,29 @@
+# Cloudflare Tunnel overlay — internet exposure without opening a port:
+#   docker compose --env-file .env.docker \
+#     -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.cloudflared.yml up -d --build
+#
+# `cloudflared` dials OUT to Cloudflare and forwards the tunnel's traffic to
+# `app` over the private compose network by service name — nothing is
+# published on the host, and (unlike the LAN/Caddy path) every internet
+# request passes Cloudflare's WAF, rate limiting and Access policies first.
+# The tunnel's public hostname -> `http://app:3000` route is configured in
+# the Cloudflare dashboard (Zero Trust -> Networks -> Tunnels), and the
+# app must see the real client IP via `cf-connecting-ip`, which cloudflared
+# sets — see src/lib/auth.ts and src/lib/client-ip.ts.
+#
+# Full setup, plus the Access/WAF rules that should go with it, in
+# DEPLOYMENT.md "Exposing to the internet (Cloudflare Tunnel)".
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?set CLOUDFLARE_TUNNEL_TOKEN in .env.docker}
+    depends_on:
+      app:
+        condition: service_healthy
+    user: "65532:65532"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]

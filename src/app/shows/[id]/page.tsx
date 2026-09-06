@@ -7,8 +7,7 @@ import { getShowDetail } from "@/lib/queries";
 import { jellyfinConfigured } from "@/lib/jellyfin";
 import FilmActions from "@/components/FilmActions";
 import CertificationBadge from "@/components/CertificationBadge";
-import { headers } from "next/headers";
-import { auth } from "@/lib/auth";
+import { requireMemberOrRedirect } from "@/lib/require-member";
 import { getNextEpisodeFile, getShowUserState } from "@/lib/film-user-state";
 
 export default async function ShowPage({
@@ -16,6 +15,7 @@ export default async function ShowPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const { userId } = await requireMemberOrRedirect();
   const { id } = await params;
   const showId = Number(id);
   if (!Number.isInteger(showId)) notFound();
@@ -26,10 +26,8 @@ export default async function ShowPage({
   // Only build deep links when the server is actually reachable — no error
   // state in the UI, episodes without a match simply get no chip.
   const playable = jellyfinConfigured();
-  const session = await auth.api.getSession({ headers: await headers() });
-  const userId = session?.user?.id ?? null;
   const [userState, next] = await Promise.all([
-    userId ? getShowUserState(userId, show.id) : Promise.resolve({ favourite: false, watched: false }),
+    getShowUserState(userId, show.id),
     playable ? getNextEpisodeFile(userId, show.id) : Promise.resolve(null),
   ]);
 
