@@ -3,20 +3,19 @@
 // the UPC title guess). POST { title, year? } -> top TMDB matches.
 
 import { NextRequest, NextResponse } from "next/server";
+import { withLookupSlot } from "@/lib/semaphore";
+import { readJsonObject } from "@/lib/validation";
 import { searchMoviesByTitle } from "@/lib/tmdb";
 import { requireOwnerOrResponse } from "@/lib/require-member";
 import { prisma } from "@/lib/db";
 
-export async function POST(req: NextRequest) {
+async function handlePost(req: NextRequest) {
   const member = await requireOwnerOrResponse();
   if (member instanceof NextResponse) return member;
 
-  let body: Record<string, unknown>;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
-  }
+  const parsed = await readJsonObject(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body;
 
   const title = typeof body.title === "string" ? body.title.trim() : "";
   if (!title) {
@@ -57,3 +56,6 @@ export async function POST(req: NextRequest) {
     );
   }
 }
+
+// Bounded concurrency for owner-driven metadata lookups — see lookupSemaphore.
+export const POST = withLookupSlot(handlePost);

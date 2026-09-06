@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import Image from "next/image";
 import Link from "next/link";
 import PosterImage from "@/components/PosterImage";
 import type { CollectionSummary } from "@/lib/queries";
@@ -13,12 +12,12 @@ function CollageCell({ posterPath }: { posterPath: string | null }) {
   }
   return (
     <div className="relative h-full w-full">
-      <Image
+      <img
         src={`/api/poster/w342${posterPath}`}
         alt=""
-        fill
-        sizes="90px"
-        className="object-cover"
+        loading="lazy"
+        decoding="async"
+        className="absolute inset-0 h-full w-full object-cover"
         onError={() => setErrored(true)}
       />
     </div>

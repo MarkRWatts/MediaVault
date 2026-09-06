@@ -2,7 +2,9 @@
 export const dynamic = "force-dynamic";
 
 import { notFound } from "next/navigation";
+import { headers } from "next/headers";
 import { prisma } from "@/lib/db";
+import { networkKind } from "@/lib/request-network";
 import { requireAdultAccessOrRedirect } from "@/lib/require-member";
 import { resolutionTier, formatLabel, videoCodecLabel } from "@/lib/constants";
 import { getJellyfinServerInfo, jellyfinPlayUrl } from "@/lib/jellyfin";
@@ -28,8 +30,12 @@ export default async function SceneDetailPage({ params }: { params: Promise<{ id
   ]);
   if (!scene) notFound();
 
+  // The deep link points at JELLYFIN_URL, a LAN address — meaningless (and
+  // confusing) from the internet, so it's only offered on the LAN. In-app
+  // Play works from anywhere; it goes through this app's own proxy.
+  const onLan = networkKind(await headers()) === "lan";
   const jellyfinHref =
-    scene.jellyfinId && jellyfinServer ? jellyfinPlayUrl(scene.jellyfinId, jellyfinServer.serverId) : null;
+    onLan && scene.jellyfinId && jellyfinServer ? jellyfinPlayUrl(scene.jellyfinId, jellyfinServer.serverId) : null;
 
   const tier = resolutionTier(scene.width, scene.height);
 
@@ -37,7 +43,6 @@ export default async function SceneDetailPage({ params }: { params: Promise<{ id
     <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-4 py-10 sm:px-6">
       <div className="flex flex-col gap-6 sm:flex-row">
         {scene.posterPath ? (
-          // eslint-disable-next-line @next/next/no-img-element
           <img
             src={`/api/adult-image/${scene.posterPath}`}
             alt={scene.title}

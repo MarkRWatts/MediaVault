@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { hideError } from "@/lib/user-facing-error";
 import { runScan } from "@/lib/scanner";
 import { requireOwnerOrResponse } from "@/lib/require-member";
 import { readForceFlag } from "@/lib/scan-request";
@@ -16,6 +17,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ runId, force });
   } catch (err) {
     console.error("[api/scan/tv] failed to start scan:", err);
-    return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
+    return NextResponse.json({ error: hideError(err, "api/scan/tv", "Couldn't start that run — the app owner can find the details in the server logs.") }, { status: 500 });
   }
 }

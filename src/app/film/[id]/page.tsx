@@ -1,5 +1,4 @@
 import Link from "next/link";
-import Image from "next/image";
 import { notFound } from "next/navigation";
 import PosterImage from "@/components/PosterImage";
 import VersionCard from "@/components/VersionCard";
@@ -57,12 +56,12 @@ export default async function FilmPage({
       <div className="relative">
         {film.backdropPath && (
           <div className="absolute inset-0 h-72 overflow-hidden sm:h-96">
-            <Image
+            <img
               src={`/api/poster/w780${film.backdropPath}`}
               alt=""
-              fill
-              priority
-              className="scale-105 object-cover opacity-30 blur-sm"
+              fetchPriority="high"
+              decoding="async"
+              className="absolute inset-0 h-full w-full scale-105 object-cover opacity-30 blur-sm"
             />
             <div className="absolute inset-0 bg-gradient-to-b from-bg/40 via-bg/70 to-bg" />
           </div>

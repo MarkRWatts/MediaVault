@@ -31,7 +31,7 @@ import { promises as fs, rmSync } from "node:fs";
 import path from "node:path";
 import { prisma } from "@/lib/db";
 import { probe } from "@/lib/ffprobe";
-import { prepareSemaphore } from "@/lib/semaphore";
+import { SemaphoreFullError, prepareSemaphore } from "@/lib/semaphore";
 import {
   planVideoPlayback,
   buildHlsFfmpegArgs,
@@ -626,6 +626,21 @@ async function prepareWithSlot(
   }
 }
 
+/** What a failed prepare reports to the player (via /status and the
+ * playlist route). The raw error carries ffmpeg's stderr, absolute media
+ * paths, disk-space figures and env-var names — useful in the server log,
+ * not something to hand a browser. Only two conditions are worth naming to
+ * the viewer; everything else is "look at the logs". */
+function publicPrepareError(key: string, err: unknown): string {
+  if (err instanceof SemaphoreFullError) return err.message;
+  console.error(`[video-cache] prepare ${key} failed:`, err);
+  const raw = err instanceof Error ? err.message : String(err);
+  if (raw.startsWith("Not enough disk space")) {
+    return "Not enough disk space to prepare this file — the app owner needs to clear some room.";
+  }
+  return "Preparation failed on the server — the app owner can find the details in the logs.";
+}
+
 /** Kick off preparation if it isn't already cached or in flight. Fire-and-
  * forget — callers poll getVideoStatus or resolve the playlist. */
 function requestVideoPrepare(
@@ -640,7 +655,7 @@ function requestVideoPrepare(
   jobErrors.delete(key);
   const job = prepare(kind, id, variant, media, plan)
     .catch((err) => {
-      jobErrors.set(key, err instanceof Error ? err.message : String(err));
+      jobErrors.set(key, publicPrepareError(key, err));
     })
     .finally(() => {
       jobs.delete(key);

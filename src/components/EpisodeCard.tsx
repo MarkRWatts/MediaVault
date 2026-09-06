@@ -1,4 +1,3 @@
-import Image from "next/image";
 import Link from "next/link";
 import PosterImage from "@/components/PosterImage";
 import PlayButton from "@/components/PlayButton";
@@ -23,12 +22,12 @@ export default function EpisodeCard({ item }: { item: ContinueEpisode }) {
         className="group relative block aspect-video w-full border-b border-border bg-bg"
       >
         {item.stillPath ? (
-          <Image
+          <img
             src={`/api/poster/w300${item.stillPath}`}
             alt=""
-            fill
-            sizes="(min-width: 1536px) 10vw, 25vw"
-            className="object-cover"
+            loading="lazy"
+            decoding="async"
+            className="absolute inset-0 h-full w-full object-cover"
           />
         ) : (
           <PosterImage

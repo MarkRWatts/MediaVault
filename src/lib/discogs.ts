@@ -76,14 +76,43 @@ async function discogsFetch(pathname: string, params: Record<string, string> = {
   }
 }
 
-export const DISCOGS_URL_RE = /discogs\.com\/release\/(\d+)/i;
+// Anchored: the whole value must BE a Discogs release/master URL (scheme and
+// www optional — the Scan page's paste-extractor hands over scheme-less
+// matches; a locale prefix, the "-Artist-Title" slug and a query/fragment
+// are tolerated after the id). An earlier unanchored form matched the
+// substring anywhere, so `javascript:…discogs.com/release/1` passed, was
+// stored verbatim as Album.discogsUrl and rendered as a link for every
+// member. What gets STORED is now rebuilt from the id regardless — see
+// canonicalDiscogsUrl.
+export const DISCOGS_URL_RE = /^(?:https?:\/\/)?(?:www\.)?discogs\.com\/(?:[a-z]{2}\/)?release\/(\d+)(?:[-/?#]\S*)?$/i;
 
 // A master groups every pressing of a release across editions/reissues —
 // it has no tracklist/cover of its own that corresponds to a specific
 // physical item, only a `main_release` pointer to the release Discogs
 // considers canonical. Resolving one just means resolving that release
 // instead (see resolveDiscogsUrl in scan-resolve.ts).
-export const DISCOGS_MASTER_URL_RE = /discogs\.com\/master\/(\d+)/i;
+export const DISCOGS_MASTER_URL_RE = /^(?:https?:\/\/)?(?:www\.)?discogs\.com\/(?:[a-z]{2}\/)?master\/(\d+)(?:[-/?#]\S*)?$/i;
+
+/** The one form a Discogs URL is ever persisted or rendered in. */
+export function canonicalDiscogsUrl(kind: "release" | "master", id: number): string {
+  return `https://www.discogs.com/${kind}/${id}`;
+}
+
+/** Delete a not-owned placeholder album so its Discogs identity can be
+ *  reassigned — but never one that carries PhysicalCopy rows: those are a
+ *  pressing someone entered by hand or scanned in, and Album's cascade would
+ *  take them along. Returns whether the row was actually removed. */
+async function reclaimPlaceholderAlbum(holder: { id: number; owned: boolean }): Promise<boolean> {
+  if (holder.owned) return false;
+  const { count } = await prisma.album.deleteMany({
+    where: { id: holder.id, owned: false, physicalCopies: { none: {} } },
+  });
+  return count > 0;
+}
+
+function holderKind(holder: { owned: boolean }): string {
+  return holder.owned ? "owned" : "physical-only";
+}
 
 /** Parse Discogs' "M:SS" (or "H:MM:SS") duration string. Empty/unparseable -> null. */
 export function parseDiscogsDuration(duration: string | null | undefined): number | null {
@@ -803,11 +832,9 @@ async function reconcileArtistAlbums(artistId: number, artistName: string, log: 
     for (const b of ordinalBatch) {
       const holder = await findAlbumByDiscogsIdentity(entryIdentity(b.entry));
       if (holder && holder.id !== b.album.id && !batchAlbumIds.has(holder.id)) {
-        if (!holder.owned) {
-          await prisma.album.delete({ where: { id: holder.id } });
-        } else {
+        if (!(await reclaimPlaceholderAlbum(holder))) {
           log.push(
-            `Ordinal match for "${b.album.title}" (${artistName}) skipped — Discogs ${b.entry.type} ${b.entry.id} is held by owned "${holder.title}"`,
+            `Ordinal match for "${b.album.title}" (${artistName}) skipped — Discogs ${b.entry.type} ${b.entry.id} is held by ${holderKind(holder)} "${holder.title}"`,
           );
           continue;
         }
@@ -905,12 +932,11 @@ async function reconcileArtistAlbums(artistId: number, artistName: string, log: 
       // re-claims too, not just first-time matches.
       const holder = await findAlbumByDiscogsIdentity(entryIdentity(entry));
       if (holder && holder.id !== owned.id) {
-        if (!holder.owned) {
-          await prisma.album.delete({ where: { id: holder.id } });
+        if (await reclaimPlaceholderAlbum(holder)) {
           log.push(`Reclaimed missing-album placeholder "${holder.title}" for "${artistName}" — "${owned.title}" is on disk`);
         } else {
           log.push(
-            `Match conflict: "${owned.title}" and "${holder.title}" (${artistName}) both normalize to Discogs ${entry.type} ${entry.id} — left unmatched for review`,
+            `Match conflict: "${owned.title}" and ${holderKind(holder)} "${holder.title}" (${artistName}) both normalize to Discogs ${entry.type} ${entry.id} — left unmatched for review`,
           );
           continue;
         }
@@ -1257,6 +1283,8 @@ export async function applyManualAlbumDiscogsMatch(
 
   const isMaster = masterMatch != null;
   const id = Number((masterMatch ?? releaseMatch)![1]);
+  // Stored and returned in canonical form only — never the pasted string.
+  const canonicalUrl = canonicalDiscogsUrl(isMaster ? "master" : "release", id);
 
   // A pasted master URL's id IS the group-level identity directly. A pasted
   // release URL is promoted to ITS master's identity when one exists — same
@@ -1288,10 +1316,12 @@ export async function applyManualAlbumDiscogsMatch(
 
   const holder = await findAlbumByDiscogsIdentity(identity);
   if (holder && holder.id !== album.id) {
-    if (!holder.owned) {
-      await prisma.album.delete({ where: { id: holder.id } });
-    } else {
-      return { ok: false, status: 409, error: `Discogs ${isMaster ? "master" : "release"} already matched to owned album "${holder.title}"` };
+    if (!(await reclaimPlaceholderAlbum(holder))) {
+      return {
+        ok: false,
+        status: 409,
+        error: `Discogs ${isMaster ? "master" : "release"} already matched to ${holderKind(holder)} album "${holder.title}"`,
+      };
     }
   }
 
@@ -1304,7 +1334,7 @@ export async function applyManualAlbumDiscogsMatch(
       ...identity,
       year: year ?? album.year,
       kind,
-      discogsUrl: trimmed,
+      discogsUrl: canonicalUrl,
       ...(invalidateCover ? { coverPath: null, coverSource: null } : {}),
     },
   });
@@ -1323,7 +1353,7 @@ export async function applyManualAlbumDiscogsMatch(
     }
   }
 
-  return { ok: true, album: { id: updated.id, title: updated.title, kind: updated.kind, year: updated.year, discogsUrl: trimmed } };
+  return { ok: true, album: { id: updated.id, title: updated.title, kind: updated.kind, year: updated.year, discogsUrl: canonicalUrl } };
 }
 
 // --- Physical copies (vinyl, CD, ...) ---

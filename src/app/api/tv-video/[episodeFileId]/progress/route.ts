@@ -3,6 +3,7 @@
 // for one episode file (resume position, completed, play count).
 
 import { NextResponse } from "next/server";
+import { readJsonObject } from "@/lib/validation";
 import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
@@ -38,12 +39,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ episodeFileId:
   const userId = await currentUserId();
   if (!userId) return NextResponse.json({ error: "not signed in" }, { status: 401 });
 
-  let body: { positionSecs?: unknown; durationSecs?: unknown; isNewPlay?: unknown };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
-  }
+  const parsed = await readJsonObject(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body as { positionSecs?: unknown; durationSecs?: unknown; isNewPlay?: unknown };
   const { positionSecs, durationSecs, isNewPlay } = body;
   if (typeof positionSecs !== "number" || !Number.isFinite(positionSecs) || positionSecs < 0) {
     return NextResponse.json({ error: "positionSecs must be a non-negative number" }, { status: 400 });

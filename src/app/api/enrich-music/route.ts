@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { hideError } from "@/lib/user-facing-error";
 import { runMusicEnrich } from "@/lib/discogs";
 import { requireOwnerOrResponse } from "@/lib/require-member";
 
@@ -14,6 +15,6 @@ export async function POST() {
     return NextResponse.json({ runId });
   } catch (err) {
     console.error("[api/enrich-music] failed to start enrich:", err);
-    return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
+    return NextResponse.json({ error: hideError(err, "api/enrich-music", "Couldn't start that run — the app owner can find the details in the server logs.") }, { status: 500 });
   }
 }

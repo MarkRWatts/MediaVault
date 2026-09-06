@@ -7,11 +7,16 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { requireMemberOrResponse } from "@/lib/require-member";
 
 const POSTER_CACHE_DIR = process.env.POSTER_CACHE_DIR ?? "./data/posters";
 const COVERS_DIR = path.resolve(POSTER_CACHE_DIR, "covers");
 
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ copyId: string }> }) {
+  // Household-member gated — see /api/cover for why that's possible now.
+  const gate = await requireMemberOrResponse();
+  if (gate instanceof NextResponse) return gate;
+
   const { copyId: copyIdParam } = await ctx.params;
   const copyId = Number(copyIdParam);
   if (!Number.isInteger(copyId)) {
@@ -44,7 +49,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ copyId: st
   return new NextResponse(new Uint8Array(buf), {
     headers: {
       "Content-Type": "image/jpeg",
-      "Cache-Control": "public, max-age=0, must-revalidate",
+      "Cache-Control": "private, max-age=0, must-revalidate",
       ETag: etag,
     },
   });

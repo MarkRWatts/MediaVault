@@ -20,6 +20,7 @@
 
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { fetchImage } from "@/lib/fetch-image";
 
 const AUDIODB_BASE = "https://www.theaudiodb.com/api/v1/json";
 const FANART_BASE = "https://webservice.fanart.tv/v3/music";
@@ -42,15 +43,7 @@ async function getJson(url: string): Promise<unknown> {
 }
 
 async function downloadImage(url: string): Promise<Buffer | null> {
-  try {
-    const res = await fetch(url, { headers: { "User-Agent": USER_AGENT }, signal: AbortSignal.timeout(60_000) });
-    if (!res.ok) return null;
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.byteLength < MIN_IMAGE_BYTES) return null;
-    return buf;
-  } catch {
-    return null;
-  }
+  return fetchImage(url, { headers: { "User-Agent": USER_AGENT }, timeoutMs: 60_000, minBytes: MIN_IMAGE_BYTES });
 }
 
 async function cacheArtistImage(artistId: number, kind: "photo" | "backdrop", buf: Buffer): Promise<string> {

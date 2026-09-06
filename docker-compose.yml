@@ -43,6 +43,15 @@ services:
       # Folder id (GUID) of the Adult library in Jellyfin's dashboard —
       # required for the /account opt-in to grant/revoke that folder.
       ADULT_JELLYFIN_FOLDER_ID: ${ADULT_JELLYFIN_FOLDER_ID:-}
+      # How many people may stream through Jellyfin at once (each is a
+      # transcode on the Jellyfin host). Default 2 in code if unset.
+      JELLYFIN_MAX_SESSIONS: ${JELLYFIN_MAX_SESSIONS:-}
+      # Caps on this app's OWN ffmpeg work (the parked local pipeline and
+      # the album player's FLAC/WAV remuxes) — see src/lib/semaphore.ts.
+      # Defaults in code: 2 prepares (+6 queued), 4 audio remuxes.
+      PREPARE_CONCURRENCY: ${PREPARE_CONCURRENCY:-}
+      PREPARE_QUEUE: ${PREPARE_QUEUE:-}
+      AUDIO_CONCURRENCY: ${AUDIO_CONCURRENCY:-}
       # BetterAuth (see HOUSEHOLDS_PLAN.md) — session/cookie signing key.
       # Generate with `npx @better-auth/cli secret`; set in .env.docker on
       # the VM, never committed.

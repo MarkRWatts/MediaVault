@@ -17,6 +17,26 @@ import { syncJellyfinAdultAccess, type AdultSyncResult } from "@/lib/jellyfin";
 
 export type AdultAccessState = { error?: string; jellyfin?: AdultSyncResult } | null;
 
+// A failed sync's message is Jellyfin's ("Jellyfin POST /Users/<guid>/Policy
+// -> HTTP 401", "ADULT_JELLYFIN_FOLDER_ID is not set") — server detail that
+// belongs in the log, not on a member's /account. One sentence for them.
+const JELLYFIN_SYNC_FAILED =
+  "Jellyfin couldn't be updated — the app owner can find the details in the server logs.";
+
+function publicSyncResult(result: AdultSyncResult): AdultSyncResult {
+  if (result.status !== "error") return result;
+  console.error("[adult] Jellyfin adult-access sync failed:", result.message);
+  return { status: "error", message: JELLYFIN_SYNC_FAILED };
+}
+
+async function syncForUser(user: { id: string; email: string; jellyfinUserId: string | null }, enabled: boolean) {
+  return publicSyncResult(
+    await syncJellyfinAdultAccess(user, enabled).catch(
+      (err): AdultSyncResult => ({ status: "error", message: err instanceof Error ? err.message : String(err) }),
+    ),
+  );
+}
+
 async function currentUserOrThrow(): Promise<{ id: string; email: string; jellyfinUserId: string | null }> {
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session?.user?.id) throw new Error("Not signed in");
@@ -42,9 +62,7 @@ export async function toggleAdultLibraryAccess(
   await prisma.user.update({ where: { id: user.id }, data: { adultLibraryAccess: enabled } });
   await logAudit({ userId: user.id, action: "user.adult-library-access" });
 
-  const jellyfin = await syncJellyfinAdultAccess(user, enabled).catch(
-    (err): AdultSyncResult => ({ status: "error", message: err instanceof Error ? err.message : String(err) }),
-  );
+  const jellyfin = await syncForUser(user, enabled);
 
   revalidatePath("/account");
   revalidatePath("/", "layout"); // nav visibility depends on this flag
@@ -62,9 +80,7 @@ export async function retryJellyfinAdultSync(
   const dbUser = await prisma.user.findUnique({ where: { id: user.id }, select: { adultLibraryAccess: true } });
   const enabled = dbUser?.adultLibraryAccess ?? false;
 
-  const jellyfin = await syncJellyfinAdultAccess(user, enabled).catch(
-    (err): AdultSyncResult => ({ status: "error", message: err instanceof Error ? err.message : String(err) }),
-  );
+  const jellyfin = await syncForUser(user, enabled);
 
   revalidatePath("/account");
   return { jellyfin };

@@ -5,30 +5,26 @@
 // Album must already exist in the digital library.
 
 import { NextRequest, NextResponse } from "next/server";
+import { hideError } from "@/lib/user-facing-error";
+import { withLookupSlot } from "@/lib/semaphore";
 import { prisma } from "@/lib/db";
 import { PhysicalFields, PhysicalMedium, physicalCopyData, attachPhysicalRelease, normalizeBarcode } from "@/lib/discogs";
 import { requireOwnerOrResponse } from "@/lib/require-member";
-import { MAX_NOTES_LENGTH, MAX_TEXT_LENGTH, readTextFields } from "@/lib/validation";
+import { MAX_NOTES_LENGTH, MAX_TEXT_LENGTH, readJsonObject, readTextFields } from "@/lib/validation";
 
 function parseMedium(value: unknown): PhysicalMedium | null {
   const medium = typeof value === "string" ? value.toUpperCase() : "";
   return medium === "VINYL" || medium === "CD" ? medium : null;
 }
 
-export async function POST(req: NextRequest) {
+async function handlePost(req: NextRequest) {
   const member = await requireOwnerOrResponse();
   if (member instanceof NextResponse) return member;
 
-  let body: Record<string, unknown>;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
-  }
+  const parsed = await readJsonObject(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body;
 
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    return NextResponse.json({ error: "expected a JSON object" }, { status: 400 });
-  }
   const id = Number.isSafeInteger(body.id) ? (body.id as number) : null;
 
   // Extract copy fields with defensive typing and length caps (the schema's
@@ -132,10 +128,13 @@ export async function DELETE(req: NextRequest) {
     }
     // Any other error is unexpected
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "unknown error" },
+      { error: hideError(error, "api/physical") },
       { status: 500 }
     );
   }
 
   return NextResponse.json({ ok: true });
 }
+
+// Bounded concurrency for owner-driven metadata lookups — see lookupSemaphore.
+export const POST = withLookupSlot(handlePost);

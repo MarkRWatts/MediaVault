@@ -12,23 +12,13 @@ import { verifySessionCookie } from "@/lib/session-cookie";
 // non-public path 307s to /signin?callbackURL=... in both.
 //
 // PUBLIC_PATHS/PAGE_PUBLIC_PATH_PREFIXES (signin/signup/invite) come from a
-// shared module also used by layout.tsx, so the two can't drift. The API
-// exceptions below are proxy-only — they're not pages, so layout.tsx has no
-// reason to know about them.
-// /api/auth/ is BetterAuth's own routes — needed to sign in at all.
-// /api/poster/, /api/cover/, and /api/physical-cover/ are poster/cover art
-// (not the actual video or audio content) — deliberately excluded because
-// next/image's built-in optimizer fetches these SERVER-SIDE (via its own
-// internal /_next/image round-trip) and that internal fetch carries none of
-// the original browser's cookies, so gating them broke every optimized
-// poster/cover image app-wide the moment /api was brought into scope below.
-const PUBLIC_PATH_PREFIXES = [
-  ...PAGE_PUBLIC_PATH_PREFIXES,
-  "/api/auth/",
-  "/api/poster/",
-  "/api/cover/",
-  "/api/physical-cover/",
-];
+// shared module also used by layout.tsx, so the two can't drift. The one
+// API exception is proxy-only — it's not a page, so layout.tsx has no
+// reason to know about it: /api/auth/ is BetterAuth's own routes, needed to
+// sign in at all. Nothing else is reachable signed-out — the poster/cover
+// routes used to be, for next/image's cookie-less server-side optimizer
+// fetch; the app renders plain <img> tags now, so they're gated too.
+const PUBLIC_PATH_PREFIXES = [...PAGE_PUBLIC_PATH_PREFIXES, "/api/auth/"];
 
 // BetterAuth plugin HTTP endpoints this app never calls from a browser —
 // every organization operation goes through server actions (which call
@@ -105,8 +95,10 @@ export async function proxy(request: NextRequest) {
   return NextResponse.next({ request: { headers: requestHeaders } });
 }
 
-// Static assets and icons stay public; everything else (including /api,
-// aside from the /api/auth/ prefix excluded above) goes through the check.
+// Only the build's static chunks and the icons the sign-in page itself
+// shows stay public; everything else — /api, the image routes, files under
+// public/, even /_next/image (unused now that no next/image sources
+// remain) — goes through the check.
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|apple-icon.png|icon.png|logo.png).*)"],
+  matcher: ["/((?!_next/static|favicon.ico|apple-icon.png|icon.png|logo.png).*)"],
 };

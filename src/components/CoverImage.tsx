@@ -7,25 +7,26 @@
 // an artist with no owned album that has cover art yet) rather than a path.
 // Bakes in aspect-square (cover art is always 1:1, unlike film posters where
 // the app leaves the ratio to the caller).
+//
+// A plain <img>, not next/image — see PosterImage for why.
 
 import { useState } from "react";
-import Image from "next/image";
 
 export default function CoverImage({
   albumId,
   version,
   title,
-  sizes,
   priority = false,
   className = "",
   src,
 }: {
   albumId: number | null;
   /** Cover cache-buster (queries' coverVersion). A cover's bytes can change
-   *  under the same /api/cover/<id> URL, and next/image caches derivatives
-   *  per URL — versioning the URL is what actually invalidates them. */
+   *  under the same /api/cover/<id> URL and the browser caches per URL —
+   *  versioning the URL is what actually invalidates it. */
   version?: number | null;
   title: string;
+  /** Accepted for compatibility; no longer used without next/image. */
   sizes?: string;
   priority?: boolean;
   className?: string;
@@ -47,13 +48,13 @@ export default function CoverImage({
           </span>
         </div>
       ) : (
-        <Image
+        <img
           src={resolvedSrc}
           alt={`${title} cover art`}
-          fill
-          sizes={sizes ?? "(min-width: 1280px) 160px, (min-width: 640px) 20vw, 40vw"}
-          priority={priority}
-          className="object-cover"
+          loading={priority ? "eager" : "lazy"}
+          fetchPriority={priority ? "high" : "auto"}
+          decoding="async"
+          className="absolute inset-0 h-full w-full object-cover"
           onError={() => setErrored(true)}
         />
       )}

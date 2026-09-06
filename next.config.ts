@@ -60,15 +60,12 @@ const nextConfig: NextConfig = {
     return [{ source: "/(.*)", headers: securityHeaders }];
   },
   images: {
-    // localPatterns is an allow-list: every local next/image source must be
-    // listed once any pattern exists. Covers carry a ?v= cache-buster (their
-    // bytes can change under a fixed URL — see CoverImage), so that pattern
-    // omits `search`; posters are immutable TMDB paths with no query.
-    localPatterns: [
-      { pathname: "/api/cover/**" },
-      { pathname: "/api/physical-cover/**" },
-      { pathname: "/api/poster/**", search: "" },
-    ],
+    // No next/image anywhere: its optimizer fetches sources server-side
+    // with none of the browser's cookies, which forced the poster/cover
+    // routes to be public. Artwork is served pre-sized from the cache
+    // (TMDB's w342/w780, 300-600px covers) through plain <img> tags behind
+    // the session check instead, and the optimizer endpoint is switched off.
+    unoptimized: true,
   },
 };
 

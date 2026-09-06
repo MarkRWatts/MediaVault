@@ -17,6 +17,7 @@
 // reconciled.
 
 import { NextResponse } from "next/server";
+import { readJsonObject } from "@/lib/validation";
 import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
@@ -75,12 +76,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ versionId: str
     return NextResponse.json({ error: "not signed in" }, { status: 401 });
   }
 
-  let body: Partial<ProgressBody>;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
-  }
+  const parsed = await readJsonObject(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body as Partial<ProgressBody>;
 
   const { positionSecs, durationSecs, isNewPlay } = body;
   if (typeof positionSecs !== "number" || !Number.isFinite(positionSecs) || positionSecs < 0) {
@@ -89,6 +87,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ versionId: str
   if (typeof durationSecs !== "number" || !Number.isFinite(durationSecs) || durationSecs <= 0) {
     return NextResponse.json({ error: "durationSecs must be a positive number" }, { status: 400 });
   }
+
+  // Unknown version -> 404 (the upsert would otherwise hit the foreign key
+  // and surface as a generic 500), same as the episode twin.
+  const exists = await prisma.version.findUnique({ where: { id: versionId }, select: { id: true } });
+  if (!exists) return NextResponse.json({ error: "not found" }, { status: 404 });
 
   // See WATCH_COMPLETED_RATIO's doc comment for why 95%.
   const completed = positionSecs >= durationSecs * WATCH_COMPLETED_RATIO;

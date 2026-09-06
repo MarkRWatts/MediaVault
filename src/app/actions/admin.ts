@@ -14,6 +14,7 @@ import { requireOwner } from "@/lib/require-member";
 import { generateCode, formatCode } from "@/lib/access";
 import { sendAccessCodeEmail } from "@/lib/email";
 import { logAudit } from "@/lib/audit";
+import { userFacingError } from "@/lib/user-facing-error";
 import { isTooLong } from "@/lib/validation";
 import { MAX_ROWS, rowCapMessage } from "@/lib/limits";
 import { revokeSessionsIfNoLongerVouched } from "@/lib/revoke-sessions";
@@ -73,7 +74,7 @@ export async function registerJellyfinClient(
       headers: await headers(),
     });
   } catch (err) {
-    return { error: err instanceof Error ? err.message : "Couldn't register the client." };
+    return { error: userFacingError(err, "Couldn't register the client.", "admin") };
   }
   if (!client.client_secret) return { error: "Client was created but no secret came back — odd." };
 
@@ -140,7 +141,7 @@ export async function mintAccessCode(
       await logAudit({ userId: admin.userId, action: "access-code.mint", entityId: row.id });
       return {
         error: `Code ${formatCode(row.code)} was minted, but the email failed: ${
-          err instanceof Error ? err.message : "unknown error"
+          userFacingError(err, "unknown error", "admin")
         }`,
       };
     }
@@ -172,7 +173,7 @@ export async function sendCodeEmail(
       code: formatCode(row.code),
     });
   } catch (err) {
-    return { error: err instanceof Error ? err.message : "Couldn't send that email." };
+    return { error: userFacingError(err, "Couldn't send that email.", "admin") };
   }
 
   await prisma.accessCode.update({ where: { id: row.id }, data: { sentAt: new Date() } });

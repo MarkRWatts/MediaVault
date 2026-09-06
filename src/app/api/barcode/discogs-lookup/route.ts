@@ -5,19 +5,18 @@
 // master if it has one, otherwise the release itself).
 
 import { NextRequest, NextResponse } from "next/server";
+import { withLookupSlot } from "@/lib/semaphore";
+import { readJsonObject } from "@/lib/validation";
 import { resolveDiscogsUrl } from "@/lib/scan-resolve";
 import { requireOwnerOrResponse } from "@/lib/require-member";
 
-export async function POST(req: NextRequest) {
+async function handlePost(req: NextRequest) {
   const member = await requireOwnerOrResponse();
   if (member instanceof NextResponse) return member;
 
-  let body: Record<string, unknown>;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
-  }
+  const parsed = await readJsonObject(req);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body;
 
   const url = typeof body.url === "string" ? body.url.trim() : "";
   if (!url) {
@@ -34,3 +33,6 @@ export async function POST(req: NextRequest) {
     );
   }
 }
+
+// Bounded concurrency for owner-driven metadata lookups — see lookupSemaphore.
+export const POST = withLookupSlot(handlePost);

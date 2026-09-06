@@ -6,6 +6,9 @@ import {
   normalizeBarcode,
   artistNameVariants,
   normalizeAlbumTitle,
+  DISCOGS_URL_RE,
+  DISCOGS_MASTER_URL_RE,
+  canonicalDiscogsUrl,
 } from "./discogs";
 
 describe("parseDiscogsDuration", () => {
@@ -166,5 +169,39 @@ describe("classifyDiscogsKind", () => {
   it("no usable signal at all -> OTHER", () => {
     expect(classifyDiscogsKind("Untitled", "Vinyl, 7\", Single")).toBe("OTHER");
     expect(classifyDiscogsKind("Untitled", null)).toBe("OTHER");
+  });
+});
+
+describe("Discogs URL patterns are anchored", () => {
+  it("accept real release/master URLs in the forms people paste", () => {
+    for (const u of [
+      "https://www.discogs.com/release/249504-Rick-Astley-Never-Gonna-Give-You-Up",
+      "https://discogs.com/release/249504",
+      "http://www.discogs.com/release/249504?ev=rr",
+      "discogs.com/release/249504-Title",
+      "https://www.discogs.com/fr/release/249504",
+    ]) {
+      expect(DISCOGS_URL_RE.exec(u)?.[1], u).toBe("249504");
+    }
+    expect(DISCOGS_MASTER_URL_RE.exec("https://www.discogs.com/master/96559-Rick-Astley-Whenever-You-Need-Somebody")?.[1]).toBe("96559");
+    expect(DISCOGS_MASTER_URL_RE.exec("discogs.com/master/96559")?.[1]).toBe("96559");
+  });
+
+  it("refuse anything that merely CONTAINS a Discogs path", () => {
+    for (const u of [
+      "javascript:alert(1)//discogs.com/release/1",
+      "https://evil.example/login?next=discogs.com/release/1",
+      "https://evil.example/discogs.com/release/1",
+      "  https://www.discogs.com/release/1 trailing words",
+      "https://www.discogs.com/artist/72872-Rick-Astley",
+    ]) {
+      expect(DISCOGS_URL_RE.test(u), u).toBe(false);
+      expect(DISCOGS_MASTER_URL_RE.test(u), u).toBe(false);
+    }
+  });
+
+  it("canonicalDiscogsUrl is the only stored form", () => {
+    expect(canonicalDiscogsUrl("release", 249504)).toBe("https://www.discogs.com/release/249504");
+    expect(canonicalDiscogsUrl("master", 96559)).toBe("https://www.discogs.com/master/96559");
   });
 });

@@ -35,6 +35,7 @@ import { slugify } from "@/lib/slug";
 import { isTooLong } from "@/lib/validation";
 import { claimAccessCode, releaseClaim } from "@/lib/access";
 import { logAudit } from "@/lib/audit";
+import { userFacingError } from "@/lib/user-facing-error";
 import { MAX_ROWS, rowCapMessage } from "@/lib/limits";
 import { revokeSessionsForUser, revokeSessionsIfNoLongerVouched } from "@/lib/revoke-sessions";
 
@@ -83,7 +84,7 @@ export async function createHousehold(
     });
   } catch (err) {
     await releaseClaim(claim.codeId);
-    return { error: err instanceof Error ? err.message : "Couldn't create that household." };
+    return { error: userFacingError(err, "Couldn't create that household.", "household") };
   }
   await logAudit({ userId: session.user.id, householdId: household.id, action: "household.create" });
 
@@ -142,7 +143,7 @@ export async function createInvitation(
       body: { organizationId: householdId, email, role: "member" },
     });
   } catch (err) {
-    return { error: err instanceof Error ? err.message : "Couldn't send that invite." };
+    return { error: userFacingError(err, "Couldn't send that invite.", "household") };
   }
   await logAudit({ userId, householdId, action: "invite.create" });
 
@@ -176,7 +177,7 @@ export async function cancelInvitation(
       body: { invitationId },
     });
   } catch (err) {
-    return { error: err instanceof Error ? err.message : "Couldn't cancel that invite." };
+    return { error: userFacingError(err, "Couldn't cancel that invite.", "household") };
   }
   if (invitation) await revokeSessionsIfNoLongerVouched(invitation.email);
   await logAudit({ userId, householdId, action: "invite.cancel", entityId: invitationId });
@@ -205,13 +206,13 @@ export async function acceptInvitation(formData: FormData): Promise<void> {
 
   const invitation = await prisma.invitation.findUnique({ where: { id: token } });
   if (!invitation || invitation.status !== "pending" || invitation.expiresAt < new Date()) {
-    redirect(`/invite/${token}?error=invalid`);
+    redirect(`/invite/${encodeURIComponent(token)}?error=invalid`);
   }
 
   const existingMembership = await prisma.member.findFirst({ where: { userId } });
   if (existingMembership) {
     redirect(
-      `/invite/${token}?error=${
+      `/invite/${encodeURIComponent(token)}?error=${
         existingMembership.householdId === invitation.householdId
           ? "already-member"
           : "already-in-household"
@@ -262,7 +263,7 @@ export async function acceptInvitation(formData: FormData): Promise<void> {
       { isolationLevel: "Serializable" },
     );
   } catch {
-    redirect(`/invite/${token}?error=already-in-household`);
+    redirect(`/invite/${encodeURIComponent(token)}?error=already-in-household`);
   }
   await logAudit({ userId, householdId: invitation.householdId, action: "household.member-join" });
 
@@ -292,7 +293,7 @@ export async function updateHouseholdName(
       body: { organizationId: householdId, data: { name } },
     });
   } catch (err) {
-    return { error: err instanceof Error ? err.message : "Couldn't rename your household." };
+    return { error: userFacingError(err, "Couldn't rename your household.", "household") };
   }
   await logAudit({ userId, householdId, action: "household.rename" });
 
@@ -320,7 +321,7 @@ export async function promoteToOwner(
       body: { organizationId: householdId, memberId, role: "owner" },
     });
   } catch (err) {
-    return { error: err instanceof Error ? err.message : "Couldn't promote that member." };
+    return { error: userFacingError(err, "Couldn't promote that member.", "household") };
   }
   await logAudit({ userId, householdId, action: "member.promote", entityId: memberId });
 
@@ -346,7 +347,7 @@ export async function demoteToMember(
       body: { organizationId: householdId, memberId, role: "member" },
     });
   } catch (err) {
-    return { error: err instanceof Error ? err.message : "Couldn't demote that member." };
+    return { error: userFacingError(err, "Couldn't demote that member.", "household") };
   }
   await logAudit({ userId, householdId, action: "member.demote", entityId: memberId });
 
@@ -379,7 +380,7 @@ export async function removeMember(
       body: { organizationId: householdId, memberIdOrEmail: memberId },
     });
   } catch (err) {
-    return { error: err instanceof Error ? err.message : "Couldn't remove that member." };
+    return { error: userFacingError(err, "Couldn't remove that member.", "household") };
   }
   await revokeSessionsForUser(target.userId);
   await logAudit({ userId, householdId, action: "member.remove", entityId: memberId });

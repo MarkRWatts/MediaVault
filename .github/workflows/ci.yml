@@ -6,13 +6,19 @@ on:
   pull_request:
     branches: [main]
 
+# The workflow only reads the repo; nothing here needs to write back.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # Actions pinned to commit SHAs (tag comments for humans): a moving
+      # tag is a supply-chain hole for a workflow that runs on every PR.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -22,6 +28,11 @@ jobs:
       # the Prisma adapter instead, on better-sqlite3@^13, so the conflict
       # is harmless. Same fix as the Dockerfile's builder stage.
       - run: npm ci --legacy-peer-deps
+      # Production dependencies only: a new high/critical advisory in
+      # anything the running app ships fails the build. Dev-only findings
+      # (Prisma CLI's tree etc.) don't block, but are worth a look now and
+      # then with a plain `npm audit`.
+      - run: npm audit --omit=dev --audit-level=high
       - run: npx prisma generate
       # tsc relies on the LayoutProps/PageProps helper types that Next.js
       # writes to .next/types — `next dev`/`next build` generate them as a
