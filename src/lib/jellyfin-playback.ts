@@ -135,6 +135,79 @@ export function playbackFromInfo(info: PlaybackInfoResponse): JellyfinPlayback {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Playback-session registry — what the proxy is allowed to forward.
+//
+// Every proxied request goes upstream with the ADMIN API key, so the query
+// string a browser hands the proxy must not be forwarded as-is: a member
+// could rewrite VideoBitrate, MediaSourceId, subtitle burn-in options and
+// anything else Jellyfin's transcoder reads from the URL. Instead,
+// startJellyfinPlayback records the exact query Jellyfin issued for each
+// PlaySessionId (bound to the viewer's device id), and proxyJellyfinHls
+// forwards THAT — the client's copy only names the session and supplies the
+// two per-segment numbers Jellyfin appends to segment URLs.
+//
+// Process-local, like the ffmpeg job maps: a restart forgets in-flight
+// sessions, and a player mid-stream gets a 409 and starts a fresh session.
+// ---------------------------------------------------------------------------
+
+interface RegisteredSession {
+  deviceId: string;
+  query: URLSearchParams;
+  touchedAt: number;
+}
+
+const SESSION_TTL_MS = 12 * 60 * 60_000; // longer than any film, shorter than forever
+const g = globalThis as unknown as { __mvJfSessions?: Map<string, RegisteredSession> };
+const sessions = (g.__mvJfSessions ??= new Map());
+
+/** The only client-supplied parameters that reach Jellyfin: the per-segment
+ *  timing hints it writes into each segment URL of its media playlist. */
+export const PER_SEGMENT_PARAMS = ["runtimeTicks", "actualSegmentLengthTicks"] as const;
+const TICKS_RE = /^\d{1,20}$/;
+
+function sweepSessions(now: number): void {
+  for (const [id, s] of sessions) if (now - s.touchedAt > SESSION_TTL_MS) sessions.delete(id);
+}
+
+/** Remember Jellyfin's own query for this session. `playlistPath` is the
+ *  "master.m3u8?<query>" from playbackFromInfo (key already stripped). */
+export function registerPlaybackSession(playSessionId: string, deviceId: string, playlistPath: string, now = Date.now()): void {
+  const at = playlistPath.indexOf("?");
+  const query = new URLSearchParams(at >= 0 ? playlistPath.slice(at + 1) : "");
+  sessions.set(playSessionId, { deviceId, query, touchedAt: now });
+  if (sessions.size % 50 === 0) sweepSessions(now);
+}
+
+export function forgetPlaybackSession(playSessionId: string): void {
+  sessions.delete(playSessionId);
+}
+
+/** The stored query for a session this device started, or null. */
+export function lookupPlaybackSession(playSessionId: string, deviceId: string, now = Date.now()): URLSearchParams | null {
+  const s = sessions.get(playSessionId);
+  if (!s || s.deviceId !== deviceId) return null;
+  if (now - s.touchedAt > SESSION_TTL_MS) {
+    sessions.delete(playSessionId);
+    return null;
+  }
+  s.touchedAt = now;
+  return s.query;
+}
+
+/** Pure: the stored query, plus the client's per-segment ticks when they
+ *  are plain integers. Everything else the client sent is ignored. */
+export function buildUpstreamQuery(stored: URLSearchParams, client: URLSearchParams): URLSearchParams {
+  const out = new URLSearchParams(stored);
+  for (const name of PER_SEGMENT_PARAMS) {
+    const v = client.get(name);
+    if (v !== null && TICKS_RE.test(v)) out.set(name, v);
+  }
+  out.delete("ApiKey");
+  out.delete("api_key");
+  return out;
+}
+
 function authHeaders(deviceId: string): Record<string, string> {
   return {
     Authorization: `MediaBrowser Token="${jellyfinApiKey()}", Client="MediaVault", Device="MediaVault web", DeviceId="${deviceId}", Version="1"`,
@@ -178,12 +251,15 @@ export async function startJellyfinPlayback(opts: {
     }),
   });
   if (!res.ok) throw new Error(`Jellyfin PlaybackInfo -> HTTP ${res.status}`);
-  return playbackFromInfo((await res.json()) as PlaybackInfoResponse);
+  const playback = playbackFromInfo((await res.json()) as PlaybackInfoResponse);
+  registerPlaybackSession(playback.playSessionId, opts.deviceId, playback.playlistPath);
+  return playback;
 }
 
 /** Tell Jellyfin the viewer has gone so it stops the transcoder now rather
  *  than at its own idle timeout. Best effort. */
 export async function stopJellyfinPlayback(deviceId: string, playSessionId: string): Promise<void> {
+  forgetPlaybackSession(playSessionId);
   const url = new URL(`${jellyfinBaseUrl()}/Videos/ActiveEncodings`);
   url.searchParams.set("deviceId", deviceId);
   url.searchParams.set("playSessionId", playSessionId);
@@ -197,13 +273,18 @@ export const JF_PATH_RE = /^(?:master\.m3u8|main\.m3u8|hls1\/main\/-?\d{1,6}\.(?
 /**
  * Fetch one playlist or segment from Jellyfin for the item and hand it back
  * as a Response the route can return. Playlists come back rewritten with
- * the API key removed; segments stream through untouched.
+ * the API key removed; segments stream through untouched. The client's
+ * query only identifies the session (PlaySessionId) — the query actually
+ * sent upstream is the one Jellyfin issued for it (see the registry above),
+ * so a member can't steer the admin-authenticated transcoder.
  */
 export async function proxyJellyfinHls(itemId: string, subpath: string, query: URLSearchParams, deviceId: string): Promise<Response> {
   if (!JF_PATH_RE.test(subpath)) return new Response("not found", { status: 404 });
-  query.delete("ApiKey");
-  query.delete("api_key");
-  const upstream = `${jellyfinBaseUrl()}/videos/${itemId}/${subpath}?${query.toString()}`;
+  const stored = lookupPlaybackSession(query.get("PlaySessionId") ?? "", deviceId);
+  if (!stored) {
+    return new Response("no such playback session for this viewer — start one with /jf/session", { status: 409 });
+  }
+  const upstream = `${jellyfinBaseUrl()}/videos/${itemId}/${subpath}?${buildUpstreamQuery(stored, query).toString()}`;
   const res = await fetch(upstream, { headers: authHeaders(deviceId) });
   if (!res.ok) return new Response(`Jellyfin ${res.status}`, { status: res.status === 404 ? 404 : 502 });
 

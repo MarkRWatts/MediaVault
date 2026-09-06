@@ -8,20 +8,33 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createPhysicalOnlyAlbum, type PhysicalFields, type PhysicalMedium } from "@/lib/discogs";
 import { requireOwnerOrResponse } from "@/lib/require-member";
+import { MAX_NOTES_LENGTH, MAX_TEXT_LENGTH, readTextFields } from "@/lib/validation";
 
 export async function POST(req: NextRequest) {
   const member = await requireOwnerOrResponse();
   if (member instanceof NextResponse) return member;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let body: any;
+  let body: Record<string, unknown>;
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ error: "expected a JSON object" }, { status: 400 });
+  }
 
-  const discogsUrl = typeof body.discogsUrl === "string" ? body.discogsUrl : "";
+  const text = readTextFields(body, {
+    discogsUrl: 512,
+    format: MAX_TEXT_LENGTH,
+    catalogNo: MAX_TEXT_LENGTH,
+    label: MAX_TEXT_LENGTH,
+    condition: MAX_TEXT_LENGTH,
+    notes: MAX_NOTES_LENGTH,
+  });
+  if (!text.ok) return NextResponse.json({ error: text.error }, { status: 400 });
+
+  const discogsUrl = text.values.discogsUrl ?? "";
   if (!discogsUrl) {
     return NextResponse.json({ error: "expected { discogsUrl: string }" }, { status: 400 });
   }
@@ -33,13 +46,13 @@ export async function POST(req: NextRequest) {
   const medium: PhysicalMedium = rawMedium;
 
   const fields: PhysicalFields = {
-    format: typeof body.format === "string" ? body.format : undefined,
-    discs: Number.isInteger(body.discs) ? body.discs : undefined,
-    catalogNo: typeof body.catalogNo === "string" ? body.catalogNo : undefined,
-    label: typeof body.label === "string" ? body.label : undefined,
-    pressYear: Number.isInteger(body.pressYear) ? body.pressYear : undefined,
-    condition: typeof body.condition === "string" ? body.condition : undefined,
-    notes: typeof body.notes === "string" ? body.notes : undefined,
+    format: text.values.format,
+    discs: Number.isSafeInteger(body.discs) ? (body.discs as number) : undefined,
+    catalogNo: text.values.catalogNo,
+    label: text.values.label,
+    pressYear: Number.isSafeInteger(body.pressYear) ? (body.pressYear as number) : undefined,
+    condition: text.values.condition,
+    notes: text.values.notes,
   };
 
   const result = await createPhysicalOnlyAlbum(discogsUrl, medium, fields);

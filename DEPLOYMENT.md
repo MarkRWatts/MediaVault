@@ -392,11 +392,22 @@ must **not** be backed up: a backup that includes it is 10+ GB every time,
 and a daily one fills an 80 GB VM disk in about a week. Exclude it, and
 rotate old archives:
 
+The database inside that archive is sensitive: live session tokens, the
+JWKS private key that signs Jellyfin's OIDC tokens, the OAuth client
+secret, hashed sign-in codes. Keep the archives owner-only and, ideally,
+encrypted at rest — [`age`](https://github.com/FiloSottile/age) with a
+passphrase is the least ceremony (`apt install age`):
+
 ```bash
-docker run --rm -v mediavault_data:/data -v "$HOME":/backup alpine \
-  tar czf /backup/mediavault-data-$(date +%Y-%m-%d).tar.gz -C /data --exclude=./video-cache .
-find "$HOME" -maxdepth 1 -name 'mediavault-data-*.tar.gz' -mtime +14 -delete
+umask 077
+docker run --rm -v mediavault_data:/data alpine \
+  tar cz -C /data --exclude=./video-cache . \
+  | age -p -o "$HOME/mediavault-data-$(date +%Y-%m-%d).tar.gz.age"
+find "$HOME" -maxdepth 1 -name 'mediavault-data-*.tar.gz*' -mtime +14 -delete
 ```
+
+(Without `age`, drop the pipe and write the `.tar.gz` directly — the
+`umask 077` alone already stops other accounts on the VM reading it.)
 
 The cache layout changed with HLS playback (`PLAYBACK_PLAN.md`): entries are
 now directories (`film-42/`, `film-42-remote/`), and the app sweeps
@@ -411,9 +422,13 @@ the app is running — anything mid-play is re-prepared on the next Play:
 docker run --rm -v mediavault_data:/data alpine sh -c 'rm -rf /data/video-cache/*'
 ```
 
-To restore from a backup:
+To restore from a backup (then `chown -R 1000:1000` the volume again — see
+[Running as non-root](#running-as-non-root)):
 
 ```bash
+age -d "$HOME/mediavault-data-YYYY-MM-DD.tar.gz.age" \
+  | docker run --rm -i -v mediavault_data:/data alpine tar xz -C /data
+# or, for an unencrypted archive:
 docker run --rm -v mediavault_data:/data -v "$HOME":/backup alpine tar xzf /backup/mediavault-data-YYYY-MM-DD.tar.gz -C /data
 ```
 

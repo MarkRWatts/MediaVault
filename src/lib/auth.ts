@@ -140,6 +140,18 @@ export const auth = betterAuth({
     oauthProvider({
       loginPage: "/signin",
       consentPage: "/consent",
+      // OAuth client management (create/update/delete/rotate-secret/list)
+      // is app-owner only. The plugin's default lets ANY signed-in user
+      // register a client: a member could mint one named "Jellyfin" with
+      // their own redirect URI and phish other members' ID tokens through
+      // /consent. The one legitimate client (Jellyfin's SSO plugin) is
+      // registered by the owner from /admin via the server-only admin
+      // endpoint, which this hook doesn't gate anyway.
+      clientPrivileges: async ({ user }) => {
+        if (!user?.id) return false;
+        const row = await prisma.user.findUnique({ where: { id: user.id }, select: { isAppOwner: true } });
+        return row?.isAppOwner === true;
+      },
     }),
     // Passkeys (see PASSKEYS_PLAN.md) — a second credential for EXISTING
     // accounts, never a sign-up path: registration needs a signed-in (and

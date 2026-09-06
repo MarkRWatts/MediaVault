@@ -18,14 +18,44 @@ export type RunKind =
   | "ENRICH_SCENE"
   | "JELLYFIN";
 
+// Per-kind mutex around the check-then-create below. The findFirst and the
+// create are two statements, so two POSTs arriving together (a double-click
+// on the Run button was enough) both saw "no RUNNING row" and both started —
+// two scans deleting each other's "stale" rows, two enrich passes doubling
+// the outbound API traffic. Every writer is in this process, so an
+// in-memory chain per kind is a complete fix; it never holds across the
+// run itself, only across the guard.
+const guardLocks = new Map<RunKind, Promise<void>>();
+
+async function withGuardLock<T>(kind: RunKind, fn: () => Promise<T>): Promise<T> {
+  const previous = guardLocks.get(kind) ?? Promise.resolve();
+  let release!: () => void;
+  const mine = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  guardLocks.set(kind, previous.then(() => mine));
+  await previous;
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (guardLocks.get(kind) === mine) guardLocks.delete(kind);
+  }
+}
+
 /**
  * Guard + register a new run of `kind`. If a RUNNING run of the same kind
  * started less than 30 minutes ago exists, refuses to start a second one and
  * returns it (`started: false`). A RUNNING run older than that is treated as
  * stuck (e.g. the process died mid-scan) — it's marked FAILED and a fresh run
- * is created.
+ * is created. Serialised per kind (see withGuardLock) so concurrent callers
+ * can't both slip past the check.
  */
-export async function guardAndCreateRun(kind: RunKind): Promise<{ run: ScanRun; started: boolean }> {
+export function guardAndCreateRun(kind: RunKind): Promise<{ run: ScanRun; started: boolean }> {
+  return withGuardLock(kind, () => guardAndCreateRunUnlocked(kind));
+}
+
+async function guardAndCreateRunUnlocked(kind: RunKind): Promise<{ run: ScanRun; started: boolean }> {
   const existing = await prisma.scanRun.findFirst({
     where: { kind, status: "RUNNING" },
     orderBy: { startedAt: "desc" },

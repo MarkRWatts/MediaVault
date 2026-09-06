@@ -93,3 +93,43 @@ describe("deviceProfile and proxy path allow-list", () => {
     }
   });
 });
+
+describe("playback-session registry (what the proxy may forward)", async () => {
+  const { registerPlaybackSession, lookupPlaybackSession, forgetPlaybackSession, buildUpstreamQuery } = await import("./jellyfin-playback");
+
+  it("forwards Jellyfin's stored query, not the client's, plus the per-segment ticks", () => {
+    registerPlaybackSession("ps-a", "dev-1", "master.m3u8?DeviceId=dev-1&MediaSourceId=ms1&VideoBitrate=4000000&PlaySessionId=ps-a");
+    const stored = lookupPlaybackSession("ps-a", "dev-1")!;
+    expect(stored).not.toBeNull();
+    const client = new URLSearchParams(
+      "DeviceId=dev-1&MediaSourceId=OTHER&VideoBitrate=999999999&SubtitleMethod=Encode&PlaySessionId=ps-a&runtimeTicks=120000000&actualSegmentLengthTicks=60000000&api_key=STOLEN",
+    );
+    const out = buildUpstreamQuery(stored, client);
+    expect(out.get("MediaSourceId")).toBe("ms1");
+    expect(out.get("VideoBitrate")).toBe("4000000");
+    expect(out.get("SubtitleMethod")).toBeNull();
+    expect(out.get("api_key")).toBeNull();
+    expect(out.get("runtimeTicks")).toBe("120000000");
+    expect(out.get("actualSegmentLengthTicks")).toBe("60000000");
+  });
+
+  it("ignores non-numeric per-segment values", () => {
+    const out = buildUpstreamQuery(new URLSearchParams("a=1"), new URLSearchParams("runtimeTicks=../x&actualSegmentLengthTicks=-5"));
+    expect(out.toString()).toBe("a=1");
+  });
+
+  it("binds a session to the device that started it, and forgets on stop", () => {
+    registerPlaybackSession("ps-b", "dev-1", "master.m3u8?PlaySessionId=ps-b");
+    expect(lookupPlaybackSession("ps-b", "dev-2")).toBeNull();
+    expect(lookupPlaybackSession("ps-b", "dev-1")).not.toBeNull();
+    expect(lookupPlaybackSession("nope", "dev-1")).toBeNull();
+    forgetPlaybackSession("ps-b");
+    expect(lookupPlaybackSession("ps-b", "dev-1")).toBeNull();
+  });
+
+  it("expires an idle session", () => {
+    registerPlaybackSession("ps-c", "dev-1", "master.m3u8?PlaySessionId=ps-c", 0);
+    expect(lookupPlaybackSession("ps-c", "dev-1", 11 * 60 * 60_000)).not.toBeNull(); // touched at 11h
+    expect(lookupPlaybackSession("ps-c", "dev-1", 24 * 60 * 60_000)).toBeNull(); // 13h after the touch
+  });
+});
