@@ -30,10 +30,15 @@ services:
     # Next's own cache and scratch space, so the root filesystem is
     # read-only and those two get in-memory tmpfs mounts. /tmp also hosts
     # the audio WAV fallback's temp files and tsx's compile cache.
+    # mode=1777 is explicit on both: a tmpfs mount comes up root-owned, and
+    # without it /app/.next/cache landed as 0755 root — the non-root server
+    # then hit EACCES on every image-optimizer cache write (images still
+    # served, just never cached). /tmp happens to inherit 1777 from the
+    # image; spelling it out keeps the two from drifting.
     read_only: true
     tmpfs:
-      - /tmp:size=512m
-      - /app/.next/cache:size=256m
+      - /tmp:size=512m,mode=1777
+      - /app/.next/cache:size=256m,mode=1777
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     healthcheck:
