@@ -73,11 +73,30 @@ export default async function InvitePage({
               <p className="w-full rounded-md border border-missing-border bg-missing-bg px-4 py-3 text-sm text-missing">
                 You&apos;re already part of this household.
               </p>
+            ) : error === "name-too-long" ? (
+              <p className="w-full rounded-md border border-missing-border bg-missing-bg px-4 py-3 text-sm text-missing">
+                That name is a bit long — try a shorter one.
+              </p>
             ) : null}
 
             {session?.user ? (
-              <form action={acceptInvitation} className="w-full">
+              <form action={acceptInvitation} className="flex w-full flex-col gap-3">
                 <input type="hidden" name="token" value={token} />
+                {/* An invitee's first sign-in created a nameless account (the
+                    sign-in page asks for email only) — this is where they
+                    tell the household who they are. Skipped for anyone who
+                    already has a name; acceptInvitation never overwrites. */}
+                {!session.user.name && (
+                  <input
+                    type="text"
+                    name="name"
+                    required
+                    maxLength={256}
+                    autoComplete="name"
+                    placeholder="Your name, as the household will see it"
+                    className="w-full rounded-md border border-border bg-bg-elevated-2 px-4 py-2.5 text-sm text-text placeholder:text-text-faint focus-visible:outline-none"
+                  />
+                )}
                 <SubmitButton pendingText="Joining…">Join {invitation.household.name}</SubmitButton>
               </form>
             ) : (
