@@ -10,9 +10,11 @@ export const dynamic = "force-dynamic";
 import Link from "next/link";
 import CoverImage from "@/components/CoverImage";
 import { getFormatsReport } from "@/lib/queries-music";
+import { requireMemberOrRedirect } from "@/lib/require-member";
 import { digitalSourceLabel } from "@/lib/digital-source";
 
 export default async function MusicFormatsPage() {
+  await requireMemberOrRedirect();
   const { totals, vinylByFormat, digitalSources, crate, unconfirmed } = await getFormatsReport();
 
   const tiles: { label: string; value: number }[] = [

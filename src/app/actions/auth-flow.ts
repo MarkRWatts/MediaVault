@@ -23,6 +23,15 @@ import { prisma } from "@/lib/db";
 import { normalizeCode } from "@/lib/access";
 import { safeCallbackURL } from "@/lib/safe-callback";
 import { isTooLong } from "@/lib/validation";
+import { clientIpFromHeaders, forwardedIpHeaders } from "@/lib/client-ip";
+import {
+  OTP_CHECK_PER_EMAIL,
+  OTP_CHECK_PER_IP,
+  OTP_SEND_COOLDOWN_PER_EMAIL,
+  OTP_SEND_PER_EMAIL,
+  OTP_SEND_PER_IP,
+  throttle,
+} from "@/lib/throttle";
 import {
   OTP_EMAIL_COOKIE,
   OTP_NAME_COOKIE,
@@ -53,6 +62,30 @@ const FLOW_COOKIE_OPTS = {
 const SIGNUP_CODE_FAILED =
   "That code isn't valid for this email — check both for typos, or ask whoever sent it for a fresh one.";
 
+const TOO_MANY_SENDS = "Too many sign-in codes requested — wait a little and try again.";
+const TOO_MANY_CHECKS = "Too many attempts — wait a few minutes, then request a fresh code.";
+
+// App-side throttles for the OTP flow (src/lib/throttle.ts). These actions
+// call auth.api.* in-process, which skips BetterAuth's own HTTP-handler
+// rate limiter entirely, so without this a code could be re-requested and
+// re-guessed without limit (and any allowed address email-bombed). Keyed on
+// the address AND the client IP; an unresolvable IP shares one "unknown"
+// bucket rather than going unthrottled.
+async function otpSendAllowed(email: string): Promise<boolean> {
+  const ip = clientIpFromHeaders(await headers()) ?? "unknown";
+  // Order matters: the per-IP check is consumed last so a refused per-email
+  // send doesn't also burn IP budget (and vice versa is acceptable).
+  if (!throttle("otp-send-cooldown", OTP_SEND_COOLDOWN_PER_EMAIL).consume(email).allowed) return false;
+  if (!throttle("otp-send-email", OTP_SEND_PER_EMAIL).consume(email).allowed) return false;
+  return throttle("otp-send-ip", OTP_SEND_PER_IP).consume(ip).allowed;
+}
+
+async function otpCheckAllowed(email: string): Promise<boolean> {
+  const ip = clientIpFromHeaders(await headers()) ?? "unknown";
+  if (!throttle("otp-check-email", OTP_CHECK_PER_EMAIL).consume(email).allowed) return false;
+  return throttle("otp-check-ip", OTP_CHECK_PER_IP).consume(ip).allowed;
+}
+
 /** /signin step 1 (also the step-2 "resend" button). Always lands on the
  *  enter-the-code step whether or not an email was actually sent — the
  *  web-of-trust gate inside lib/otp-email.ts silently skips strangers, and
@@ -72,6 +105,8 @@ export async function requestOTP(formData: FormData): Promise<void> {
   const oauthQuery = String(formData.get("oauthQuery") ?? "");
   const params = `&callbackURL=${encodeURIComponent(callbackURL)}${oauthQuery ? `&oauthQuery=${encodeURIComponent(oauthQuery)}` : ""}`;
   if (!email) redirect(`${page}?error=MissingEmail${params}`);
+  if (isTooLong(email)) redirect(`${page}?error=MissingEmail${params}`);
+  if (!(await otpSendAllowed(email))) redirect(`${page}?error=TooMany${params}`);
 
   try {
     await auth.api.sendVerificationOTP({
@@ -118,6 +153,7 @@ export async function beginSignup(
     row.redeemedCount < row.maxRedemptions &&
     (!row.redeemableUntil || row.redeemableUntil > new Date());
   if (!live || row.email !== email) return { error: SIGNUP_CODE_FAILED, values };
+  if (!(await otpSendAllowed(email))) return { error: TOO_MANY_SENDS, values };
 
   try {
     await auth.api.sendVerificationOTP({
@@ -151,7 +187,10 @@ export async function verifyOTP(
 
   const otp = String(formData.get("otp") ?? "").trim();
   if (!otp) return { error: "Enter the code from your email." };
-  const name = store.get(OTP_NAME_COOKIE)?.value;
+  if (!(await otpCheckAllowed(email))) return { error: TOO_MANY_CHECKS };
+  // Re-bounded on read: the cookie is httpOnly but not tamper-proof, and
+  // this value ends up as a brand-new account's name.
+  const name = store.get(OTP_NAME_COOKIE)?.value?.slice(0, 256);
   // Present only when /signin was reached via BetterAuth's oauthProvider
   // `loginPage` (a Jellyfin SSO sign-in, say) — see HOUSEHOLDS_PLAN.md
   // "Jellyfin SSO".
@@ -183,6 +222,10 @@ export async function verifyOTP(
         headers: {
           "Content-Type": "application/json",
           "user-agent": reqHeaders.get("user-agent") ?? "",
+          // Carry the real client's IP through, or BetterAuth's rate
+          // limiter sees every SSO sign-in as 127.0.0.1 — one shared
+          // 3-per-minute bucket for everyone.
+          ...forwardedIpHeaders(reqHeaders),
         },
         body: JSON.stringify({ email, otp, name: name || undefined, oauth_query: oauthQuery }),
       });

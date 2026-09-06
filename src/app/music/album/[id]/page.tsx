@@ -7,6 +7,7 @@ import { notFound } from "next/navigation";
 import AlbumFormatTabs from "@/components/AlbumFormatTabs";
 import DeleteAlbumButton from "@/components/DeleteAlbumButton";
 import { getAlbumDetail } from "@/lib/queries-music";
+import { requireMemberOrRedirect } from "@/lib/require-member";
 import type { AlbumTrackView } from "@/lib/queries-music";
 import { qualityLabel, qualityLabelVerbose } from "@/lib/audio-quality";
 import { titleCase } from "@/lib/text-case";
@@ -65,6 +66,7 @@ export default async function AlbumPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  await requireMemberOrRedirect();
   const { id } = await params;
   const albumId = Number(id);
   if (!Number.isInteger(albumId)) notFound();

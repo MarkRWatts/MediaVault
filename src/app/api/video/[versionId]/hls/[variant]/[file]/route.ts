@@ -11,11 +11,17 @@ import { NextResponse } from "next/server";
 import { promises as fs } from "node:fs";
 import { PLAYLIST_NAME, parseVariant, resolveHlsFile, resolveHlsPlaylist } from "@/lib/video-cache";
 import { serveFile } from "@/lib/serve-file";
+import { requireMemberOrResponse } from "@/lib/require-member";
 
 export async function GET(
   req: Request,
   ctx: { params: Promise<{ versionId: string; variant: string; file: string }> },
 ) {
+  // Checked on every request, segments included — a segment URL must not
+  // outlive the viewer's membership (same posture as the adult twin).
+  const gate = await requireMemberOrResponse();
+  if (gate instanceof NextResponse) return gate;
+
   const { versionId: versionIdParam, variant: variantParam, file } = await ctx.params;
   const versionId = Number(versionIdParam);
   if (!Number.isInteger(versionId)) {

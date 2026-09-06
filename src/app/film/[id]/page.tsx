@@ -5,8 +5,7 @@ import PosterImage from "@/components/PosterImage";
 import VersionCard from "@/components/VersionCard";
 import FilmActions from "@/components/FilmActions";
 import CertificationBadge from "@/components/CertificationBadge";
-import { headers } from "next/headers";
-import { auth } from "@/lib/auth";
+import { requireMemberOrRedirect } from "@/lib/require-member";
 import { getFilmUserState } from "@/lib/film-user-state";
 import { audioTrackLabel } from "@/lib/audio-track-label";
 import CollectionStrip from "@/components/CollectionStrip";
@@ -19,6 +18,7 @@ export default async function FilmPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const { userId } = await requireMemberOrRedirect();
   const { id } = await params;
   const filmId = Number(id);
   if (!Number.isInteger(filmId)) notFound();
@@ -44,10 +44,9 @@ export default async function FilmPage({
     ? { versionId: primary.id, source: playSourceFor(primary)!, audioTracks: audioOptionsFor(primary) }
     : null;
 
-  const session = await auth.api.getSession({ headers: await headers() });
-  const userState = session?.user?.id
+  const userState = userId
     ? await getFilmUserState(
-        session.user.id,
+        userId,
         film.id,
         film.versions.map((v) => v.id),
       )

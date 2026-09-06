@@ -4,12 +4,16 @@
 // short idle window instead of the full ten minutes (see noteViewerLeft in
 // src/lib/video-cache.ts). Anyone else still watching re-arms it with their
 // next segment request, so this only ever hurries along work nobody wants.
-// Signed-in session enforced by src/proxy.ts like every /api route.
+// Household-member gated like every other /api/video route.
 
 import { NextResponse } from "next/server";
 import { noteViewerLeft, parseVariant } from "@/lib/video-cache";
+import { requireMemberOrResponse } from "@/lib/require-member";
 
 export async function POST(req: Request, ctx: { params: Promise<{ versionId: string }> }) {
+  const gate = await requireMemberOrResponse();
+  if (gate instanceof NextResponse) return gate;
+
   const { versionId: versionIdParam } = await ctx.params;
   const versionId = Number(versionIdParam);
   if (!Number.isInteger(versionId)) {

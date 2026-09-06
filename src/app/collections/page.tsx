@@ -4,8 +4,10 @@ export const dynamic = "force-dynamic";
 
 import CollectionCard from "@/components/CollectionCard";
 import { getCollections } from "@/lib/queries";
+import { requireMemberOrRedirect } from "@/lib/require-member";
 
 export default async function CollectionsPage() {
+  await requireMemberOrRedirect();
   const collections = await getCollections();
 
   return (

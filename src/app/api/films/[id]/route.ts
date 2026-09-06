@@ -5,8 +5,12 @@
 
 import { NextResponse } from "next/server";
 import { getFilmDetail } from "@/lib/queries";
+import { requireMemberOrResponse } from "@/lib/require-member";
 
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const gate = await requireMemberOrResponse();
+  if (gate instanceof NextResponse) return gate;
+
   const { id: idParam } = await ctx.params;
   const id = Number(idParam);
   if (!Number.isInteger(id)) {

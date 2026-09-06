@@ -36,6 +36,7 @@ import { isTooLong } from "@/lib/validation";
 import { claimAccessCode, releaseClaim } from "@/lib/access";
 import { logAudit } from "@/lib/audit";
 import { MAX_ROWS, rowCapMessage } from "@/lib/limits";
+import { revokeSessionsForUser, revokeSessionsIfNoLongerVouched } from "@/lib/revoke-sessions";
 
 // `sent` is unused today (the app-only invite branch that produced it isn't
 // ported), kept only so the shared ActionState shape stays a superset of
@@ -46,7 +47,18 @@ export type ActionState = { error?: string; sent?: string } | null;
  *  becomes its owner. Delegates to BetterAuth's create-organization
  *  endpoint, which enforces the same single-household-per-user check as
  *  invite acceptance (auth.ts's organizationLimit) and assigns creatorRole
- *  ("owner"). */
+ *  ("owner").
+ *
+ *  Called as a *system action* — body.userId, no request headers — rather
+ *  than on behalf of the session. The plugin's user-facing create path is
+ *  switched off (auth.ts: allowUserToCreateOrganization: () => false) and
+ *  its HTTP surface is 404'd in src/proxy.ts, because the access-code claim
+ *  just above is the whole growth gate of the web of trust and only THIS
+ *  function performs it; the plugin's own endpoint would have let any bare
+ *  session skip it. The system-action form is the plugin's documented
+ *  server-side escape hatch: it resolves the user from body.userId and
+ *  bypasses allowUserToCreateOrganization while still applying
+ *  organizationLimit and creatorRole. */
 export async function createHousehold(
   _prevState: ActionState,
   formData: FormData,
@@ -67,8 +79,7 @@ export async function createHousehold(
   let household: { id: string };
   try {
     household = await auth.api.createOrganization({
-      headers: await headers(),
-      body: { name, slug: slugify(name) },
+      body: { name, slug: slugify(name), userId: session.user.id },
     });
   } catch (err) {
     await releaseClaim(claim.codeId);
@@ -149,6 +160,16 @@ export async function cancelInvitation(
   const invitationId = String(formData.get("invitationId") ?? "").trim();
   if (!invitationId) return { error: "Missing invite." };
 
+  // Read the email before the cancel: a pending invite is one of the things
+  // that vouches an address into the web of trust, and withdrawing it must
+  // also end any session that address already holds (see
+  // src/lib/revoke-sessions.ts) — the plugin's cancel doesn't know about
+  // sessions at all.
+  const invitation = await prisma.invitation.findFirst({
+    where: { id: invitationId, householdId },
+    select: { email: true },
+  });
+
   try {
     await auth.api.cancelInvitation({
       headers: await headers(),
@@ -157,6 +178,7 @@ export async function cancelInvitation(
   } catch (err) {
     return { error: err instanceof Error ? err.message : "Couldn't cancel that invite." };
   }
+  if (invitation) await revokeSessionsIfNoLongerVouched(invitation.email);
   await logAudit({ userId, householdId, action: "invite.cancel", entityId: invitationId });
 
   revalidatePath("/account");
@@ -335,7 +357,10 @@ export async function demoteToMember(
 /** Remove someone from the household — revokes access only. Delegates the
  *  actual removal to BetterAuth's own remove-member endpoint (owner-only
  *  by permission, and it already refuses to remove the household's last
- *  remaining owner). */
+ *  remaining owner), then ends every session they hold: the plugin only
+ *  clears the session's active-household pointer, which would otherwise
+ *  leave a removed member browsing the library until their session
+ *  expired (see src/lib/revoke-sessions.ts). */
 export async function removeMember(
   _prevState: ActionState,
   formData: FormData,
@@ -356,6 +381,7 @@ export async function removeMember(
   } catch (err) {
     return { error: err instanceof Error ? err.message : "Couldn't remove that member." };
   }
+  await revokeSessionsForUser(target.userId);
   await logAudit({ userId, householdId, action: "member.remove", entityId: memberId });
 
   revalidatePath("/account");

@@ -7,11 +7,15 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { requireMemberOrResponse } from "@/lib/require-member";
 
 const POSTER_CACHE_DIR = process.env.POSTER_CACHE_DIR ?? "./data/posters";
 const ARTISTS_DIR = path.resolve(POSTER_CACHE_DIR, "artists");
 
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ artistId: string; kind: string }> }) {
+  const gate = await requireMemberOrResponse();
+  if (gate instanceof NextResponse) return gate;
+
   const { artistId: artistIdParam, kind } = await ctx.params;
   const artistId = Number(artistIdParam);
   if (!Number.isInteger(artistId) || (kind !== "photo" && kind !== "backdrop")) {

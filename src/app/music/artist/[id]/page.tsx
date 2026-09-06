@@ -6,6 +6,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import CoverImage from "@/components/CoverImage";
 import { getArtistDetail } from "@/lib/queries-music";
+import { requireMemberOrRedirect } from "@/lib/require-member";
 import type { ArtistCatalogueAlbum, ArtistShelfAlbum } from "@/lib/queries-music";
 
 const KIND_LABELS: Record<string, string> = {
@@ -149,6 +150,7 @@ export default async function ArtistPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  await requireMemberOrRedirect();
   const { id } = await params;
   const artistId = Number(id);
   if (!Number.isInteger(artistId)) notFound();

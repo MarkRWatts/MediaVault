@@ -8,8 +8,12 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getTrackAudio } from "@/lib/audio-stream";
+import { requireMemberOrResponse } from "@/lib/require-member";
 
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ trackId: string }> }) {
+  const gate = await requireMemberOrResponse();
+  if (gate instanceof NextResponse) return gate;
+
   const { trackId: trackIdParam } = await ctx.params;
   const trackId = Number(trackIdParam);
   if (!Number.isInteger(trackId)) {

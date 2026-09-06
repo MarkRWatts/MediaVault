@@ -20,6 +20,29 @@ export const auth = betterAuth({
   database: prismaAdapter(prisma, { provider: "sqlite" }),
   secret: process.env.BETTER_AUTH_SECRET,
   baseURL: process.env.BETTER_AUTH_URL,
+  // Always on (the default only enables it when NODE_ENV=production, which
+  // a misconfigured deploy could miss). Memory storage is fine: one
+  // container. Note this only covers BetterAuth's HTTP handler
+  // (/api/auth/*); the app's own sign-in server actions call auth.api.*
+  // in-process and are throttled separately — see src/lib/throttle.ts and
+  // app/actions/auth-flow.ts.
+  rateLimit: {
+    enabled: process.env.NODE_ENV !== "test",
+  },
+  advanced: {
+    ipAddress: {
+      // Behind Cloudflare Tunnel the client IP is `cf-connecting-ip`, set by
+      // the edge and not overridable by the client. The default
+      // (`x-forwarded-for` only) fails there: Cloudflare and Caddy both
+      // append to that header, and BetterAuth refuses a multi-valued XFF
+      // as untrustworthy, so every request collapsed into ONE shared
+      // rate-limit bucket — three OTP requests from anyone locked everyone
+      // out for a minute. `x-forwarded-for` stays as the fallback for the
+      // LAN/Caddy path (single-valued there). Same order as
+      // src/lib/client-ip.ts.
+      ipAddressHeaders: ["cf-connecting-ip", "x-forwarded-for"],
+    },
+  },
   databaseHooks: {
     // Gate every session creation (i.e. every successful sign-in), not just
     // first-time account creation — this is the authoritative check. A
@@ -60,6 +83,15 @@ export const auth = betterAuth({
         },
       },
       creatorRole: "owner",
+      // Nobody creates a household through the plugin's own endpoint — the
+      // access-code claim that gates household creation (the web of trust's
+      // growth control, HOUSEHOLDS_PLAN.md) lives in app/actions/household.ts,
+      // and the plugin's HTTP /organization/create knew nothing about it.
+      // createHousehold now calls auth.api.createOrganization as a *system*
+      // action (body.userId, no request headers), which the plugin permits
+      // regardless of this setting; src/proxy.ts additionally 404s the
+      // whole /api/auth/organization/* surface.
+      allowUserToCreateOrganization: () => false,
       // One household per user (not the plugin's default multi-org model).
       // organizationLimit only guards the *create* path — the accept-invite
       // path (Phase 4) needs its own "already a member elsewhere" check in
@@ -89,6 +121,10 @@ export const auth = betterAuth({
       // for their email, so plain sign-in works for them with no access
       // code involved.
       disableSignUp: false,
+      // Hash the code at rest: the default keeps it in plaintext in the
+      // Verification table for its 10-minute life, so a copy of the SQLite
+      // file (or a backup) taken in that window is a usable sign-in code.
+      storeOTP: "hashed",
       sendVerificationOTP: sendSignInOTP,
     }),
     // Lets Jellyfin's jellyfin-plugin-sso authenticate against this

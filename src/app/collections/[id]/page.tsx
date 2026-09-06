@@ -2,12 +2,14 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import TimelineFilmRow from "@/components/TimelineFilmRow";
 import { getCollectionDetail } from "@/lib/queries";
+import { requireMemberOrRedirect } from "@/lib/require-member";
 
 export default async function CollectionPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
+  await requireMemberOrRedirect();
   const { id } = await params;
   const collectionId = Number(id);
   if (!Number.isInteger(collectionId)) notFound();

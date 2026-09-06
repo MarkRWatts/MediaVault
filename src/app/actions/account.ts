@@ -13,6 +13,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { logAudit } from "@/lib/audit";
 import { isTooLong } from "@/lib/validation";
+import { revokeSessionsForHousehold } from "@/lib/revoke-sessions";
 
 export type ActionState = { error?: string } | null;
 
@@ -84,6 +85,12 @@ export async function deleteAccount(
         };
       }
 
+      // Everyone else in the household loses their membership with it, and
+      // membership is what vouches them into the app — end their sessions
+      // now rather than letting them keep browsing on a stale one until it
+      // expires (see src/lib/revoke-sessions.ts). Before the delete, while
+      // the Member rows still say who they are.
+      await revokeSessionsForHousehold(household.id);
       // No child tables to clear first — deleting the household cascades
       // to Member/Invitation via the schema's own onDelete: Cascade.
       await prisma.household.delete({ where: { id: household.id } });
