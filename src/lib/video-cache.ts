@@ -31,6 +31,7 @@ import { promises as fs, rmSync } from "node:fs";
 import path from "node:path";
 import { prisma } from "@/lib/db";
 import { probe } from "@/lib/ffprobe";
+import { prepareSemaphore } from "@/lib/semaphore";
 import {
   planVideoPlayback,
   buildHlsFfmpegArgs,
@@ -571,13 +572,35 @@ async function prepare(
   if (!sourceAbsPath) throw new Error(`${mediaRootEnv(kind)} not set or file path outside its root`);
   const sourceStat = await fs.stat(sourceAbsPath); // throws if the file's missing on disk
 
+  // Bounded concurrency (src/lib/semaphore.ts): a whole-file ffmpeg run per
+  // job, at most PREPARE_CONCURRENCY at once, a short queue behind that,
+  // and a refusal beyond it (surfaces as this key's jobError). Taken before
+  // any disk work so a queued job leaves no half-made directory around.
+  const releaseSlot = await prepareSemaphore().acquire();
+  try {
+    await prepareWithSlot(kind, id, variant, media, plan, key, sourceAbsPath, sourceStat.size);
+  } finally {
+    releaseSlot();
+  }
+}
+
+async function prepareWithSlot(
+  kind: MediaKind,
+  id: number,
+  variant: Variant,
+  media: ResolvedMedia,
+  plan: VideoPlaybackPlan,
+  key: string,
+  sourceAbsPath: string,
+  sourceBytes: number,
+): Promise<void> {
   const dir = entryDir(key);
   // A leftover from a killed/interrupted previous run could still be here —
   // start clean rather than have a player see a mix of old and new segments.
   await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
   await fs.mkdir(dir, { recursive: true });
 
-  await makeRoomFor(estimateOutputBytes(sourceStat.size, media.durationSecs, variant));
+  await makeRoomFor(estimateOutputBytes(sourceBytes, media.durationSecs, variant));
 
   const sourceChannels =
     plan.audioStreamIndex !== null

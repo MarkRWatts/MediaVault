@@ -6,8 +6,9 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { PhysicalFields, PhysicalMedium, physicalCopyData, attachPhysicalRelease } from "@/lib/discogs";
+import { PhysicalFields, PhysicalMedium, physicalCopyData, attachPhysicalRelease, normalizeBarcode } from "@/lib/discogs";
 import { requireOwnerOrResponse } from "@/lib/require-member";
+import { MAX_NOTES_LENGTH, MAX_TEXT_LENGTH, readTextFields } from "@/lib/validation";
 
 function parseMedium(value: unknown): PhysicalMedium | null {
   const medium = typeof value === "string" ? value.toUpperCase() : "";
@@ -25,18 +26,45 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
 
-  const id = Number.isInteger(body.id) ? (body.id as number) : null;
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ error: "expected a JSON object" }, { status: 400 });
+  }
+  const id = Number.isSafeInteger(body.id) ? (body.id as number) : null;
 
-  // Extract copy fields with defensive typing
+  // Extract copy fields with defensive typing and length caps (the schema's
+  // columns are unbounded text; this is the only backstop).
+  const text = readTextFields(body, {
+    format: MAX_TEXT_LENGTH,
+    catalogNo: MAX_TEXT_LENGTH,
+    label: MAX_TEXT_LENGTH,
+    condition: MAX_TEXT_LENGTH,
+    notes: MAX_NOTES_LENGTH,
+    barcode: 64,
+    discogsRef: 512,
+  });
+  if (!text.ok) return NextResponse.json({ error: text.error }, { status: 400 });
+
   const fields: PhysicalFields = {};
-  if (typeof body.format === "string") fields.format = body.format;
-  if (Number.isInteger(body.discs)) fields.discs = body.discs as number;
-  if (typeof body.catalogNo === "string") fields.catalogNo = body.catalogNo;
-  if (typeof body.label === "string") fields.label = body.label;
-  if (Number.isInteger(body.pressYear)) fields.pressYear = body.pressYear as number;
-  if (typeof body.condition === "string") fields.condition = body.condition;
-  if (typeof body.notes === "string") fields.notes = body.notes;
-  if (typeof body.barcode === "string") fields.barcode = body.barcode;
+  if (text.values.format !== undefined) fields.format = text.values.format;
+  if (Number.isSafeInteger(body.discs)) fields.discs = body.discs as number;
+  if (text.values.catalogNo !== undefined) fields.catalogNo = text.values.catalogNo;
+  if (text.values.label !== undefined) fields.label = text.values.label;
+  if (Number.isSafeInteger(body.pressYear)) fields.pressYear = body.pressYear as number;
+  if (text.values.condition !== undefined) fields.condition = text.values.condition;
+  if (text.values.notes !== undefined) fields.notes = text.values.notes;
+  // Stored in the same digits-only form the scanner's lookups query by
+  // (normalizeBarcode), or a barcode saved with spaces never matches a later
+  // scan. An empty string still means "clear it".
+  if (text.values.barcode !== undefined) {
+    const raw = text.values.barcode.trim();
+    if (raw === "") {
+      fields.barcode = "";
+    } else {
+      const normalized = normalizeBarcode(raw);
+      if (!normalized) return NextResponse.json({ error: "barcode must be 8, 12, 13 or 14 digits" }, { status: 400 });
+      fields.barcode = normalized;
+    }
+  }
 
   let copyId: number;
   let medium: PhysicalMedium;
@@ -74,7 +102,7 @@ export async function POST(req: NextRequest) {
   // pressing-specific tracklist/cover (see attachPhysicalRelease). Kept
   // separate from the fields above and reported as a non-fatal error — the
   // metadata save above already succeeded either way.
-  const discogsRef = typeof body.discogsRef === "string" ? body.discogsRef.trim() : "";
+  const discogsRef = (text.values.discogsRef ?? "").trim();
   let trackImportError: string | undefined;
   if (discogsRef) {
     const attached = await attachPhysicalRelease(copyId, discogsRef);

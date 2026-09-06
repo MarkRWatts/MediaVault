@@ -10,7 +10,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { findOrCreateFilmByTmdbId } from "@/lib/tmdb";
-import { createPhysicalOnlyAlbum, type PhysicalMedium } from "@/lib/discogs";
+import { createPhysicalOnlyAlbum, normalizeBarcode, type PhysicalMedium } from "@/lib/discogs";
 import { requireOwnerOrResponse } from "@/lib/require-member";
 
 const FILM_MEDIA = new Set(["DVD", "BLURAY", "UHD"]);
@@ -26,7 +26,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
 
-  const barcode = typeof body.barcode === "string" ? body.barcode : undefined;
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ error: "expected a JSON object" }, { status: 400 });
+  }
+
+  // Digits-only, as every barcode lookup expects (normalizeBarcode); a
+  // scanned code that doesn't reduce to a valid EAN/UPC length is refused
+  // rather than stored as free text.
+  let barcode: string | undefined;
+  if (typeof body.barcode === "string" && body.barcode.trim() !== "") {
+    const normalized = normalizeBarcode(body.barcode);
+    if (!normalized) return NextResponse.json({ error: "barcode must be 8, 12, 13 or 14 digits" }, { status: 400 });
+    barcode = normalized;
+  }
 
   if (body.type === "film") {
     const tmdbId = Number(body.tmdbId);

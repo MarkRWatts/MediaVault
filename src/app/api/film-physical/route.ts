@@ -6,6 +6,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireOwnerOrResponse } from "@/lib/require-member";
+import { normalizeBarcode } from "@/lib/discogs";
+import { MAX_NOTES_LENGTH, readTextFields } from "@/lib/validation";
 
 const MEDIA = new Set(["DVD", "BLURAY", "UHD"]);
 
@@ -24,6 +26,9 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ error: "expected a JSON object" }, { status: 400 });
+  }
 
   const filmId = Number(body.filmId);
   const medium = parseMedium(body.medium);
@@ -36,8 +41,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "unknown film id" }, { status: 404 });
   }
 
-  const notes = typeof body.notes === "string" ? body.notes : undefined;
-  const barcode = typeof body.barcode === "string" ? body.barcode : undefined;
+  const text = readTextFields(body, { notes: MAX_NOTES_LENGTH, barcode: 64 });
+  if (!text.ok) return NextResponse.json({ error: text.error }, { status: 400 });
+  const notes = text.values.notes;
+  // Digits-only, as the scanner's lookups expect; "" clears it.
+  let barcode = text.values.barcode?.trim();
+  if (barcode) {
+    const normalized = normalizeBarcode(barcode);
+    if (!normalized) return NextResponse.json({ error: "barcode must be 8, 12, 13 or 14 digits" }, { status: 400 });
+    barcode = normalized;
+  }
 
   const result = await prisma.filmPhysicalCopy.upsert({
     where: { filmId_medium: { filmId, medium } },

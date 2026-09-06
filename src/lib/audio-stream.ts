@@ -31,8 +31,15 @@ import { Readable } from "node:stream";
 import os from "node:os";
 import path from "node:path";
 import { prisma } from "@/lib/db";
+import { audioSemaphore } from "@/lib/semaphore";
 
 const execFileAsync = promisify(execFile);
+
+/** getTrackAudio's answer when every remux slot is taken (see
+ *  src/lib/semaphore.ts): the route turns this into a 503 + Retry-After
+ *  and the player tries again, rather than this process spawning an
+ *  unbounded number of ffmpegs. Passthrough tracks never hit this. */
+export const AUDIO_BUSY = Symbol("audio-busy");
 
 export interface TrackAudio {
   stream: ReadableStream<Uint8Array>;
@@ -93,9 +100,13 @@ const WAV_ARGS = ["-map", "0:a:0", "-c:a", "pcm_s16le", "-f", "wav"];
 // emits `error` on the ChildProcess — forward that onto stdout too, so a
 // spawn failure surfaces as a stream error (caught client-side as a failed
 // fetch) instead of a request that hangs forever.
-function spawnToWebStream(cmd: string, args: string[]): ReadableStream<Uint8Array> {
+function spawnToWebStream(cmd: string, args: string[], onDone: () => void = () => {}): ReadableStream<Uint8Array> {
   const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "ignore"] });
-  child.on("error", (err) => child.stdout.destroy(err));
+  child.on("error", (err) => {
+    child.stdout.destroy(err);
+    onDone();
+  });
+  child.on("close", onDone);
   return Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>;
 }
 
@@ -103,10 +114,14 @@ function fileToWebStream(readStream: ReadStream): ReadableStream<Uint8Array> {
   return Readable.toWeb(readStream) as ReadableStream<Uint8Array>;
 }
 
-async function flacRemuxStream(absPath: string, musicRoot: string): Promise<ReadableStream<Uint8Array> | null> {
+async function flacRemuxStream(
+  absPath: string,
+  musicRoot: string,
+  onDone: () => void,
+): Promise<ReadableStream<Uint8Array> | null> {
   const hasLocal = await detectLocalFfmpeg();
   if (hasLocal) {
-    return spawnToWebStream("ffmpeg", ["-i", absPath, ...FLAC_REMUX_ARGS]);
+    return spawnToWebStream("ffmpeg", ["-i", absPath, ...FLAC_REMUX_ARGS], onDone);
   }
 
   const dockerImage = process.env.FFPROBE_DOCKER_IMAGE;
@@ -116,7 +131,9 @@ async function flacRemuxStream(absPath: string, musicRoot: string): Promise<Read
   if (rel.startsWith("..") || path.isAbsolute(rel)) return null;
   const containerIn = `/probe-root/${rel.split(path.sep).join("/")}`;
 
-  return spawnToWebStream("docker", [
+  return spawnToWebStream(
+    "docker",
+    [
     "run",
     "--rm",
     "--entrypoint",
@@ -127,7 +144,9 @@ async function flacRemuxStream(absPath: string, musicRoot: string): Promise<Read
     "-i",
     containerIn,
     ...FLAC_REMUX_ARGS,
-  ]);
+    ],
+    onDone,
+  );
 }
 
 // WAV can't be streamed straight from ffmpeg's stdout: a non-seekable output
@@ -191,7 +210,10 @@ async function wavConvertStream(absPath: string, musicRoot: string): Promise<Rea
  * (resolvePlaybackFormat), a file that's missing on disk, or (for the FLAC
  * path) no local ffmpeg and no FFPROBE_DOCKER_IMAGE fallback configured.
  */
-export async function getTrackAudio(trackId: number, opts?: { wav?: boolean }): Promise<TrackAudio | null> {
+export async function getTrackAudio(
+  trackId: number,
+  opts?: { wav?: boolean },
+): Promise<TrackAudio | null | typeof AUDIO_BUSY> {
   const track = await prisma.track.findUnique({
     where: { id: trackId },
     include: { album: { select: { owned: true } } },
@@ -225,8 +247,19 @@ export async function getTrackAudio(trackId: number, opts?: { wav?: boolean }): 
     };
   }
 
+  // Everything below spawns ffmpeg — one slot per remux, none queued.
+  const release = audioSemaphore().tryAcquire();
+  if (!release) return AUDIO_BUSY;
+
   if (opts?.wav) {
-    const wavStream = await wavConvertStream(absPath, musicRoot);
+    // The conversion runs to completion into a temp file before anything is
+    // streamed, so the slot is only held for the encode itself.
+    let wavStream: ReadableStream<Uint8Array> | null;
+    try {
+      wavStream = await wavConvertStream(absPath, musicRoot);
+    } finally {
+      release();
+    }
     if (!wavStream) return null;
     return {
       stream: wavStream,
@@ -235,7 +268,12 @@ export async function getTrackAudio(trackId: number, opts?: { wav?: boolean }): 
     };
   }
 
-  const stream = await flacRemuxStream(absPath, musicRoot);
-  if (!stream) return null;
+  // Streams straight from ffmpeg's stdout: the slot is held until the child
+  // exits (or fails to start).
+  const stream = await flacRemuxStream(absPath, musicRoot, release);
+  if (!stream) {
+    release();
+    return null;
+  }
   return { stream, contentType: "audio/flac", filename: withFlacExtension(track.fileName) };
 }

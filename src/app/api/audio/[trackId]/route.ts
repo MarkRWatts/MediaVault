@@ -7,7 +7,7 @@
 // `Cache-Control: no-store`.
 
 import { NextRequest, NextResponse } from "next/server";
-import { getTrackAudio } from "@/lib/audio-stream";
+import { AUDIO_BUSY, getTrackAudio } from "@/lib/audio-stream";
 import { requireMemberOrResponse } from "@/lib/require-member";
 
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ trackId: string }> }) {
@@ -24,6 +24,12 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ trackId: s
   // rejects FLAC (Safari); the player retries with this after a decode error.
   const wav = _req.nextUrl.searchParams.get("fmt") === "wav";
   const audio = await getTrackAudio(trackId, { wav });
+  if (audio === AUDIO_BUSY) {
+    return NextResponse.json(
+      { error: "too many tracks are being converted right now — try again shortly" },
+      { status: 503, headers: { "Retry-After": "5" } },
+    );
+  }
   if (!audio) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }

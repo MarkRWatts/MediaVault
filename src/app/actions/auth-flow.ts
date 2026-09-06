@@ -52,6 +52,10 @@ export type SignupState = {
 const FLOW_COOKIE_OPTS = {
   httpOnly: true,
   sameSite: "lax",
+  // HTTPS-only wherever the session cookie is (BetterAuth derives that from
+  // the https BETTER_AUTH_URL); plain http stays possible for local dev and
+  // the e2e scripts, which run against a http://localhost server.
+  secure: (process.env.BETTER_AUTH_URL ?? "").startsWith("https://"),
   path: "/",
   maxAge: 60 * 10, // matches the OTP's own expiry
 } as const;
