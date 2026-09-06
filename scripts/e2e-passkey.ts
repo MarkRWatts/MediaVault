@@ -170,7 +170,10 @@ async function addVirtualAuthenticator(context: BrowserContext, page: Page) {
 }
 
 async function signOut(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Sign out" }).first().click();
+  // The nav's Sign out lives inside the top-right account menu (UserMenu):
+  // open it by its accessible name, then pick the menu item.
+  await page.getByRole("button", { name: /^Account menu for/ }).click();
+  await page.getByRole("menuitem", { name: "Sign out" }).click();
   await page.waitForURL(/\/signin/);
 }
 

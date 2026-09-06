@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { headers } from "next/headers";
 import NavLinks from "@/components/NavLinks";
-import SignOutButton from "@/components/SignOutButton";
+import UserMenu from "@/components/UserMenu";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 
@@ -24,7 +24,10 @@ export default async function Nav() {
   // while signed out (signin/signup/invite), so a signed-out visitor
   // should just see the non-owner nav, not an error.
   const user = session?.user
-    ? await prisma.user.findUnique({ where: { id: session.user.id }, select: { isAppOwner: true, adultLibraryAccess: true } })
+    ? await prisma.user.findUnique({
+        where: { id: session.user.id },
+        select: { name: true, email: true, image: true, isAppOwner: true, adultLibraryAccess: true },
+      })
     : null;
   const isOwner = user?.isAppOwner ?? false;
   // UX nicety only, same posture as isOwner above — the real boundary is
@@ -35,14 +38,22 @@ export default async function Nav() {
   return (
     <header className="sticky top-0 z-50 bg-bg/90 backdrop-blur">
       <div className="mx-auto flex max-w-[1600px] flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 sm:gap-x-6 sm:px-6 lg:flex-nowrap lg:py-3">
-        <Link href="/" className="shrink-0" aria-label="MediaVault — home">
+        <Link href="/" className="order-1 shrink-0" aria-label="MediaVault — home">
           {/* Logo PNG is transparent, so it sits flush against --bg. */}
           { }
           <img src="/logo.png" alt="MediaVault" className="h-8 w-auto sm:h-10" />
         </Link>
-        <NavLinks signedIn={Boolean(session?.user)} isOwner={isOwner} hasAdultAccess={hasAdultAccess} />
-        <div className="flex w-full items-center justify-end gap-3 lg:ml-auto lg:w-auto">
-          {session?.user && <SignOutButton />}
+        {/* Below lg the row wraps: logo + user menu share the first line
+            (order-1/order-2), the scrolling link strip takes a full second
+            line (order-3). At lg+ it's one line in the natural order. */}
+        <div className="order-3 w-full min-w-0 lg:order-2 lg:w-auto lg:flex-1">
+          <NavLinks signedIn={Boolean(session?.user)} isOwner={isOwner} hasAdultAccess={hasAdultAccess} />
+        </div>
+        {/* Who's signed in, top-right on every page: avatar + name opening
+            Account / Admin / Sign out (UserMenu). Replaces the bare Sign out
+            button and the Account nav link. */}
+        <div className="order-2 ml-auto flex items-center gap-3 lg:order-3 lg:ml-0">
+          {user && <UserMenu name={user.name} email={user.email} image={user.image} isOwner={isOwner} />}
         </div>
       </div>
       <div className="sprocket-rule" />
