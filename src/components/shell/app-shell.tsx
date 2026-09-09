@@ -82,8 +82,14 @@ export async function AppShell({ children }: { children: React.ReactNode }) {
           collapse/expand. pb-28 clears the floating mobile tab bar: its
           bottom offset (0.75rem + safe-area inset) plus its ~3.5rem
           height. flex/flex-col keeps the library pages' flex-1 fill
-          working exactly as it did under the old layout's <main>. */}
-      <main className="flex flex-1 flex-col pb-28 transition-[padding-left] motion-reduce:transition-none md:pb-0 md:pl-[calc(var(--sidebar-w)+1rem+max(1rem,env(safe-area-inset-left)))]">
+          working exactly as it did under the old layout's <main>.
+          @container makes <main> the size container every page's grid
+          ladder measures (`@xl:`, `@5xl:` … variants), so column counts
+          follow the width actually available beside the sidebar rather
+          than the viewport — see src/lib/card-grid.ts. Chrome/Safari
+          keep position:fixed descendants (VideoPlayer, confirm dialogs)
+          viewport-relative inside an inline-size container. */}
+      <main className="@container flex flex-1 flex-col pb-28 transition-[padding-left] motion-reduce:transition-none md:pb-0 md:pl-[calc(var(--sidebar-w)+1rem+max(1rem,env(safe-area-inset-left)))]">
         {children}
       </main>
       <BottomTabs flags={flags} />

@@ -145,7 +145,7 @@ export default async function ReportPage({
           needs attention.
         </p>
 
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+        <div className="grid grid-cols-2 gap-3 @lg:grid-cols-4 @min-[60rem]:grid-cols-7">
           {tiles.map((t) => (
             <div
               key={t.label}
@@ -190,7 +190,7 @@ export default async function ReportPage({
                     {group.films.length} missing
                   </span>
                 </Link>
-                <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
+                <div className="grid grid-cols-2 gap-2.5 @lg:grid-cols-3 @2xl:grid-cols-4 @min-[60rem]:grid-cols-6">
                   {group.films.map((f) => (
                     <div
                       key={f.id}
@@ -227,7 +227,7 @@ export default async function ReportPage({
         {upgradeCandidates.length === 0 ? (
           <SectionEmpty>No DVD-only films — the library is fully upgraded.</SectionEmpty>
         ) : (
-          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
+          <div className="grid grid-cols-2 gap-2.5 @lg:grid-cols-3 @2xl:grid-cols-4 @min-[60rem]:grid-cols-6">
             {upgradeCandidates.map((f) => (
               <Link
                 key={f.id}
@@ -364,7 +364,7 @@ export default async function ReportPage({
                     {group.albums.length} missing
                   </span>
                 </Link>
-                <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
+                <div className="grid grid-cols-2 gap-2.5 @lg:grid-cols-3 @2xl:grid-cols-4 @min-[60rem]:grid-cols-6">
                   {group.albums.map((al) => (
                     <div
                       key={al.id}

@@ -3,8 +3,11 @@
 Move MediaVault from its sticky top bar to the floating, collapsible left
 sidebar used by Jingle Jotter, TrainTracker and template-app, so all three
 apps share one shell. Drafted 2026-09-09. **Status:** PR 1 (shell swap)
-built on `claude/left-nav` the same day, with decision 1 resolved as
-"retire UserMenu"; PR 2 (poster grid on container queries) not started.
+merged as #68 the same day, with decision 1 resolved as "retire
+UserMenu"; PR 2 (library grids on container queries against `<main>`)
+built on `claude/grid-container-queries` — it also converted the
+collections, music, adult, report and stats ladders, not just
+`CARD_COLUMNS`, since the rail squeezes them all the same way.
 
 This reverses the "deliberately not adopted from the template" note in
 `HOUSEHOLDS_PLAN.md` — update that paragraph when this ships.

@@ -46,7 +46,7 @@ export default async function MusicPage() {
 
       <div className="flex flex-1 flex-col gap-8 px-4 py-6 sm:px-6">
         {artists.length > 0 && (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-6">
+          <div className="grid grid-cols-2 gap-3 @lg:grid-cols-3 @3xl:grid-cols-6">
             {tiles.map((t) => {
               const inner = (
                 <>
@@ -86,7 +86,7 @@ export default async function MusicPage() {
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
+          <div className="grid grid-cols-2 gap-3 @lg:grid-cols-3 @2xl:grid-cols-4 @4xl:grid-cols-5 @5xl:grid-cols-6 @min-[90rem]:grid-cols-8">
             {artists.map((a) => (
               <Link
                 key={a.id}
