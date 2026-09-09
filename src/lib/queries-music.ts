@@ -177,6 +177,12 @@ export interface ArtistCatalogueAlbum {
    *  NOT a gap: you have it, just not digitally. UI must not render it as
    *  "Missing". */
   physicalMedia: string[];
+  /** Per-pressing cover art, keyed by medium ("CD", "VINYL") — a pressing
+   *  with its own art is served at /api/physical-cover/<id>, distinct from
+   *  the album-level cover below. Format lists that show a pressing's own
+   *  art (the Vinyl list) must resolve it here rather than falling back to
+   *  hasCover/coverVersion, which are always the album's (CD/digital) art. */
+  physicalCopyCovers: { id: number; medium: string; hasCover: boolean }[];
   hasCover: boolean;
   /** See MusicIndexArtist.coverVersion. Null when hasCover is false. */
   coverVersion: number | null;
@@ -214,7 +220,12 @@ export async function getArtistDetail(id: number): Promise<ArtistDetail | null> 
   const artist = await prisma.artist.findUnique({
     where: { id },
     include: {
-      albums: { include: { _count: { select: { tracks: true } }, physicalCopies: { select: { medium: true } } } },
+      albums: {
+        include: {
+          _count: { select: { tracks: true } },
+          physicalCopies: { select: { id: true, medium: true, coverPath: true } },
+        },
+      },
     },
   });
   if (!artist) return null;
@@ -225,6 +236,7 @@ export async function getArtistDetail(id: number): Promise<ArtistDetail | null> 
     year: a.year,
     owned: a.owned,
     physicalMedia: a.physicalCopies.map((c) => c.medium),
+    physicalCopyCovers: a.physicalCopies.map((c) => ({ id: c.id, medium: c.medium, hasCover: c.coverPath != null })),
     hasCover: a.coverPath != null,
     coverVersion: a.coverPath != null ? a.updatedAt.getTime() : null,
     trackCount: a._count.tracks,
