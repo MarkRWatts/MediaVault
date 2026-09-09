@@ -1,8 +1,8 @@
 // One column ladder for every poster card on the Movies and Shows pages, so
 // the browse grid and the horizontal shelves (Continue watching, New
 // releases, Recently added, Favourites) show the same number of cards
-// across at any width and their cards are the same size. Ten across on a
-// wide monitor (2xl), scaling down to two on a phone.
+// across at any width and their cards are the same size. Six across on a
+// desktop, scaling down to two on a phone.
 //
 // Mechanism: a wrapper sets `--cards` per width step; the grid uses it as
 // its column count and a shelf item takes exactly one column's width
@@ -21,9 +21,11 @@
 // grids — collections, music, adult, report, stats — use the same steps
 // inline; keep them in sync by hand.
 
-/** Put on an ancestor of both grids and shelves. */
-export const CARD_COLUMNS =
-  "[--cards:2] @lg:[--cards:3] @2xl:[--cards:4] @min-[60rem]:[--cards:6] @7xl:[--cards:8] @min-[100rem]:[--cards:10]";
+/** Put on an ancestor of both grids and shelves. Tops out at six: with
+ *  the sidebar and the player rail both open, eight or ten across squeezed
+ *  posters below ~150px on an ordinary desktop, so the ladder now stops
+ *  where a card is still a poster rather than a thumbnail. */
+export const CARD_COLUMNS = "[--cards:2] @lg:[--cards:3] @2xl:[--cards:4] @min-[60rem]:[--cards:6]";
 
 /** The browse grid. gap-3 = 0.75rem, matched in SHELF_ITEM. */
 export const CARD_GRID = "grid gap-3 grid-cols-[repeat(var(--cards),minmax(0,1fr))]";
