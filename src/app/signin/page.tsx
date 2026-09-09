@@ -73,7 +73,7 @@ export default async function SignInPage({
   const otpEmail = otp ? (await cookies()).get(OTP_EMAIL_COOKIE)?.value : undefined;
 
   return (
-    <main className="flex min-h-[calc(100vh-4rem)] flex-col items-center justify-center px-4 py-10">
+    <main className="flex min-h-dvh flex-col items-center justify-center px-4 py-10">
       <div className="flex w-full max-w-sm flex-col items-center gap-6 rounded-lg border border-border bg-bg-elevated p-8 text-center shadow-lg shadow-black/30">
         <AuthLogo />
         <h1 className="font-display text-3xl tracking-wide text-text">Sign in</h1>

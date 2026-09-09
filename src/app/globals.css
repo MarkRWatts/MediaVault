@@ -75,6 +75,12 @@
   --format-cd: #7fa5da;
   --format-cd-bg: rgba(127, 165, 218, 0.12);
   --format-cd-border: rgba(127, 165, 218, 0.32);
+
+  /* Desktop sidebar width, consumed by <main>'s left padding. Stays 0 on
+     any page with no sidebar (signed out, no household, /consent); the
+     `body:has()` rules below drive the real value off the sidebar's own
+     DOM state, so this is the only definition — see "Sidebar offset". */
+  --sidebar-w: 0rem;
 }
 
 @theme inline {
@@ -175,8 +181,31 @@ body::before {
   border-radius: 4px;
 }
 
-/* Signature motif: a sprocket-hole rule, used as the nav's bottom edge and as
-   section dividers. A quiet nod to a film strip's perforation track without
+/* ---- Sidebar offset ------------------------------------------------ */
+
+/* components/shell/sidebar.tsx stamps id="app-sidebar" and a live
+   data-collapsed attribute on its own <nav> whenever AppShell renders it
+   (signed in + has a household). :has() lets <main> — which isn't a
+   descendant of the sidebar — read that state back via --sidebar-w without
+   any client JS or SSR flash: the value updates the instant React flips
+   data-collapsed, in step with the sidebar's own width transition. No
+   sidebar in the DOM leaves --sidebar-w at the 0rem :root default. Below
+   `lg` the sidebar is forced to the collapsed rail regardless of the stored
+   preference (an expanded 16rem sidebar at 768px would leave very little
+   room for poster grids) — the plain rule below covers that, and the `lg`
+   media query only widens things once there's room. Same mechanism as
+   template-app / TrainTracker / Jingle Jotter. */
+body:has(#app-sidebar) {
+  --sidebar-w: 4.5rem;
+}
+@media (min-width: 1024px) {
+  body:has(#app-sidebar[data-collapsed="false"]) {
+    --sidebar-w: 16rem;
+  }
+}
+
+/* Signature motif: a sprocket-hole rule, used as the mobile top bar's bottom
+   edge and as section dividers. A quiet nod to a film strip's perforation track without
    resorting to literal film-reel iconography. */
 .sprocket-rule {
   height: 1px;

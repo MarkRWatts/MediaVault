@@ -170,10 +170,11 @@ async function addVirtualAuthenticator(context: BrowserContext, page: Page) {
 }
 
 async function signOut(page: Page): Promise<void> {
-  // The nav's Sign out lives inside the top-right account menu (UserMenu):
-  // open it by its accessible name, then pick the menu item.
-  await page.getByRole("button", { name: /^Account menu for/ }).click();
-  await page.getByRole("menuitem", { name: "Sign out" }).click();
+  // Sign out lives on /account (the shell's avatar links there; there is no
+  // dropdown menu in the sidebar layout). /account can show a second Sign
+  // out inside the passkey manager's stale-session hint, hence .first().
+  await page.goto("/account");
+  await page.getByRole("button", { name: "Sign out" }).first().click();
   await page.waitForURL(/\/signin/);
 }
 

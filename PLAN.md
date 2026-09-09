@@ -73,6 +73,11 @@ a DVD and a BluRay rip of the same film = 1 film, 2 versions).
 
 ## UI (dark, poster-forward, "good looking" is a requirement)
 
+> **Navigation (2026-09):** the top bar described implicitly below was
+> replaced by the floating, collapsible left sidebar shared with Jingle
+> Jotter and TrainTracker (mobile: top bar + bottom tabs). See
+> `SIDEBAR_PLAN.md`; the shell lives in `src/components/shell/`.
+
 - `/` — poster grid of owned films; search; filters (format, resolution,
   collection, decade); sort (title/year/added).
 - `/film/[id]` — backdrop hero, poster, overview; versions table (DVD/BluRay

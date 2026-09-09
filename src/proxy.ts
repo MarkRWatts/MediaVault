@@ -86,10 +86,11 @@ export async function proxy(request: NextRequest) {
   //
   // Forwarded as a request header (not a response header) so layout.tsx can
   // read the current pathname via headers() — Server Components have no
-  // other way to know it in a shared root layout. Used to skip rendering
-  // <Nav /> on pre-auth pages (isPreAuthPath, src/lib/public-paths.ts):
-  // showing the full app nav on /signin before anyone's signed in makes no
-  // sense, and every link on it would just bounce back here anyway.
+  // other way to know it in a shared root layout. Read by the app shell
+  // (components/shell/app-shell.tsx) to skip the sidebar / tab bar on
+  // signed-in card pages (isChromelessPath, src/lib/public-paths.ts);
+  // signed-out pages need no path check there since the shell also hides
+  // itself whenever there's no session.
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-pathname", pathname);
   return NextResponse.next({ request: { headers: requestHeaders } });

@@ -530,6 +530,11 @@ model User {
   adultLibraryAccess Boolean @default(false)
   jellyfinUserId     String?
 
+  // Desktop sidebar collapsed/expanded preference (components/shell). Read
+  // server-side in AppShell so the first paint is already the right width;
+  // written by app/actions/prefs.ts. Same shape as template-app's.
+  sidebarCollapsed Boolean @default(false)
+
   oauthclients       OauthClient[]
   oauthrefreshtokens OauthRefreshToken[]
   oauthaccesstokens  OauthAccessToken[]
