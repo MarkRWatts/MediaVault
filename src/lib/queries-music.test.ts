@@ -391,7 +391,7 @@ describe("getArtistUserState", () => {
     await seedUser("artist-state-user-off");
     const artist = await seedArtist({ id: 4301 });
     const state = await getArtistUserState("artist-state-user-off", artist.id);
-    expect(state).toEqual({ favourite: false });
+    expect(state).toEqual({ favourite: false, favouriteAlbumIds: [] });
   });
 
   it("returns favourite:true when a row exists", async () => {
@@ -399,7 +399,7 @@ describe("getArtistUserState", () => {
     const artist = await seedArtist({ id: 4302 });
     await seedArtistFavourite("artist-state-user-on", artist.id, new Date());
     const state = await getArtistUserState("artist-state-user-on", artist.id);
-    expect(state).toEqual({ favourite: true });
+    expect(state).toEqual({ favourite: true, favouriteAlbumIds: [] });
   });
 });
 
