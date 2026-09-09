@@ -2,14 +2,17 @@
 // (the Docker image is built with no database present).
 export const dynamic = "force-dynamic";
 
-// The artist page groups albums by the FORMAT you own them on — Digital,
-// CD, Vinyl — each a release-order timeline, plus a folded "Not owned" list
-// for the Discogs gap-tracking placeholders. Studio vs. compilation vs. EP
-// is deliberately not a grouping here (it's a tag on the album page): the
-// collection is thought about as shelves, not as a discography. An album
-// you have on CD and digitally sits in both lists. The Owned / Missing /
-// Complete tiles are the one studio-only thing left, because Discogs only
-// counts studio releases and the percentage is only honest against that.
+// The artist page groups albums by the FORMAT you own them on — "Digital &
+// CD" and Vinyl — each a release-order timeline, plus a folded "Not owned"
+// list for the Discogs gap-tracking placeholders. Studio vs. compilation
+// vs. EP is deliberately not a grouping here (it's a tag on the album
+// page): the collection is thought about as shelves, not as a discography.
+// CD and digital share the Digital list because the rip almost always came
+// from the CD (Album.digitalSource records the handful of exceptions) — a
+// "+CD" badge marks the ones also on the shelf; an album on vinyl and
+// digitally sits in both lists. The Owned / Missing / Complete
+// tiles are the one studio-only thing left, because Discogs only counts
+// studio releases and the percentage is only honest against that.
 
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -25,7 +28,16 @@ import type { ArtistCatalogueAlbum } from "@/lib/queries-music";
 // One tile for every list. Owned tiles (in any format) link to the album
 // page and carry the corner heart; a "Not owned" placeholder has nothing
 // to view or favourite, so it's a greyed, dashed non-link.
-function AlbumTile({ album, favourite }: { album: ArtistCatalogueAlbum; favourite: boolean }) {
+function AlbumTile({
+  album,
+  favourite,
+  badge,
+}: {
+  album: ArtistCatalogueAlbum;
+  favourite: boolean;
+  /** Small format chip beside the year ("+CD" in the Digital list). */
+  badge?: string | null;
+}) {
   const isPlaceholder = !album.owned && album.physicalMedia.length === 0;
 
   const body = (
@@ -47,7 +59,14 @@ function AlbumTile({ album, favourite }: { album: ArtistCatalogueAlbum; favourit
         >
           {album.title}
         </h3>
-        <span className="font-mono text-[11px] text-text-faint">{album.year ?? "—"}</span>
+        <span className="flex items-center justify-between gap-2">
+          <span className="font-mono text-[11px] text-text-faint">{album.year ?? "—"}</span>
+          {badge && (
+            <span className="rounded border border-format-cd-border bg-format-cd-bg px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-widest leading-none text-format-cd">
+              {badge}
+            </span>
+          )}
+        </span>
       </div>
     </div>
   );
@@ -87,7 +106,15 @@ function groupByDecade(items: ArtistCatalogueAlbum[]): { label: string; items: A
 
 const ALBUM_GRID = "grid grid-cols-[repeat(auto-fill,minmax(8.6rem,1fr))] gap-3";
 
-function DecadeTimeline({ albums, favourites }: { albums: ArtistCatalogueAlbum[]; favourites: Set<number> }) {
+function DecadeTimeline({
+  albums,
+  favourites,
+  badgeFor,
+}: {
+  albums: ArtistCatalogueAlbum[];
+  favourites: Set<number>;
+  badgeFor?: (a: ArtistCatalogueAlbum) => string | null;
+}) {
   return (
     <div className="flex flex-col gap-6">
       {groupByDecade(albums).map((group) => (
@@ -99,7 +126,7 @@ function DecadeTimeline({ albums, favourites }: { albums: ArtistCatalogueAlbum[]
           </div>
           <div className={ALBUM_GRID}>
             {group.items.map((a) => (
-              <AlbumTile key={a.id} album={a} favourite={favourites.has(a.id)} />
+              <AlbumTile key={a.id} album={a} favourite={favourites.has(a.id)} badge={badgeFor?.(a)} />
             ))}
           </div>
         </div>
@@ -109,9 +136,17 @@ function DecadeTimeline({ albums, favourites }: { albums: ArtistCatalogueAlbum[]
 }
 
 // The format lists, in shelf order. Empty ones don't render.
-const FORMAT_LISTS: { title: string; pick: (a: ArtistCatalogueAlbum) => boolean }[] = [
-  { title: "Digital", pick: (a) => a.owned },
-  { title: "CD", pick: (a) => a.physicalMedia.includes("CD") },
+const FORMAT_LISTS: {
+  title: string;
+  pick: (a: ArtistCatalogueAlbum) => boolean;
+  badgeFor?: (a: ArtistCatalogueAlbum) => string | null;
+}[] = [
+  {
+    title: "Digital",
+    pick: (a) => a.owned || a.physicalMedia.includes("CD"),
+    // "+CD" = the rip plus the disc; a bare "CD" = disc only, no files.
+    badgeFor: (a) => (a.physicalMedia.includes("CD") ? (a.owned ? "+CD" : "CD") : null),
+  },
   { title: "Vinyl", pick: (a) => a.physicalMedia.includes("VINYL") },
 ];
 
@@ -138,7 +173,7 @@ export default async function ArtistPage({
   for (const a of [...studio, ...shelf]) byId.set(a.id, a);
   const all = [...byId.values()].sort(byYearAsc);
   const notOwned = all.filter((a) => !a.owned && a.physicalMedia.length === 0);
-  const formatLists = FORMAT_LISTS.map((f) => ({ title: f.title, albums: all.filter(f.pick) })).filter(
+  const formatLists = FORMAT_LISTS.map((f) => ({ ...f, albums: all.filter(f.pick) })).filter(
     (f) => f.albums.length > 0,
   );
 
@@ -240,7 +275,7 @@ export default async function ArtistPage({
               count={list.albums.length}
               noun="album"
             >
-              <DecadeTimeline albums={list.albums} favourites={favourites} />
+              <DecadeTimeline albums={list.albums} favourites={favourites} badgeFor={list.badgeFor} />
             </CollapsibleSection>
           ))}
 
