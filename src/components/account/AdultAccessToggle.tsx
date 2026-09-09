@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useRef, useState } from "react";
+import { startTransition, useActionState, useState } from "react";
 import { toggleAdultLibraryAccess, retryJellyfinAdultSync, type AdultAccessState } from "@/app/actions/adult";
 
 /** Self-service opt-in for the Adult media type — see ADULT_PLAN.md
@@ -22,7 +22,6 @@ export function AdultAccessToggle({
     retryJellyfinAdultSync,
     null,
   );
-  const formRef = useRef<HTMLFormElement>(null);
 
   // Derived, not synced via an effect: a "synced" result from either action
   // means linked-ness has changed, no need for its own state variable.
@@ -32,20 +31,29 @@ export function AdultAccessToggle({
 
   return (
     <div className="flex flex-col gap-2">
-      <form ref={formRef} action={formAction} onChange={() => formRef.current?.requestSubmit()}>
-        <label className="flex items-center gap-2 text-sm text-text">
-          <input
-            type="checkbox"
-            name="enabled"
-            value="true"
-            checked={enabled}
-            disabled={pending}
-            onChange={(e) => setEnabled(e.target.checked)}
-            className="size-4 accent-accent"
-          />
-          Show Adult content in MediaVault
-        </label>
-      </form>
+      <label className="flex items-center gap-2 text-sm text-text">
+        <input
+          type="checkbox"
+          checked={enabled}
+          disabled={pending}
+          onChange={(e) => {
+            const next = e.target.checked;
+            setEnabled(next);
+            // Dispatched directly rather than via a real <form> submission —
+            // React 19 resets a submitted form's fields once the action
+            // resolves, and a controlled checkbox whose bound value hasn't
+            // changed doesn't get its DOM `checked` reasserted afterward, so
+            // it visually snaps back to unchecked despite `enabled`/the DB
+            // being correct. Calling the action directly never triggers
+            // that native reset.
+            const formData = new FormData();
+            if (next) formData.set("enabled", "true");
+            startTransition(() => formAction(formData));
+          }}
+          className="size-4 accent-accent"
+        />
+        Show Adult content in MediaVault
+      </label>
       {state?.error && <p className="text-xs text-missing">{state.error}</p>}
       {waitingOnJellyfin && (
         <div className="text-xs text-text-faint">
