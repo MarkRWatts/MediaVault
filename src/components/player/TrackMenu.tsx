@@ -6,8 +6,9 @@
 // scaled down to a row-anchored popover instead of a full-width sheet.
 
 import { useEffect, useRef, useState } from "react";
-import { Ellipsis, ListPlus, ListStart, Play } from "lucide-react";
+import { Ellipsis, FolderPlus, ListPlus, ListStart, Play } from "lucide-react";
 import { usePlayer } from "./usePlayer";
+import AddToPlaylistMenu from "./AddToPlaylistMenu";
 import type { PlaybackContext, QueueTrack } from "@/lib/player-types";
 
 const menuItem = "flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-text hover:bg-bg-hover";
@@ -29,21 +30,30 @@ export default function TrackMenu({
 }) {
   const { engine } = usePlayer();
   const [open, setOpen] = useState(false);
+  const [view, setView] = useState<"menu" | "playlist">("menu");
   const containerRef = useRef<HTMLDivElement | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
+
+  // Closing always lands back on the main menu next time this opens —
+  // set alongside setOpen(false) at every close site rather than in an
+  // effect, so there's no synchronous setState-in-effect cascade.
+  function closeMenu() {
+    setOpen(false);
+    setView("menu");
+  }
 
   useEffect(() => {
     if (!open) return;
 
     function onPointerDown(e: PointerEvent) {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false);
+        closeMenu();
       }
     }
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== "Escape") return;
       e.stopPropagation();
-      setOpen(false);
+      closeMenu();
       buttonRef.current?.focus();
     }
 
@@ -57,7 +67,7 @@ export default function TrackMenu({
 
   function runAndClose(action: () => void) {
     action();
-    setOpen(false);
+    closeMenu();
   }
 
   const ariaLabel = `Actions for ${label}`;
@@ -73,6 +83,7 @@ export default function TrackMenu({
           // let the click bubble into a navigation.
           e.stopPropagation();
           setOpen((o) => !o);
+          setView("menu");
         }}
         aria-label={ariaLabel}
         aria-haspopup="menu"
@@ -88,46 +99,68 @@ export default function TrackMenu({
         <div
           role="menu"
           aria-label={ariaLabel}
-          className={`absolute top-full z-50 mt-1 flex w-44 flex-col gap-0.5 rounded-xl border border-border bg-bg-elevated-2 p-1 shadow-lg shadow-black/50 ${
-            align === "right" ? "right-0" : "left-0"
-          }`}
+          className={`absolute top-full z-50 mt-1 flex flex-col gap-0.5 rounded-xl border border-border bg-bg-elevated-2 p-1 shadow-lg shadow-black/50 ${
+            view === "playlist" ? "w-56" : "w-44"
+          } ${align === "right" ? "right-0" : "left-0"}`}
         >
-          <button
-            type="button"
-            role="menuitem"
-            onClick={(e) => {
-              e.stopPropagation();
-              runAndClose(() => engine.playTracks(tracks, { context }));
-            }}
-            className={menuItem}
-          >
-            <Play aria-hidden className="h-4 w-4" />
-            Play
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={(e) => {
-              e.stopPropagation();
-              runAndClose(() => engine.playNext(tracks, context));
-            }}
-            className={menuItem}
-          >
-            <ListStart aria-hidden className="h-4 w-4" />
-            Play next
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={(e) => {
-              e.stopPropagation();
-              runAndClose(() => engine.addToQueue(tracks, context));
-            }}
-            className={menuItem}
-          >
-            <ListPlus aria-hidden className="h-4 w-4" />
-            Add to queue
-          </button>
+          {view === "menu" ? (
+            <>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  runAndClose(() => engine.playTracks(tracks, { context }));
+                }}
+                className={menuItem}
+              >
+                <Play aria-hidden className="h-4 w-4" />
+                Play
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  runAndClose(() => engine.playNext(tracks, context));
+                }}
+                className={menuItem}
+              >
+                <ListStart aria-hidden className="h-4 w-4" />
+                Play next
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  runAndClose(() => engine.addToQueue(tracks, context));
+                }}
+                className={menuItem}
+              >
+                <ListPlus aria-hidden className="h-4 w-4" />
+                Add to queue
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setView("playlist");
+                }}
+                className={menuItem}
+              >
+                <FolderPlus aria-hidden className="h-4 w-4" />
+                Add to playlist ▸
+              </button>
+            </>
+          ) : (
+            <AddToPlaylistMenu
+              trackIds={tracks.map((t) => t.trackId)}
+              onBack={() => setView("menu")}
+              onDone={closeMenu}
+            />
+          )}
         </div>
       )}
     </div>

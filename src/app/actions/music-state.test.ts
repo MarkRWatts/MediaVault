@@ -36,9 +36,18 @@ vi.mock("next/cache", () => ({
   revalidatePath: (...args: unknown[]) => revalidatePath(...args),
 }));
 
-const { toggleTrackFavourite, toggleAlbumFavourite, toggleArtistFavourite, loadPlaylistQueue } = await import(
-  "@/app/actions/music-state"
-);
+const {
+  toggleTrackFavourite,
+  toggleAlbumFavourite,
+  toggleArtistFavourite,
+  loadPlaylistQueue,
+  createPlaylist,
+  renamePlaylist,
+  deletePlaylist,
+  addTracksToPlaylist,
+  removePlaylistItem,
+  movePlaylistItem,
+} = await import("@/app/actions/music-state");
 
 beforeAll(async () => {
   const db = await createTempTestDb();
@@ -320,9 +329,12 @@ describe('loadPlaylistQueue("favourites")', () => {
     });
   });
 
-  it("throws for a numeric id (real playlists not available yet)", async () => {
+  it("throws 'Playlist not found' for an id with no matching playlist", async () => {
+    // Playlists exist now (see the "playlists" describe block below); a
+    // numeric id that doesn't resolve to one of this user's playlists
+    // throws the same "not found" message as an unowned one.
     await seedSignedInMember("queue-user-numeric");
-    await expect(loadPlaylistQueue(42)).rejects.toThrow("playlists are not available yet");
+    await expect(loadPlaylistQueue(42)).rejects.toThrow("Playlist not found");
   });
 
   it("is per-user: another user's toggles never show up in this user's queue", async () => {
@@ -345,5 +357,464 @@ describe('loadPlaylistQueue("favourites")', () => {
     getSession.mockResolvedValue({ user: { id: "queue-user-b" } });
     const queueB = await loadPlaylistQueue("favourites");
     expect(queueB.map((t) => t.trackId)).toEqual([track.id]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// playlists: createPlaylist / renamePlaylist / deletePlaylist /
+// addTracksToPlaylist / removePlaylistItem / movePlaylistItem /
+// loadPlaylistQueue(number)
+// ---------------------------------------------------------------------------
+
+describe("playlists", () => {
+  async function seedPlaylistRow(userId: string, name = "My Playlist") {
+    return testPrisma.playlist.create({ data: { userId, name } });
+  }
+
+  async function seedPlaylistItem(playlistId: number, trackId: number, position: number) {
+    return testPrisma.playlistItem.create({ data: { playlistId, trackId, position } });
+  }
+
+  /** A playlist owned by `userId` with `trackIds` appended in order,
+   *  positions 0..n-1. Returns the playlist and the created items in
+   *  position order. */
+  async function seedPlaylistWithTracks(userId: string, trackIds: number[]) {
+    const playlist = await seedPlaylistRow(userId);
+    const items = [];
+    for (let i = 0; i < trackIds.length; i++) {
+      items.push(await seedPlaylistItem(playlist.id, trackIds[i], i));
+    }
+    return { playlist, items };
+  }
+
+  async function orderedItems(playlistId: number) {
+    return testPrisma.playlistItem.findMany({
+      where: { playlistId },
+      orderBy: { position: "asc" },
+      select: { id: true, trackId: true, position: true },
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // createPlaylist
+  // -------------------------------------------------------------------------
+
+  describe("createPlaylist", () => {
+    it("trims the name and returns an id for a row owned by the signed-in user", async () => {
+      await seedSignedInMember("pl-create-1");
+      const result = await createPlaylist("  Road Trip  ");
+      expect(result).toEqual({ id: expect.any(Number) });
+
+      const row = await testPrisma.playlist.findUnique({ where: { id: result.id } });
+      expect(row?.name).toBe("Road Trip");
+      expect(row?.userId).toBe("pl-create-1");
+    });
+
+    it("throws for an empty or whitespace-only name", async () => {
+      await seedSignedInMember("pl-create-empty");
+      await expect(createPlaylist("")).rejects.toThrow("Playlist name must be");
+      await expect(createPlaylist("   ")).rejects.toThrow("Playlist name must be");
+    });
+
+    it("throws for a name over 80 characters", async () => {
+      await seedSignedInMember("pl-create-long");
+      await expect(createPlaylist("x".repeat(81))).rejects.toThrow("Playlist name must be");
+    });
+
+    it("throws when signed out", async () => {
+      getSession.mockResolvedValue(null);
+      await expect(createPlaylist("Anything")).rejects.toThrow("Not signed in");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // renamePlaylist
+  // -------------------------------------------------------------------------
+
+  describe("renamePlaylist", () => {
+    it("renames a playlist owned by the signed-in user", async () => {
+      await seedSignedInMember("pl-rename-1");
+      const playlist = await seedPlaylistRow("pl-rename-1", "Old Name");
+
+      const result = await renamePlaylist(playlist.id, "  New Name  ");
+      expect(result).toEqual({ name: "New Name" });
+
+      const row = await testPrisma.playlist.findUnique({ where: { id: playlist.id } });
+      expect(row?.name).toBe("New Name");
+    });
+
+    it("throws 'Playlist not found' for another user's playlist", async () => {
+      await seedSignedInMember("pl-rename-owner");
+      await seedSignedInMember("pl-rename-other");
+      const playlist = await seedPlaylistRow("pl-rename-owner");
+
+      getSession.mockResolvedValue({ user: { id: "pl-rename-other" } });
+      await expect(renamePlaylist(playlist.id, "Hijacked")).rejects.toThrow("Playlist not found");
+    });
+
+    it("throws 'Playlist not found' for an unknown id", async () => {
+      await seedSignedInMember("pl-rename-unknown");
+      await expect(renamePlaylist(999999, "Whatever")).rejects.toThrow("Playlist not found");
+    });
+
+    it("throws for an invalid name", async () => {
+      await seedSignedInMember("pl-rename-invalid");
+      const playlist = await seedPlaylistRow("pl-rename-invalid");
+      await expect(renamePlaylist(playlist.id, "")).rejects.toThrow("Playlist name must be");
+      await expect(renamePlaylist(playlist.id, "x".repeat(81))).rejects.toThrow("Playlist name must be");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // deletePlaylist
+  // -------------------------------------------------------------------------
+
+  describe("deletePlaylist", () => {
+    it("removes the playlist and cascades its items", async () => {
+      await seedSignedInMember("pl-delete-1");
+      const artist = await seedArtist(5001);
+      const album = await seedAlbum({ id: 6001, artistId: artist.id });
+      const track = await seedTrack({ id: 7001, albumId: album.id });
+      const { playlist } = await seedPlaylistWithTracks("pl-delete-1", [track.id]);
+
+      await deletePlaylist(playlist.id);
+
+      expect(await testPrisma.playlist.findUnique({ where: { id: playlist.id } })).toBeNull();
+      expect(await testPrisma.playlistItem.findMany({ where: { playlistId: playlist.id } })).toEqual([]);
+    });
+
+    it("throws 'Playlist not found' for another user's playlist", async () => {
+      await seedSignedInMember("pl-delete-owner");
+      await seedSignedInMember("pl-delete-other");
+      const playlist = await seedPlaylistRow("pl-delete-owner");
+
+      getSession.mockResolvedValue({ user: { id: "pl-delete-other" } });
+      await expect(deletePlaylist(playlist.id)).rejects.toThrow("Playlist not found");
+
+      expect(await testPrisma.playlist.findUnique({ where: { id: playlist.id } })).not.toBeNull();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // addTracksToPlaylist
+  // -------------------------------------------------------------------------
+
+  describe("addTracksToPlaylist", () => {
+    it("appends tracks in the given order with dense positions 0..n-1", async () => {
+      await seedSignedInMember("pl-add-order");
+      const artist = await seedArtist(5010);
+      const album = await seedAlbum({ id: 6010, artistId: artist.id });
+      const t1 = await seedTrack({ id: 7010, albumId: album.id });
+      const t2 = await seedTrack({ id: 7011, albumId: album.id });
+      const t3 = await seedTrack({ id: 7012, albumId: album.id });
+      const playlist = await seedPlaylistRow("pl-add-order");
+
+      const result = await addTracksToPlaylist(playlist.id, [t3.id, t1.id, t2.id]);
+      expect(result).toEqual({ added: 3, skipped: 0 });
+
+      const items = await orderedItems(playlist.id);
+      expect(items.map((i) => i.trackId)).toEqual([t3.id, t1.id, t2.id]);
+      expect(items.map((i) => i.position)).toEqual([0, 1, 2]);
+    });
+
+    it("a second call with overlapping ids skips the ones already present", async () => {
+      await seedSignedInMember("pl-add-overlap");
+      const artist = await seedArtist(5011);
+      const album = await seedAlbum({ id: 6011, artistId: artist.id });
+      const t1 = await seedTrack({ id: 7020, albumId: album.id });
+      const t2 = await seedTrack({ id: 7021, albumId: album.id });
+      const t3 = await seedTrack({ id: 7022, albumId: album.id });
+      const playlist = await seedPlaylistRow("pl-add-overlap");
+
+      const first = await addTracksToPlaylist(playlist.id, [t1.id, t2.id]);
+      expect(first).toEqual({ added: 2, skipped: 0 });
+
+      const second = await addTracksToPlaylist(playlist.id, [t1.id, t3.id]);
+      expect(second).toEqual({ added: 1, skipped: 1 });
+
+      const items = await orderedItems(playlist.id);
+      expect(items.map((i) => i.trackId)).toEqual([t1.id, t2.id, t3.id]);
+      expect(items.map((i) => i.position)).toEqual([0, 1, 2]);
+    });
+
+    it("duplicates within one call are added once", async () => {
+      await seedSignedInMember("pl-add-dup");
+      const artist = await seedArtist(5012);
+      const album = await seedAlbum({ id: 6012, artistId: artist.id });
+      const t1 = await seedTrack({ id: 7030, albumId: album.id });
+      const t2 = await seedTrack({ id: 7031, albumId: album.id });
+      const playlist = await seedPlaylistRow("pl-add-dup");
+
+      const result = await addTracksToPlaylist(playlist.id, [t1.id, t1.id, t2.id]);
+      expect(result).toEqual({ added: 2, skipped: 1 });
+
+      const items = await orderedItems(playlist.id);
+      expect(items.map((i) => i.trackId)).toEqual([t1.id, t2.id]);
+    });
+
+    it("skips DRM, unknown-codec, and unowned-album tracks", async () => {
+      await seedSignedInMember("pl-add-unplayable");
+      const artist = await seedArtist(5013);
+      const album = await seedAlbum({ id: 6013, artistId: artist.id });
+      const unownedAlbum = await seedAlbum({ id: 6014, artistId: artist.id, owned: false });
+      const drmTrack = await seedTrack({ id: 7040, albumId: album.id, codec: "drm" });
+      const unknownCodecTrack = await seedTrack({ id: 7041, albumId: album.id, codec: "unknown" });
+      const unownedTrack = await seedTrack({ id: 7042, albumId: unownedAlbum.id });
+      const playlist = await seedPlaylistRow("pl-add-unplayable");
+
+      const result = await addTracksToPlaylist(playlist.id, [drmTrack.id, unknownCodecTrack.id, unownedTrack.id]);
+      expect(result).toEqual({ added: 0, skipped: 3 });
+      expect(await orderedItems(playlist.id)).toEqual([]);
+    });
+
+    it("skips unknown track ids instead of throwing", async () => {
+      await seedSignedInMember("pl-add-unknown-id");
+      const artist = await seedArtist(5014);
+      const album = await seedAlbum({ id: 6015, artistId: artist.id });
+      const t1 = await seedTrack({ id: 7050, albumId: album.id });
+      const playlist = await seedPlaylistRow("pl-add-unknown-id");
+
+      const result = await addTracksToPlaylist(playlist.id, [t1.id, 999999]);
+      expect(result).toEqual({ added: 1, skipped: 1 });
+    });
+
+    it("throws for more than 500 ids", async () => {
+      const tooMany = Array.from({ length: 501 }, (_, i) => i + 1);
+      await expect(addTracksToPlaylist(1, tooMany)).rejects.toThrow("at most 500 tracks");
+    });
+
+    it("returns {added:0, skipped:0} for an empty array without touching the DB", async () => {
+      await seedSignedInMember("pl-add-empty");
+      const playlist = await seedPlaylistRow("pl-add-empty");
+      const before = await testPrisma.playlist.findUnique({ where: { id: playlist.id } });
+
+      const result = await addTracksToPlaylist(playlist.id, []);
+      expect(result).toEqual({ added: 0, skipped: 0 });
+
+      const after = await testPrisma.playlist.findUnique({ where: { id: playlist.id } });
+      expect(after?.updatedAt).toEqual(before?.updatedAt);
+      expect(await orderedItems(playlist.id)).toEqual([]);
+      expect(revalidatePath).not.toHaveBeenCalled();
+    });
+
+    it("bumps Playlist.updatedAt and revalidates the playlist page and root layout", async () => {
+      await seedSignedInMember("pl-add-revalidate");
+      const artist = await seedArtist(5015);
+      const album = await seedAlbum({ id: 6016, artistId: artist.id });
+      const t1 = await seedTrack({ id: 7060, albumId: album.id });
+      const playlist = await seedPlaylistRow("pl-add-revalidate");
+      const before = await testPrisma.playlist.findUnique({ where: { id: playlist.id } });
+
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await addTracksToPlaylist(playlist.id, [t1.id]);
+
+      const after = await testPrisma.playlist.findUnique({ where: { id: playlist.id } });
+      expect(after!.updatedAt.getTime()).toBeGreaterThan(before!.updatedAt.getTime());
+
+      expect(revalidatePath).toHaveBeenCalledWith(`/music/playlist/${playlist.id}`);
+      expect(revalidatePath).toHaveBeenCalledWith("/", "layout");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // movePlaylistItem
+  // -------------------------------------------------------------------------
+
+  describe("movePlaylistItem", () => {
+    async function seedFourItemPlaylist(userId: string, base: number) {
+      const artist = await seedArtist(base);
+      const album = await seedAlbum({ id: base + 1, artistId: artist.id });
+      const tracks = [];
+      for (let i = 0; i < 4; i++) {
+        tracks.push(await seedTrack({ id: base + 10 + i, albumId: album.id }));
+      }
+      const { playlist, items } = await seedPlaylistWithTracks(
+        userId,
+        tracks.map((t) => t.id),
+      );
+      return { playlist, items, tracks };
+    }
+
+    it("moves an item down", async () => {
+      await seedSignedInMember("pl-move-down");
+      const { playlist, items, tracks } = await seedFourItemPlaylist("pl-move-down", 5100);
+
+      await movePlaylistItem(playlist.id, items[0].id, 1);
+
+      const after = await orderedItems(playlist.id);
+      expect(after.map((i) => i.trackId)).toEqual([tracks[1].id, tracks[0].id, tracks[2].id, tracks[3].id]);
+      expect(after.map((i) => i.position)).toEqual([0, 1, 2, 3]);
+    });
+
+    it("moves an item up", async () => {
+      await seedSignedInMember("pl-move-up");
+      const { playlist, items, tracks } = await seedFourItemPlaylist("pl-move-up", 5110);
+
+      await movePlaylistItem(playlist.id, items[2].id, 1);
+
+      const after = await orderedItems(playlist.id);
+      expect(after.map((i) => i.trackId)).toEqual([tracks[0].id, tracks[2].id, tracks[1].id, tracks[3].id]);
+      expect(after.map((i) => i.position)).toEqual([0, 1, 2, 3]);
+    });
+
+    it("moves an item to the front", async () => {
+      await seedSignedInMember("pl-move-front");
+      const { playlist, items, tracks } = await seedFourItemPlaylist("pl-move-front", 5120);
+
+      await movePlaylistItem(playlist.id, items[3].id, 0);
+
+      const after = await orderedItems(playlist.id);
+      expect(after.map((i) => i.trackId)).toEqual([tracks[3].id, tracks[0].id, tracks[1].id, tracks[2].id]);
+      expect(after.map((i) => i.position)).toEqual([0, 1, 2, 3]);
+    });
+
+    it("moves an item to the end", async () => {
+      await seedSignedInMember("pl-move-end");
+      const { playlist, items, tracks } = await seedFourItemPlaylist("pl-move-end", 5130);
+
+      await movePlaylistItem(playlist.id, items[0].id, 3);
+
+      const after = await orderedItems(playlist.id);
+      expect(after.map((i) => i.trackId)).toEqual([tracks[1].id, tracks[2].id, tracks[3].id, tracks[0].id]);
+      expect(after.map((i) => i.position)).toEqual([0, 1, 2, 3]);
+    });
+
+    it("clamps a negative target position to the front", async () => {
+      await seedSignedInMember("pl-move-clamp-neg");
+      const { playlist, items, tracks } = await seedFourItemPlaylist("pl-move-clamp-neg", 5140);
+
+      await movePlaylistItem(playlist.id, items[3].id, -50);
+
+      const after = await orderedItems(playlist.id);
+      expect(after.map((i) => i.trackId)).toEqual([tracks[3].id, tracks[0].id, tracks[1].id, tracks[2].id]);
+      expect(after.map((i) => i.position)).toEqual([0, 1, 2, 3]);
+    });
+
+    it("clamps an out-of-range target position to the end", async () => {
+      await seedSignedInMember("pl-move-clamp-pos");
+      const { playlist, items, tracks } = await seedFourItemPlaylist("pl-move-clamp-pos", 5150);
+
+      await movePlaylistItem(playlist.id, items[0].id, 999);
+
+      const after = await orderedItems(playlist.id);
+      expect(after.map((i) => i.trackId)).toEqual([tracks[1].id, tracks[2].id, tracks[3].id, tracks[0].id]);
+      expect(after.map((i) => i.position)).toEqual([0, 1, 2, 3]);
+    });
+
+    it("is a no-op when moved to its own position", async () => {
+      await seedSignedInMember("pl-move-noop");
+      const { playlist, items, tracks } = await seedFourItemPlaylist("pl-move-noop", 5160);
+
+      await movePlaylistItem(playlist.id, items[2].id, 2);
+
+      const after = await orderedItems(playlist.id);
+      expect(after.map((i) => i.trackId)).toEqual(tracks.map((t) => t.id));
+      expect(after.map((i) => i.position)).toEqual([0, 1, 2, 3]);
+      expect(revalidatePath).not.toHaveBeenCalled();
+    });
+
+    it("throws for an item id belonging to another playlist", async () => {
+      await seedSignedInMember("pl-move-cross");
+      const { playlist: playlistA } = await seedFourItemPlaylist("pl-move-cross", 5170);
+      const { items: itemsB } = await seedFourItemPlaylist("pl-move-cross", 5180);
+
+      await expect(movePlaylistItem(playlistA.id, itemsB[0].id, 0)).rejects.toThrow(
+        "Track is not in this playlist",
+      );
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // removePlaylistItem
+  // -------------------------------------------------------------------------
+
+  describe("removePlaylistItem", () => {
+    it("removes the item and closes the gap", async () => {
+      await seedSignedInMember("pl-remove-1");
+      const artist = await seedArtist(5200);
+      const album = await seedAlbum({ id: 5201, artistId: artist.id });
+      const t1 = await seedTrack({ id: 5210, albumId: album.id });
+      const t2 = await seedTrack({ id: 5211, albumId: album.id });
+      const t3 = await seedTrack({ id: 5212, albumId: album.id });
+      const { playlist, items } = await seedPlaylistWithTracks("pl-remove-1", [t1.id, t2.id, t3.id]);
+
+      await removePlaylistItem(playlist.id, items[1].id);
+
+      const after = await orderedItems(playlist.id);
+      expect(after.map((i) => i.trackId)).toEqual([t1.id, t3.id]);
+      expect(after.map((i) => i.position)).toEqual([0, 1]);
+    });
+
+    it("throws for an item that is not in the playlist", async () => {
+      await seedSignedInMember("pl-remove-wrong");
+      const artist = await seedArtist(5220);
+      const album = await seedAlbum({ id: 5221, artistId: artist.id });
+      const t1 = await seedTrack({ id: 5230, albumId: album.id });
+      const { playlist: playlistA } = await seedPlaylistWithTracks("pl-remove-wrong", [t1.id]);
+      const playlistB = await seedPlaylistRow("pl-remove-wrong", "Other");
+
+      await expect(removePlaylistItem(playlistB.id, 999999)).rejects.toThrow("Track is not in this playlist");
+      // Also: an item id that belongs to a different one of this user's own playlists.
+      const itemsA = await orderedItems(playlistA.id);
+      await expect(removePlaylistItem(playlistB.id, itemsA[0].id)).rejects.toThrow(
+        "Track is not in this playlist",
+      );
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // loadPlaylistQueue(<id>)
+  // -------------------------------------------------------------------------
+
+  describe("loadPlaylistQueue(<playlist id>)", () => {
+    it("returns QueueTracks in position order with the exact QueueTrack field set", async () => {
+      await seedSignedInMember("pl-queue-1");
+      const artist = await seedArtist(5300, "Queue Playlist Artist");
+      const album = await seedAlbum({ id: 5301, artistId: artist.id, title: "Queue Playlist Album" });
+      const t1 = await seedTrack({ id: 5310, albumId: album.id, title: "First" });
+      const t2 = await seedTrack({ id: 5311, albumId: album.id, title: "Second" });
+      const { playlist } = await seedPlaylistWithTracks("pl-queue-1", [t2.id, t1.id]);
+
+      const queue = await loadPlaylistQueue(playlist.id);
+      expect(queue.map((t) => t.trackId)).toEqual([t2.id, t1.id]);
+      expect(Object.keys(queue[0]).sort()).toEqual(
+        [
+          "trackId",
+          "title",
+          "artist",
+          "albumId",
+          "albumTitle",
+          "hasCover",
+          "coverVersion",
+          "durationSecs",
+          "codec",
+        ].sort(),
+      );
+      expect(queue[0]).toEqual({
+        trackId: t2.id,
+        title: "Second",
+        artist: "Queue Playlist Artist",
+        albumId: album.id,
+        albumTitle: "Queue Playlist Album",
+        hasCover: false,
+        coverVersion: null,
+        durationSecs: null,
+        codec: "alac",
+      });
+    });
+
+    it("throws 'Playlist not found' for another user's playlist id", async () => {
+      await seedSignedInMember("pl-queue-owner");
+      await seedSignedInMember("pl-queue-other");
+      const playlist = await seedPlaylistRow("pl-queue-owner");
+
+      getSession.mockResolvedValue({ user: { id: "pl-queue-other" } });
+      await expect(loadPlaylistQueue(playlist.id)).rejects.toThrow("Playlist not found");
+    });
+
+    it("throws for a non-integer id", async () => {
+      await seedSignedInMember("pl-queue-noninteger");
+      await expect(loadPlaylistQueue(1.5)).rejects.toThrow("invalid playlist id");
+    });
   });
 });

@@ -112,6 +112,7 @@ export async function deleteAccount(
     prisma.trackFavourite.deleteMany({ where: { userId } }),
     prisma.albumFavourite.deleteMany({ where: { userId } }),
     prisma.artistFavourite.deleteMany({ where: { userId } }),
+    prisma.playlist.deleteMany({ where: { userId } }), // items cascade
   ]);
   await prisma.user.delete({ where: { id: userId } });
   // Deliberately after the delete: the row records that this user id

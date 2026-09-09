@@ -415,6 +415,7 @@ model Track {
   mtimeMs      Float? // probe cache key, same convention as Version
   probedAt     DateTime?
   favourites   TrackFavourite[]
+  playlistItems PlaylistItem[]
 
   @@index([albumId])
 }
@@ -726,6 +727,37 @@ model ArtistFavourite {
 
   @@id([userId, artistId])
   @@index([userId])
+}
+
+// A person's playlists — ordered tracks, per user (like the favourites
+// above; userId is a BetterAuth User.id with no FK, cleaned up explicitly
+// by deleteAccount). Positions are kept dense 0..n-1 by the actions in
+// src/app/actions/music-state.ts, always rewritten inside one
+// transaction; there is deliberately NO unique index on (playlistId,
+// position) because SQLite checks uniqueness per statement, so a
+// swap/shift would trip it mid-transaction. See PLAYLISTS_PLAN.md.
+model Playlist {
+  id        Int            @id @default(autoincrement())
+  userId    String // BetterAuth User.id
+  name      String
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  items     PlaylistItem[]
+
+  @@index([userId])
+}
+
+model PlaylistItem {
+  id         Int      @id @default(autoincrement())
+  playlistId Int
+  playlist   Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  trackId    Int
+  track      Track    @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  position   Int
+  addedAt    DateTime @default(now())
+
+  @@index([playlistId, position])
+  @@index([trackId])
 }
 
 // A person's favourite shows -- the same idea as FilmFavourite.

@@ -19,10 +19,11 @@
 // descendant of this component.
 //
 // Unlike the sidebar, the rail also hides itself entirely — most pages have
-// nothing to show here. It renders nothing until there's a queue or the
-// visitor is somewhere under /music; both checks are SSR-safe (the engine's
-// snapshot is always EMPTY_SNAPSHOT at hydration, and usePathname agrees
-// between server and client render), so there's no hydration flash.
+// nothing to show here. It renders nothing until there's a queue, a
+// favourite track, a playlist, or the visitor is somewhere under /music;
+// all of these checks are SSR-safe (the engine's snapshot is always
+// EMPTY_SNAPSHOT at hydration, and usePathname agrees between server and
+// client render), so there's no hydration flash.
 
 import { useState, useTransition } from "react";
 import { usePathname } from "next/navigation";
@@ -48,9 +49,11 @@ function remainingCount(order: number[], currentKey: number | null): number {
 export function Rail({
   initialCollapsed,
   favouriteTrackCount,
+  playlistCount,
 }: {
   initialCollapsed: boolean;
   favouriteTrackCount: number;
+  playlistCount: number;
 }) {
   const pathname = usePathname();
   const { snapshot, engine } = usePlayer();
@@ -69,7 +72,13 @@ export function Rail({
     });
   }
 
-  if (snapshot.queue.length === 0 && favouriteTrackCount === 0 && !pathname.startsWith("/music")) return null;
+  if (
+    snapshot.queue.length === 0 &&
+    favouriteTrackCount === 0 &&
+    playlistCount === 0 &&
+    !pathname.startsWith("/music")
+  )
+    return null;
 
   const { current } = snapshot;
   const isPlaying = snapshot.status === "playing" || snapshot.status === "loading";

@@ -16,8 +16,10 @@ import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { countFavouriteTracks } from "@/lib/queries-music";
+import { getUserPlaylists } from "@/lib/queries-playlists";
 import { isChromelessPath } from "@/lib/public-paths";
 import { PlayerProvider } from "@/components/player/PlayerProvider";
+import { PlaylistsProvider } from "@/components/player/PlaylistsContext";
 import { TopNav } from "./top-nav";
 import { Sidebar } from "./sidebar";
 import { BottomTabs } from "./bottom-tabs";
@@ -76,11 +78,14 @@ export async function AppShell({ children }: { children: React.ReactNode }) {
   });
   const shellUser: ShellUser = { name: user.name, email: user.email, image: user.image };
   const flags = { isOwner: user.isAppOwner, hasAdultAccess: user.adultLibraryAccess };
-  // The rail's pinned "Favourite tracks" row and the mobile sheet's
-  // playlists panel both need this count; read once here rather than in
-  // each client component (they can't read it themselves — it's per-user
-  // DB state, not something the engine tracks).
-  const favouriteTrackCount = await countFavouriteTracks(session.user.id);
+  // The rail's pinned "Favourite tracks" row, the mobile sheet's playlists
+  // panel, and the rail's own visibility check all need these; read once
+  // here rather than in each client component (they can't read it
+  // themselves — it's per-user DB state, not something the engine tracks).
+  const [favouriteTrackCount, playlists] = await Promise.all([
+    countFavouriteTracks(session.user.id),
+    getUserPlaylists(session.user.id),
+  ]);
 
   // PlayerProvider owns the one gapless music engine for the life of the
   // root layout (see components/player/PlayerProvider.tsx) — it has to
@@ -90,34 +95,40 @@ export async function AppShell({ children }: { children: React.ReactNode }) {
   // nothing that reads usePlayer().
   return (
     <PlayerProvider>
-      <TopNav user={shellUser} />
-      <Sidebar user={shellUser} flags={flags} initialCollapsed={user.sidebarCollapsed} />
-      {/* md:pl clears the floating sidebar (its width plus the 1rem inset
-          on each side, the left one growing with the safe-area inset on a
-          notched phone in landscape); md:pr does the same for the rail on
-          the right (see rail.tsx and globals.css's "Rail offset" block —
-          --rail-w is 0 whenever the rail isn't mounted). transition-
-          [padding] (not just padding-left) now that both sides animate,
-          in step with the sidebar's/rail's own width transitions so
-          content reflows smoothly on collapse/expand. pb-[calc(7rem+
-          var(--player-bar-h))] clears the floating mobile tab bar (0.75rem
-          bottom offset + safe-area inset + ~3.5rem height, same as
-          before) plus the mobile now-playing strip stacked above it when
-          something's queued. flex/flex-col keeps the library pages'
-          flex-1 fill working exactly as it did under the old layout's
-          <main>. @container makes <main> the size container every page's
-          grid ladder measures (`@xl:`, `@5xl:` … variants), so column
-          counts follow the width actually available beside the sidebar
-          (and rail) rather than the viewport — see src/lib/card-grid.ts.
-          Chrome/Safari keep position:fixed descendants (VideoPlayer,
-          confirm dialogs) viewport-relative inside an inline-size
-          container. */}
-      <main className="@container flex flex-1 flex-col pb-[calc(7rem+var(--player-bar-h))] transition-[padding] motion-reduce:transition-none md:pb-0 md:pl-[calc(var(--sidebar-w)+1rem+max(1rem,env(safe-area-inset-left)))] md:pr-[calc(var(--rail-w)+1rem+max(1rem,env(safe-area-inset-right)))]">
-        {children}
-      </main>
-      <Rail initialCollapsed={user.railCollapsed} favouriteTrackCount={favouriteTrackCount} />
-      <MobilePlayerBar favouriteTrackCount={favouriteTrackCount} />
-      <BottomTabs flags={flags} />
+      <PlaylistsProvider playlists={playlists} favouriteTrackCount={favouriteTrackCount}>
+        <TopNav user={shellUser} />
+        <Sidebar user={shellUser} flags={flags} initialCollapsed={user.sidebarCollapsed} />
+        {/* md:pl clears the floating sidebar (its width plus the 1rem inset
+            on each side, the left one growing with the safe-area inset on a
+            notched phone in landscape); md:pr does the same for the rail on
+            the right (see rail.tsx and globals.css's "Rail offset" block —
+            --rail-w is 0 whenever the rail isn't mounted). transition-
+            [padding] (not just padding-left) now that both sides animate,
+            in step with the sidebar's/rail's own width transitions so
+            content reflows smoothly on collapse/expand. pb-[calc(7rem+
+            var(--player-bar-h))] clears the floating mobile tab bar (0.75rem
+            bottom offset + safe-area inset + ~3.5rem height, same as
+            before) plus the mobile now-playing strip stacked above it when
+            something's queued. flex/flex-col keeps the library pages'
+            flex-1 fill working exactly as it did under the old layout's
+            <main>. @container makes <main> the size container every page's
+            grid ladder measures (`@xl:`, `@5xl:` … variants), so column
+            counts follow the width actually available beside the sidebar
+            (and rail) rather than the viewport — see src/lib/card-grid.ts.
+            Chrome/Safari keep position:fixed descendants (VideoPlayer,
+            confirm dialogs) viewport-relative inside an inline-size
+            container. */}
+        <main className="@container flex flex-1 flex-col pb-[calc(7rem+var(--player-bar-h))] transition-[padding] motion-reduce:transition-none md:pb-0 md:pl-[calc(var(--sidebar-w)+1rem+max(1rem,env(safe-area-inset-left)))] md:pr-[calc(var(--rail-w)+1rem+max(1rem,env(safe-area-inset-right)))]">
+          {children}
+        </main>
+        <Rail
+          initialCollapsed={user.railCollapsed}
+          favouriteTrackCount={favouriteTrackCount}
+          playlistCount={playlists.length}
+        />
+        <MobilePlayerBar favouriteTrackCount={favouriteTrackCount} />
+        <BottomTabs flags={flags} />
+      </PlaylistsProvider>
     </PlayerProvider>
   );
 }
