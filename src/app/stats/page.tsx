@@ -83,7 +83,7 @@ export default async function StatsPage() {
             {stats.mostWatched.length === 0 ? (
               <SectionEmpty>No titles watched yet.</SectionEmpty>
             ) : (
-              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+              <div className="grid grid-cols-2 gap-2.5 @lg:grid-cols-3 @2xl:grid-cols-4 @min-[60rem]:grid-cols-5">
                 {stats.mostWatched.map((f) => (
                   <Link
                     key={f.id}

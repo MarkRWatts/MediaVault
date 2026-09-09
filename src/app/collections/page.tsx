@@ -33,7 +33,7 @@ export default async function CollectionsPage() {
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-3 px-4 py-6 sm:grid-cols-3 sm:px-6 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8">
+        <div className="grid grid-cols-2 gap-3 px-4 py-6 sm:px-6 @lg:grid-cols-3 @2xl:grid-cols-4 @4xl:grid-cols-5 @5xl:grid-cols-6 @min-[90rem]:grid-cols-8">
           {collections.map((c) => (
             <CollectionCard key={c.id} collection={c} />
           ))}
