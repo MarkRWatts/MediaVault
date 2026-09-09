@@ -535,6 +535,10 @@ model User {
   // written by app/actions/prefs.ts. Same shape as template-app's.
   sidebarCollapsed Boolean @default(false)
 
+  // Same idea for the right-hand player/playlists rail
+  // (components/shell/rail.tsx) — see PLAYLISTS_PLAN.md.
+  railCollapsed Boolean @default(false)
+
   oauthclients       OauthClient[]
   oauthrefreshtokens OauthRefreshToken[]
   oauthaccesstokens  OauthAccessToken[]

@@ -115,13 +115,14 @@ a DVD and a BluRay rip of the same film = 1 film, 2 versions).
 
 ## Playback (decided 2026-08 — built, with one reversal)
 
-- **Music, gapless, in-browser — built** as planned (`AlbumPlayer.tsx`,
-  `/api/audio/[trackId]`, `src/lib/audio-stream.ts`): Web Audio API with
-  prefetched decoded buffers and sample-accurate scheduling. Safari decodes
-  ALAC natively; other browsers get a server-side ALAC→FLAC remux, which is
-  lossless-to-lossless (bit-identical PCM), not a quality-losing transcode.
-  Shuffle and repeat-album exist; there is no cross-album queue and no
-  listening history (see Roadmap).
+- **Music, gapless, in-browser — built** as planned (`src/lib/player-engine.ts`
+  behind `PlayerProvider` in the app shell, `/api/audio/[trackId]`, `src/lib/audio-stream.ts`):
+  Web Audio API with prefetched decoded buffers and sample-accurate scheduling.
+  Playback persists while you navigate, and a right-hand rail holds the Now Playing card
+  and a cross-album queue (Play next / Add to queue). Safari decodes ALAC natively; other
+  browsers get a server-side ALAC→FLAC remux, which is lossless-to-lossless (bit-identical PCM),
+  not a quality-losing transcode. Shuffle and repeat-album exist; listening history doesn't
+  yet (see Roadmap and `PLAYLISTS_PLAN.md`).
 - **Video — the "stays external" decision was reversed.** In-browser film
   playback shipped (`VideoPlayer.tsx`, `/api/video/[versionId]/*`,
   `src/lib/video-cache.ts`): a file that's already browser-playable is served
@@ -187,7 +188,7 @@ gaps a household member hits first.
 | **Scan log + unmatched files on `/report`** | `ScanRun.log`/`filesSeen` record every unparseable filename and probe failure and *nothing renders them* — the report can't see the files that never became rows, which PLAN.md promised it would | The data, `GET /api/runs`; `ScanControls`' `RunInfo` just omits the fields | 1 |
 | **Film "fix this match" form** | Albums have one; films flagged LOW/UNMATCHED on `/report` can only be corrected by rescanning | `FixAlbumMatchForm` as the pattern, `search-movie` route | 1 |
 | **Blu-ray → 4K upgrade candidates** | The upgrade list only covers DVD → Blu-ray though UHD is a first-class format everywhere else | `getReportData`'s upgrade query, one more predicate | 0.25 |
-| **Music listening history** | `AlbumPlayer` reports nothing; `/stats` is films-only | The `WatchProgress` pattern and the throttled reporting in `VideoPlayer` port directly | 1.5 |
+| **Music listening history** | `/stats` is films-only; no playback tracking yet | The `WatchProgress` pattern and the throttled reporting in `VideoPlayer` port directly | 1.5 |
 | **Render what enrichment already stores** | Scene backdrops, performer images, episode overviews + air dates, album release dates are fetched and never shown | All in the schema and selected in queries; `Performer.imagePath` is even passed to the page | 1 |
 | **Invitation emails** | Household invites are still copy-a-link | Resend is wired for OTP and access codes; `sendInvitationEmail` is the one plugin hook not configured | 0.5 |
 
@@ -196,7 +197,7 @@ gaps a household member hits first.
 | Item | Why | Already exists | Est. |
 |---|---|---|---|
 | **Global search** | Only Movies has search, client-side over one list. One box across films, shows, artists, albums, collections is the most-used feature the app doesn't have | Per-model queries; needs a server-side search query + `/search` page + nav box | 2 |
-| **A personal layer: watchlist, favourites, rating** | Households exist, but the only per-person state is watch history and the adult opt-in | `WatchProgress`'s per-user shape; `Film.rating` is TMDB's, read-only | 3 |
+| **A personal layer: watchlist, favourites, rating** | Households exist, but the only per-person state is watch history and the adult opt-in | `WatchProgress`'s per-user shape; `Film.rating` is TMDB's, read-only; Film/show favourites shipped; music favourites + playlists are designed in `PLAYLISTS_PLAN.md` | 3 |
 | **A real wantlist** | "Missing" is machine-derived from TMDB/Discogs; no way to add an arbitrary title or mark one ordered / won't-own, so `/report` never stops listing it | The `owned=false` rows; needs a state column and an add-by-search form | 2 |
 | **Physical-media logistics** | Location/shelf, lent-to, purchase date + price. Pressing tracking is thorough but can't answer "where is it" or "who has it" | `PhysicalCopy` / `FilmPhysicalCopy` + their edit forms | 1.5 |
 | **Jellyfin watch-state sync** | The two watch histories are entirely separate; "Continue watching" is wrong for people who watch on the TV | `User.jellyfinUserId`, `Version.jellyfinId`, the Jellyfin client in `src/lib/jellyfin.ts` | 2 |

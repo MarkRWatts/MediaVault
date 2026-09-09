@@ -81,6 +81,18 @@
      `body:has()` rules below drive the real value off the sidebar's own
      DOM state, so this is the only definition — see "Sidebar offset". */
   --sidebar-w: 0rem;
+
+  /* Right-hand player rail width, consumed by <main>'s right padding —
+     same `body:has()` mechanism as --sidebar-w, driven off the rail's own
+     DOM state (components/shell/rail.tsx), see "Rail offset" below. Stays
+     0 whenever the rail isn't in the DOM (nothing queued and not on
+     /music — see rail.tsx's visibility check). */
+  --rail-w: 0rem;
+  /* Height of the mobile now-playing strip (components/shell/
+     mobile-player-bar.tsx), consumed by <main>'s bottom padding on top of
+     the bottom-tabs clearance below `md`. 0 whenever the strip isn't
+     mounted (nothing queued). */
+  --player-bar-h: 0rem;
 }
 
 @theme inline {
@@ -201,6 +213,38 @@ body:has(#app-sidebar) {
 @media (min-width: 1024px) {
   body:has(#app-sidebar[data-collapsed="false"]) {
     --sidebar-w: 16rem;
+  }
+}
+
+/* ---- Rail offset ----------------------------------------------------- */
+
+/* Same `:has()` trick as the sidebar above, mirrored on the right for the
+   player rail (components/shell/rail.tsx stamps id="app-rail" and its own
+   live data-collapsed). Expanding only kicks in at `xl`, one breakpoint
+   later than the sidebar's `lg` — at `lg` a 16rem sidebar plus a 20rem
+   rail would leave only ~450px for content, not enough for a poster grid
+   plus the player card. Below `xl` the rail stays at its 4.5rem icon
+   strip regardless of the stored preference. */
+body:has(#app-rail) {
+  --rail-w: 4.5rem;
+}
+@media (min-width: 1280px) {
+  body:has(#app-rail[data-collapsed="false"]) {
+    --rail-w: 20rem;
+  }
+}
+
+/* ---- Mobile now-playing strip offset --------------------------------- */
+
+/* components/shell/mobile-player-bar.tsx stamps id="app-player-bar" only
+   while something is queued and the viewport is below `md`; :has() lets
+   <main> reserve room for it the same way it reserves room for the
+   floating bottom tab bar, with no client JS. Matches bottom-tabs.tsx's
+   own `md:hidden` breakpoint (47.99rem ≈ just under Tailwind's 48rem
+   `md`). */
+@media (max-width: 47.99rem) {
+  body:has(#app-player-bar) {
+    --player-bar-h: 4rem;
   }
 }
 

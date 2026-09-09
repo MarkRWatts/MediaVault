@@ -33,9 +33,9 @@ sign-in and watch history.
   any physical CD/vinyl pressings you own — each pressing can be linked to
   its own Discogs release for its own tracklist, catalogue number, and cover
   art (falling back to the digital files' own embedded artwork) — alongside
-  **gapless in-browser album playback** — lossless end-to-end (ALAC is
-  served as FLAC, sample-accurate Web Audio track joins, no transcoding of
-  lossy files).
+  **gapless in-browser music playback** — app-wide persistent player with queue
+  that keeps playing while you browse, lossless end-to-end (ALAC is served as FLAC,
+  sample-accurate Web Audio track joins, no transcoding of lossy files).
 - **Collections** — film series (James Bond, Alien, …) in release-order
   timelines with missing films greyed out.
 - **Report** — missing films per collection, missing seasons/episodes per

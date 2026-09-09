@@ -159,9 +159,8 @@ instead of copying template-app's `user-avatar.tsx`.
 
 Sidebar `z-30`, bottom tabs `z-40`, More sheet and its scrim `z-40/50`.
 `VideoPlayer.tsx` is `fixed inset-0 z-50` and is mounted inside `<main>`,
-i.e. earlier in the DOM than `BottomTabs`. Bump the player (and
-`AlbumPlayer` if it has its own overlay) to `z-[60]` so an open sheet can
-never paint over it.
+i.e. earlier in the DOM than `BottomTabs`. Bump the player to `z-[60]` so
+an open sheet can never paint over it.
 
 ### Content width and the poster grid
 
@@ -253,6 +252,15 @@ the rail expanded and collapsed.
   are added and `app-shell.tsx` lives under `src/components`, not `src/app`.
 - `vitest`, `lint`, `typecheck` in CI; nothing browser-driven runs
   automatically, so the band-by-band check in step 11 is manual.
+
+## Right rail (2026-09-09)
+
+A matching right-hand rail (`src/components/shell/rail.tsx`, `--rail-w` via
+`body:has(#app-rail[data-collapsed])`, `<main>` right padding, expanded only from `xl`)
+was added for the music player (Now Playing card + queue) and playlists. Mirrors the
+sidebar's floating glass, collapse-state persistence, and safe-area inset handling.
+See `PLAYLISTS_PLAN.md` for the full design (three-PR rollout starting with engine + rail,
+then favourites, then playlists).
 
 ## Docs to update
 
