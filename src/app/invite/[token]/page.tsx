@@ -35,7 +35,7 @@ export default async function InvitePage({
   const session = await auth.api.getSession({ headers: await headers() });
 
   return (
-    <main className="flex min-h-[calc(100vh-4rem)] flex-col items-center justify-center px-4 py-10">
+    <main className="flex min-h-dvh flex-col items-center justify-center px-4 py-10">
       <div className="flex w-full max-w-sm flex-col items-center gap-6 rounded-lg border border-border bg-bg-elevated p-8 text-center shadow-lg shadow-black/30">
         <AuthLogo />
         {invalid ? (

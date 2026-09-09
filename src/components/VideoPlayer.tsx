@@ -687,7 +687,9 @@ export default function VideoPlayer({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      // z-[60]: above the shell's mobile tab bar (z-40) and its "More" sheet
+      // (z-50), which sit later in the DOM than this overlay.
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4"
       role="dialog"
       aria-modal="true"
       aria-label={`Playing ${title}`}

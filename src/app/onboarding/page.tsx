@@ -36,7 +36,7 @@ export default async function OnboardingPage() {
   const signupCode = (await cookies()).get(SIGNUP_CODE_COOKIE)?.value ?? "";
 
   return (
-    <main className="flex min-h-[calc(100vh-4rem)] flex-col items-center justify-center px-4 py-10">
+    <main className="flex min-h-dvh flex-col items-center justify-center px-4 py-10">
       <div className="flex w-full max-w-sm flex-col gap-8">
         <div className="flex flex-col items-center gap-2 text-center">
           <h1 className="font-display text-3xl tracking-wide text-text">Welcome to MediaVault</h1>

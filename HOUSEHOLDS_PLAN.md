@@ -340,10 +340,11 @@ owner (see below).
   gated by `Member.role === "owner"`, deliberately NOT switched to
   `isAppOwner` — that's the whole point of the two staying separate.
 
-**Deliberately not adopted from the template**: its sidebar/left-nav
-layout (kept MediaVault's existing top nav) and its branded HTML email
+**Deliberately not adopted from the template**: its branded HTML email
 system (kept the minimal plain-text-first style already used for OTP
-emails).
+emails). Its sidebar/left-nav layout was also skipped at the time (kept
+MediaVault's existing top nav) but adopted later, on 2026-09-09, so that
+all of Mark's apps share one shell — see `SIDEBAR_PLAN.md`.
 
 ## Post-deploy addition: Jellyfin SSO
 
