@@ -32,13 +32,22 @@ function AlbumTile({
   album,
   favourite,
   badge,
+  coverFormat,
 }: {
   album: ArtistCatalogueAlbum;
   favourite: boolean;
   /** Small format chip beside the year ("+CD" in the Digital list). */
   badge?: string | null;
+  /** Medium ("VINYL") whose own pressing cover should be preferred over the
+   *  album's (CD/digital) cover, when that pressing has its own art — see
+   *  FORMAT_LISTS. Undefined for lists that intentionally show the album
+   *  cover (Digital). */
+  coverFormat?: string;
 }) {
   const isPlaceholder = !album.owned && album.physicalMedia.length === 0;
+  const formatCover = coverFormat
+    ? album.physicalCopyCovers.find((c) => c.medium === coverFormat && c.hasCover)
+    : undefined;
 
   const body = (
     <div
@@ -50,6 +59,7 @@ function AlbumTile({
       <CoverImage
         albumId={album.hasCover ? album.id : null}
         version={album.coverVersion}
+        src={formatCover ? `/api/physical-cover/${formatCover.id}` : null}
         title={album.title}
         className={isPlaceholder ? "w-full grayscale opacity-45" : "w-full"}
       />
@@ -110,10 +120,12 @@ function DecadeTimeline({
   albums,
   favourites,
   badgeFor,
+  coverFormat,
 }: {
   albums: ArtistCatalogueAlbum[];
   favourites: Set<number>;
   badgeFor?: (a: ArtistCatalogueAlbum) => string | null;
+  coverFormat?: string;
 }) {
   return (
     <div className="flex flex-col gap-6">
@@ -126,7 +138,13 @@ function DecadeTimeline({
           </div>
           <div className={ALBUM_GRID}>
             {group.items.map((a) => (
-              <AlbumTile key={a.id} album={a} favourite={favourites.has(a.id)} badge={badgeFor?.(a)} />
+              <AlbumTile
+                key={a.id}
+                album={a}
+                favourite={favourites.has(a.id)}
+                badge={badgeFor?.(a)}
+                coverFormat={coverFormat}
+              />
             ))}
           </div>
         </div>
@@ -140,6 +158,10 @@ const FORMAT_LISTS: {
   title: string;
   pick: (a: ArtistCatalogueAlbum) => boolean;
   badgeFor?: (a: ArtistCatalogueAlbum) => string | null;
+  /** See AlbumTile's coverFormat — the medium whose own pressing cover this
+   *  list should prefer. Omitted for Digital: that list is meant to show
+   *  the album's (CD/digital) cover, not a pressing's. */
+  coverFormat?: string;
 }[] = [
   {
     title: "Digital",
@@ -147,7 +169,7 @@ const FORMAT_LISTS: {
     // "+CD" = the rip plus the disc; a bare "CD" = disc only, no files.
     badgeFor: (a) => (a.physicalMedia.includes("CD") ? (a.owned ? "+CD" : "CD") : null),
   },
-  { title: "Vinyl", pick: (a) => a.physicalMedia.includes("VINYL") },
+  { title: "Vinyl", pick: (a) => a.physicalMedia.includes("VINYL"), coverFormat: "VINYL" },
 ];
 
 export default async function ArtistPage({
@@ -275,7 +297,12 @@ export default async function ArtistPage({
               count={list.albums.length}
               noun="album"
             >
-              <DecadeTimeline albums={list.albums} favourites={favourites} badgeFor={list.badgeFor} />
+              <DecadeTimeline
+                albums={list.albums}
+                favourites={favourites}
+                badgeFor={list.badgeFor}
+                coverFormat={list.coverFormat}
+              />
             </CollapsibleSection>
           ))}
 
