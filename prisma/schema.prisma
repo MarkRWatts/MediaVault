@@ -290,6 +290,8 @@ model Artist {
   backdropPath   String? // cached wide background/banner image, relative to POSTER_CACHE_DIR/artists/
   backdropSource String? // fanart | theaudiodb | manual
 
+  favourites      ArtistFavourite[]
+
   @@index([sortName])
 }
 
@@ -324,6 +326,8 @@ model Album {
   physicalCopies PhysicalCopy[]
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
+
+  favourites     AlbumFavourite[]
 
   @@unique([artistId, folder])
   @@index([artistId])
@@ -410,6 +414,7 @@ model Track {
   tagYear      Int? // year from the file's own date tag — Album.year fallback when Discogs has no match
   mtimeMs      Float? // probe cache key, same convention as Version
   probedAt     DateTime?
+  favourites   TrackFavourite[]
 
   @@index([albumId])
 }
@@ -685,6 +690,41 @@ model FilmFavourite {
   createdAt DateTime @default(now())
 
   @@id([userId, filmId])
+  @@index([userId])
+}
+
+// Music favourites — the heart on a track row, an album page, an artist
+// page. Same per-user shape as FilmFavourite (userId is a BetterAuth
+// User.id with no FK, cascade from the media side). Track ids are stable
+// across rescans (the scanner upserts by filePath), so a favourite only
+// disappears when its file does. See PLAYLISTS_PLAN.md.
+model TrackFavourite {
+  userId    String // BetterAuth User.id
+  trackId   Int
+  track     Track    @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([userId, trackId])
+  @@index([userId])
+}
+
+model AlbumFavourite {
+  userId    String // BetterAuth User.id
+  albumId   Int
+  album     Album    @relation(fields: [albumId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([userId, albumId])
+  @@index([userId])
+}
+
+model ArtistFavourite {
+  userId    String // BetterAuth User.id
+  artistId  Int
+  artist    Artist   @relation(fields: [artistId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([userId, artistId])
   @@index([userId])
 }
 

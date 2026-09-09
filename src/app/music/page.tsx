@@ -5,12 +5,66 @@ export const dynamic = "force-dynamic";
 import Link from "next/link";
 import CoverImage from "@/components/CoverImage";
 import PhysicalAddForm from "@/components/PhysicalAddForm";
-import { getMusicIndex, getArtistDetail } from "@/lib/queries-music";
+import CollapsibleSection from "@/components/CollapsibleSection";
+import FavouriteTracksTile from "@/components/music/FavouriteTracksTile";
+import { getMusicIndex, getArtistDetail, getMusicFavourites } from "@/lib/queries-music";
 import { requireMemberOrRedirect } from "@/lib/require-member";
+import type { MusicIndexArtist, FavouriteAlbumView } from "@/lib/queries-music";
+
+// Shared by the main artist grid and the favourites shelf, so both render
+// the same card. `variousAlbumCount` only matters for the Compilations
+// pseudo-artist (see below) — every other artist ignores it.
+function ArtistCard({ artist, variousAlbumCount }: { artist: MusicIndexArtist; variousAlbumCount: number }) {
+  return (
+    <Link
+      href={`/music/artist/${artist.id}`}
+      className="hover-lift group flex flex-col overflow-hidden rounded-lg border border-border bg-bg-elevated"
+    >
+      <CoverImage
+        albumId={artist.coverAlbumId}
+        version={artist.coverVersion}
+        title={artist.name}
+        className="w-full border-b border-border"
+      />
+      <div className="flex flex-1 flex-col gap-1.5 p-3">
+        <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-text">{artist.name}</h3>
+        <span className="mt-auto font-mono text-xs text-text-faint">
+          {artist.various
+            ? `${variousAlbumCount} album${variousAlbumCount === 1 ? "" : "s"}`
+            : `${artist.ownedStudio}/${artist.totalStudio}`}
+        </span>
+      </div>
+    </Link>
+  );
+}
+
+// Favourite-albums shelf card — simpler than the artist/library cards
+// (title + artist name only, no owned/total fraction).
+function FavouriteAlbumCard({ album }: { album: FavouriteAlbumView }) {
+  return (
+    <Link
+      href={`/music/album/${album.id}`}
+      className="hover-lift block overflow-hidden rounded-lg border border-border bg-bg-elevated"
+    >
+      <CoverImage
+        albumId={album.hasCover ? album.id : null}
+        version={album.coverVersion}
+        title={album.title}
+        className="w-full"
+      />
+      <div className="flex flex-col gap-0.5 p-2.5">
+        <h3 className="line-clamp-2 text-xs font-semibold leading-snug text-text">{album.title}</h3>
+        <span className="text-[11px] text-text-faint">{album.artistName}</span>
+      </div>
+    </Link>
+  );
+}
+
+const SHELF_ROW = "flex gap-3 overflow-x-auto pb-2";
 
 export default async function MusicPage() {
-  await requireMemberOrRedirect();
-  const { totals, artists } = await getMusicIndex();
+  const { userId } = await requireMemberOrRedirect();
+  const [{ totals, artists }, favourites] = await Promise.all([getMusicIndex(), getMusicFavourites(userId)]);
 
   // The Compilations pseudo-artist (various=true) skips Discogs matching
   // entirely, so its studio counters are always 0/0 — getMusicIndex has no
@@ -20,6 +74,8 @@ export default async function MusicPage() {
   const variousAlbumCount = variousArtist
     ? await getArtistDetail(variousArtist.id).then((d) => (d ? d.studio.length + d.shelf.length : 0))
     : 0;
+
+  const hasFavourites = favourites.artists.length > 0 || favourites.albums.length > 0 || favourites.trackCount > 0;
 
   const tiles: { label: string; value: number | string; href?: string }[] = [
     { label: "Artists", value: totals.artists },
@@ -76,6 +132,46 @@ export default async function MusicPage() {
             run — an empty artist list must not hide it. */}
         <PhysicalAddForm />
 
+        {hasFavourites && (
+          <div className="flex flex-col gap-6">
+            <FavouriteTracksTile count={favourites.trackCount} />
+
+            {favourites.artists.length > 0 && (
+              <CollapsibleSection
+                storageKey="music:Favourite artists"
+                title="Favourite artists"
+                count={favourites.artists.length}
+                noun="artist"
+              >
+                <div className={SHELF_ROW}>
+                  {favourites.artists.map((a) => (
+                    <div key={a.id} className="w-36 shrink-0">
+                      <ArtistCard artist={a} variousAlbumCount={variousAlbumCount} />
+                    </div>
+                  ))}
+                </div>
+              </CollapsibleSection>
+            )}
+
+            {favourites.albums.length > 0 && (
+              <CollapsibleSection
+                storageKey="music:Favourite albums"
+                title="Favourite albums"
+                count={favourites.albums.length}
+                noun="album"
+              >
+                <div className={SHELF_ROW}>
+                  {favourites.albums.map((al) => (
+                    <div key={al.id} className="w-36 shrink-0">
+                      <FavouriteAlbumCard album={al} />
+                    </div>
+                  ))}
+                </div>
+              </CollapsibleSection>
+            )}
+          </div>
+        )}
+
         {artists.length === 0 ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 py-24 text-center">
             <p className="font-display text-2xl tracking-wide text-text-muted">
@@ -88,28 +184,7 @@ export default async function MusicPage() {
         ) : (
           <div className="grid grid-cols-2 gap-3 @lg:grid-cols-3 @2xl:grid-cols-4 @4xl:grid-cols-5 @5xl:grid-cols-6 @min-[90rem]:grid-cols-8">
             {artists.map((a) => (
-              <Link
-                key={a.id}
-                href={`/music/artist/${a.id}`}
-                className="hover-lift group flex flex-col overflow-hidden rounded-lg border border-border bg-bg-elevated"
-              >
-                <CoverImage
-                  albumId={a.coverAlbumId}
-                  version={a.coverVersion}
-                  title={a.name}
-                  className="w-full border-b border-border"
-                />
-                <div className="flex flex-1 flex-col gap-1.5 p-3">
-                  <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-text">
-                    {a.name}
-                  </h3>
-                  <span className="mt-auto font-mono text-xs text-text-faint">
-                    {a.various
-                      ? `${variousAlbumCount} album${variousAlbumCount === 1 ? "" : "s"}`
-                      : `${a.ownedStudio}/${a.totalStudio}`}
-                  </span>
-                </div>
-              </Link>
+              <ArtistCard key={a.id} artist={a} variousAlbumCount={variousAlbumCount} />
             ))}
           </div>
         )}

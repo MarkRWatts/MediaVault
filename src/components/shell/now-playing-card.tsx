@@ -38,7 +38,7 @@ function contextLabel(context: PlaybackContext | null): string | null {
     case "playlist":
       return context.title;
     case "favourites":
-      return "Favourites";
+      return "Favourite tracks";
     default:
       return null;
   }

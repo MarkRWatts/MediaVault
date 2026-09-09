@@ -102,6 +102,17 @@ export async function deleteAccount(
   // headers correctly. Deleting the User row after cascades the Session
   // away too, but that's just a second, redundant removal by then.
   await auth.api.signOut({ headers: await headers() });
+  // Per-user rows keyed by a bare userId string (no FK, so no cascade):
+  // watch history and every favourites table. Deleted explicitly so an
+  // erased account leaves nothing behind.
+  await prisma.$transaction([
+    prisma.watchProgress.deleteMany({ where: { userId } }),
+    prisma.filmFavourite.deleteMany({ where: { userId } }),
+    prisma.showFavourite.deleteMany({ where: { userId } }),
+    prisma.trackFavourite.deleteMany({ where: { userId } }),
+    prisma.albumFavourite.deleteMany({ where: { userId } }),
+    prisma.artistFavourite.deleteMany({ where: { userId } }),
+  ]);
   await prisma.user.delete({ where: { id: userId } });
   // Deliberately after the delete: the row records that this user id
   // erased itself (and possibly its household) even though the user is

@@ -15,6 +15,7 @@
 import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { countFavouriteTracks } from "@/lib/queries-music";
 import { isChromelessPath } from "@/lib/public-paths";
 import { PlayerProvider } from "@/components/player/PlayerProvider";
 import { TopNav } from "./top-nav";
@@ -75,6 +76,11 @@ export async function AppShell({ children }: { children: React.ReactNode }) {
   });
   const shellUser: ShellUser = { name: user.name, email: user.email, image: user.image };
   const flags = { isOwner: user.isAppOwner, hasAdultAccess: user.adultLibraryAccess };
+  // The rail's pinned "Favourite tracks" row and the mobile sheet's
+  // playlists panel both need this count; read once here rather than in
+  // each client component (they can't read it themselves — it's per-user
+  // DB state, not something the engine tracks).
+  const favouriteTrackCount = await countFavouriteTracks(session.user.id);
 
   // PlayerProvider owns the one gapless music engine for the life of the
   // root layout (see components/player/PlayerProvider.tsx) — it has to
@@ -109,8 +115,8 @@ export async function AppShell({ children }: { children: React.ReactNode }) {
       <main className="@container flex flex-1 flex-col pb-[calc(7rem+var(--player-bar-h))] transition-[padding] motion-reduce:transition-none md:pb-0 md:pl-[calc(var(--sidebar-w)+1rem+max(1rem,env(safe-area-inset-left)))] md:pr-[calc(var(--rail-w)+1rem+max(1rem,env(safe-area-inset-right)))]">
         {children}
       </main>
-      <Rail initialCollapsed={user.railCollapsed} />
-      <MobilePlayerBar />
+      <Rail initialCollapsed={user.railCollapsed} favouriteTrackCount={favouriteTrackCount} />
+      <MobilePlayerBar favouriteTrackCount={favouriteTrackCount} />
       <BottomTabs flags={flags} />
     </PlayerProvider>
   );

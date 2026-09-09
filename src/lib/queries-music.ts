@@ -5,6 +5,7 @@
 
 import { prisma } from "@/lib/db";
 import { MUSIC_GAP_MIN_OWNED, MUSIC_GAP_MIN_PCT } from "@/lib/constants";
+import type { QueueTrack } from "@/lib/player-types";
 
 // ---------------------------------------------------------------------------
 // Shared sort helpers
@@ -81,28 +82,65 @@ export interface MusicIndexData {
   artists: MusicIndexArtist[]; // sorted by sortName, various=true last
 }
 
+// The album fields an artist card needs — shared by the /music index and
+// the favourites shelf so both shape a MusicIndexArtist identically.
+const INDEX_ARTIST_SELECT = {
+  id: true,
+  name: true,
+  sortName: true,
+  various: true,
+  studioTotal: true,
+  albums: {
+    select: {
+      id: true,
+      kind: true,
+      owned: true,
+      year: true,
+      coverPath: true,
+      updatedAt: true,
+      physicalCopies: { select: { id: true } },
+    },
+  },
+} as const;
+
+type IndexArtistRow = {
+  id: number;
+  name: string;
+  various: boolean;
+  studioTotal: number | null;
+  albums: {
+    id: number;
+    kind: string;
+    owned: boolean;
+    year: number | null;
+    coverPath: string | null;
+    updatedAt: Date;
+    physicalCopies: { id: number }[];
+  }[];
+};
+
+function shapeIndexArtist(a: IndexArtistRow): MusicIndexArtist {
+  const studioAlbums = a.albums.filter((al) => al.kind === "STUDIO");
+  const coverAlbumId = pickCoverAlbumId(a.albums);
+  const coverAlbum = coverAlbumId == null ? null : a.albums.find((al) => al.id === coverAlbumId);
+  // See getArtistDetail's totalStudio comment: studioTotal is the
+  // Discogs-known count even when gap tracking never created
+  // placeholders for it, so a Barenboim-style artist shows "1/282" here
+  // rather than "1/1".
+  return {
+    id: a.id,
+    name: a.name,
+    various: a.various,
+    ownedStudio: studioAlbums.filter((al) => al.owned).length,
+    totalStudio: Math.max(a.studioTotal ?? 0, studioAlbums.length),
+    coverAlbumId,
+    coverVersion: coverAlbum ? coverAlbum.updatedAt.getTime() : null,
+  };
+}
+
 export async function getMusicIndex(): Promise<MusicIndexData> {
   const [artists, albumsOwned, tracksTotal, tracksLossless, vinylOwned, cdOwned] = await Promise.all([
-    prisma.artist.findMany({
-      select: {
-        id: true,
-        name: true,
-        sortName: true,
-        various: true,
-        studioTotal: true,
-        albums: {
-          select: {
-            id: true,
-            kind: true,
-            owned: true,
-            year: true,
-            coverPath: true,
-            updatedAt: true,
-            physicalCopies: { select: { id: true } },
-          },
-        },
-      },
-    }),
+    prisma.artist.findMany({ select: INDEX_ARTIST_SELECT }),
     prisma.album.count({ where: { owned: true } }),
     prisma.track.count(),
     prisma.track.count({ where: { lossless: true } }),
@@ -110,27 +148,7 @@ export async function getMusicIndex(): Promise<MusicIndexData> {
     prisma.physicalCopy.count({ where: { medium: "CD" } }),
   ]);
 
-  const shaped: MusicIndexArtist[] = artists
-    .slice()
-    .sort(byArtistOrder)
-    .map((a) => {
-      const studioAlbums = a.albums.filter((al) => al.kind === "STUDIO");
-      const coverAlbumId = pickCoverAlbumId(a.albums);
-      const coverAlbum = coverAlbumId == null ? null : a.albums.find((al) => al.id === coverAlbumId);
-      // See getArtistDetail's totalStudio comment: studioTotal is the
-      // Discogs-known count even when gap tracking never created
-      // placeholders for it, so a Barenboim-style artist shows "1/282" here
-      // rather than "1/1".
-      return {
-        id: a.id,
-        name: a.name,
-        various: a.various,
-        ownedStudio: studioAlbums.filter((al) => al.owned).length,
-        totalStudio: Math.max(a.studioTotal ?? 0, studioAlbums.length),
-        coverAlbumId,
-        coverVersion: coverAlbum ? coverAlbum.updatedAt.getTime() : null,
-      };
-    });
+  const shaped: MusicIndexArtist[] = artists.slice().sort(byArtistOrder).map(shapeIndexArtist);
 
   return {
     totals: {
@@ -415,6 +433,133 @@ export async function getAlbumDetail(id: number): Promise<AlbumDetail | null> {
     artist: album.artist,
     discs,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Favourites ("/music" shelves, "/music/favourites", the rail's pinned row)
+// ---------------------------------------------------------------------------
+
+// Codecs the in-app player can actually play — the same set
+// resolvePlaybackFormat (src/lib/audio-stream.ts) accepts; DRM'd .m4p and
+// unprobed/unknown files are never offered as a queue entry.
+const PLAYABLE_CODECS = new Set(["alac", "aac", "mp3", "flac"]);
+
+export function isPlayableCodec(codec: string | null | undefined): boolean {
+  return PLAYABLE_CODECS.has((codec ?? "").toLowerCase());
+}
+
+export interface FavouriteAlbumView {
+  id: number;
+  title: string;
+  year: number | null;
+  kind: string;
+  artistId: number;
+  artistName: string;
+  hasCover: boolean;
+  coverVersion: number | null;
+}
+
+export interface MusicFavourites {
+  /** Newest favourite first, shaped like the /music grid's cards. */
+  artists: MusicIndexArtist[];
+  albums: FavouriteAlbumView[];
+  /** Playable favourite tracks (the "/music/favourites" list's length). */
+  trackCount: number;
+}
+
+/** A favourite track as a ready-made queue entry plus when it was hearted. */
+export interface FavouriteTrackView extends QueueTrack {
+  favouritedAt: string; // ISO — Client Component prop, so not a Date
+}
+
+export async function countFavouriteTracks(userId: string): Promise<number> {
+  const rows = await prisma.trackFavourite.findMany({
+    where: { userId, track: { album: { owned: true } } },
+    select: { track: { select: { codec: true } } },
+  });
+  return rows.filter((r) => isPlayableCodec(r.track.codec)).length;
+}
+
+export async function getMusicFavourites(userId: string): Promise<MusicFavourites> {
+  const [artistRows, albumRows, trackCount] = await Promise.all([
+    prisma.artistFavourite.findMany({
+      where: { userId },
+      orderBy: { createdAt: "desc" },
+      select: { artist: { select: INDEX_ARTIST_SELECT } },
+    }),
+    prisma.albumFavourite.findMany({
+      where: { userId },
+      orderBy: { createdAt: "desc" },
+      select: {
+        album: {
+          select: {
+            id: true,
+            title: true,
+            year: true,
+            kind: true,
+            coverPath: true,
+            updatedAt: true,
+            artist: { select: { id: true, name: true } },
+          },
+        },
+      },
+    }),
+    countFavouriteTracks(userId),
+  ]);
+
+  return {
+    artists: artistRows.map((r) => shapeIndexArtist(r.artist)),
+    albums: albumRows.map(({ album }) => ({
+      id: album.id,
+      title: album.title,
+      year: album.year,
+      kind: album.kind,
+      artistId: album.artist.id,
+      artistName: album.artist.name,
+      hasCover: album.coverPath != null,
+      coverVersion: album.coverPath != null ? album.updatedAt.getTime() : null,
+    })),
+    trackCount,
+  };
+}
+
+/** Newest first. Only playable tracks of owned albums — a favourite whose
+ *  file has gone is cascaded away by the scanner, and a DRM'd one can't be
+ *  hearted in the first place (see toggleTrackFavourite), so this filter
+ *  is belt-and-braces. Explicit select: never Track.sizeBytes (BigInt). */
+export async function getFavouriteTracks(userId: string): Promise<FavouriteTrackView[]> {
+  const rows = await prisma.trackFavourite.findMany({
+    where: { userId, track: { album: { owned: true } } },
+    orderBy: { createdAt: "desc" },
+    select: {
+      createdAt: true,
+      track: {
+        select: {
+          id: true,
+          title: true,
+          codec: true,
+          durationSecs: true,
+          album: {
+            select: { id: true, title: true, coverPath: true, updatedAt: true, artist: { select: { name: true } } },
+          },
+        },
+      },
+    },
+  });
+  return rows
+    .filter((r) => isPlayableCodec(r.track.codec))
+    .map(({ createdAt, track }) => ({
+      trackId: track.id,
+      title: track.title,
+      artist: track.album.artist.name,
+      albumId: track.album.id,
+      albumTitle: track.album.title,
+      hasCover: track.album.coverPath != null,
+      coverVersion: track.album.coverPath != null ? track.album.updatedAt.getTime() : null,
+      durationSecs: track.durationSecs,
+      codec: track.codec,
+      favouritedAt: createdAt.toISOString(),
+    }));
 }
 
 // ---------------------------------------------------------------------------
