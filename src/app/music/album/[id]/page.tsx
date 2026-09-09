@@ -9,6 +9,7 @@ import DeleteAlbumButton from "@/components/DeleteAlbumButton";
 import { getAlbumDetail } from "@/lib/queries-music";
 import { requireMemberOrRedirect } from "@/lib/require-member";
 import type { AlbumTrackView } from "@/lib/queries-music";
+import type { QueueTrack } from "@/lib/player-types";
 import { qualityLabel, qualityLabelVerbose } from "@/lib/audio-quality";
 import { titleCase } from "@/lib/text-case";
 
@@ -81,22 +82,25 @@ export default async function AlbumPage({
   const displayTitle = titleCase(album.title);
 
   // Already in disc-then-trackNumber order (getAlbumDetail's sort), flattened
-  // with each track's disc number attached and DRM (.m4p — FairPlay,
+  // into engine-ready QueueTrack entries with DRM (.m4p — FairPlay,
   // unplayable in-browser) filtered out.
-  const playableTracks = album.discs.flatMap((d) =>
+  const queueTracks: QueueTrack[] = album.discs.flatMap((d) =>
     d.tracks
       .filter((t) => t.codec !== "drm")
       .map((t) => ({
-        id: t.id,
+        trackId: t.id,
         title: t.title,
-        codec: t.codec,
+        artist: album.artist.name,
+        albumId: album.id,
+        albumTitle: displayTitle,
+        hasCover: album.hasCover,
+        coverVersion: album.coverVersion,
         durationSecs: t.durationSecs,
-        disc: d.disc,
-        trackNumber: t.trackNumber,
+        codec: t.codec,
       })),
   );
-  const canPlay = album.owned && playableTracks.length > 0;
-  const drmOnly = album.owned && allTracks.length > 0 && playableTracks.length === 0;
+  const canPlay = album.owned && queueTracks.length > 0;
+  const drmOnly = album.owned && allTracks.length > 0 && queueTracks.length === 0;
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-8 px-4 py-6 sm:px-6">
@@ -131,7 +135,6 @@ export default async function AlbumPage({
         albumTitle={displayTitle}
         albumHasCover={album.hasCover}
         coverVersion={album.coverVersion}
-        artistName={album.artist.name}
         owned={album.owned}
         copies={album.copies}
         digitalSource={album.digitalSource}
@@ -140,7 +143,7 @@ export default async function AlbumPage({
         dominantCodec={codec}
         dominantQuality={quality}
         dominantQualityVerbose={qualityVerbose}
-        playableTracks={playableTracks}
+        queueTracks={queueTracks}
         canPlay={canPlay}
         drmOnly={drmOnly}
       />

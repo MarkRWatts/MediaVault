@@ -1,22 +1,20 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
+import { Volume2 } from "lucide-react";
 import type { AlbumDiscView, PhysicalCopyView } from "@/lib/queries-music";
+import type { PlaybackContext, QueueTrack } from "@/lib/player-types";
+import { formatTime as formatDuration } from "@/lib/format-time";
 import AudioCodecBadge from "./AudioCodecBadge";
-import AlbumPlayer, { type AlbumPlayerTrack } from "./AlbumPlayer";
+import AlbumPlayBar from "./AlbumPlayBar";
+import { usePlayer } from "./player/usePlayer";
+import { PlayIcon } from "./player/icons";
+import TrackMenu from "./player/TrackMenu";
 import CoverImage from "./CoverImage";
 import PhysicalCopyForm from "./PhysicalCopyForm";
 import FixAlbumMatchForm from "./FixAlbumMatchForm";
 import DigitalSourceForm from "./DigitalSourceForm";
 import { qualityLabel } from "@/lib/audio-quality";
-
-function formatDuration(secs: number | null): string {
-  if (secs == null) return "—";
-  const total = Math.round(secs);
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return `${m}:${s.toString().padStart(2, "0")}`;
-}
 
 const CODEC_DESCRIPTIONS: Record<string, string> = {
   alac: "Apple Lossless (ALAC)",
@@ -176,16 +174,27 @@ function DigitalTracklist({
   discs,
   dominantCodec,
   dominantQuality,
+  queueTracks,
+  context,
 }: {
   discs: AlbumDiscView[];
   dominantCodec: string | null;
   dominantQuality: string | null;
+  queueTracks: QueueTrack[];
+  context: PlaybackContext;
 }) {
+  const { snapshot, engine } = usePlayer();
   const multiDisc = discs.length > 1;
 
   if (discs.length === 0) {
     return <p className="py-4 text-sm text-text-faint">No track data for this album yet.</p>;
   }
+
+  // Indexed by track id (not array position) — DRM tracks are excluded from
+  // queueTracks, so a track's position here can differ from its position in
+  // the disc's own tracklist.
+  const queueIndexById = new Map(queueTracks.map((t, i) => [t.trackId, i]));
+  const queueTrackById = new Map(queueTracks.map((t) => [t.trackId, t]));
 
   return (
     <div className="flex flex-col gap-6">
@@ -198,13 +207,35 @@ function DigitalTracklist({
             {disc.tracks.map((t) => {
               const trackQuality = qualityLabel(t);
               const differsFromDominant = t.codec !== dominantCodec || trackQuality !== dominantQuality;
+              const queueIndex = queueIndexById.get(t.id);
+              const queueTrack = queueTrackById.get(t.id);
+              const isCurrent = snapshot.current?.trackId === t.id;
+              const trackNumberLabel = t.trackNumber != null ? t.trackNumber.toString().padStart(2, "0") : "—";
               return (
-                <li key={t.id} className="flex items-center gap-3 px-3 py-2">
-                  <span className="w-6 shrink-0 text-right font-mono text-xs text-text-faint">
-                    {t.trackNumber != null ? t.trackNumber.toString().padStart(2, "0") : "—"}
+                <li key={t.id} className="group flex items-center gap-3 px-3 py-2">
+                  <span className="relative flex w-6 shrink-0 items-center justify-end">
+                    {queueIndex != null ? (
+                      <button
+                        type="button"
+                        onClick={() => engine.playTracks(queueTracks, { startIndex: queueIndex, context })}
+                        aria-label={`Play ${t.title}`}
+                        className="relative flex h-4 w-full items-center justify-end text-text-faint hover:text-format-digital"
+                      >
+                        <span className="font-mono text-xs group-hover:opacity-0 group-focus-within:opacity-0">
+                          {trackNumberLabel}
+                        </span>
+                        <PlayIcon className="absolute right-0 h-3.5 w-3.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100" />
+                      </button>
+                    ) : (
+                      <span className="font-mono text-xs text-text-faint">{trackNumberLabel}</span>
+                    )}
                   </span>
-                  <span className="min-w-0 flex-1 truncate text-sm text-text">{t.title}</span>
+                  <span className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-sm">
+                    {isCurrent && <Volume2 aria-hidden className="h-3.5 w-3.5 shrink-0 text-format-digital" />}
+                    <span className={`truncate ${isCurrent ? "text-format-digital" : "text-text"}`}>{t.title}</span>
+                  </span>
                   {differsFromDominant && <AudioCodecBadge codec={t.codec} quality={trackQuality} />}
+                  {queueTrack && <TrackMenu tracks={[queueTrack]} label={t.title} context={context} size="sm" />}
                   <span className="shrink-0 font-mono text-xs text-text-faint">{formatDuration(t.durationSecs)}</span>
                 </li>
               );
@@ -340,7 +371,6 @@ export default function AlbumFormatTabs({
   albumTitle,
   albumHasCover,
   coverVersion,
-  artistName,
   owned,
   copies,
   digitalSource,
@@ -349,7 +379,7 @@ export default function AlbumFormatTabs({
   dominantCodec,
   dominantQuality,
   dominantQualityVerbose,
-  playableTracks,
+  queueTracks,
   canPlay,
   drmOnly,
 }: {
@@ -358,7 +388,6 @@ export default function AlbumFormatTabs({
   albumTitle: string;
   albumHasCover: boolean;
   coverVersion: number | null;
-  artistName: string;
   owned: boolean;
   copies: PhysicalCopyView[];
   digitalSource: string | null;
@@ -367,10 +396,11 @@ export default function AlbumFormatTabs({
   dominantCodec: string | null;
   dominantQuality: string | null;
   dominantQualityVerbose: string | null;
-  playableTracks: AlbumPlayerTrack[];
+  queueTracks: QueueTrack[];
   canPlay: boolean;
   drmOnly: boolean;
 }) {
+  const context: PlaybackContext = { kind: "album", albumId, title: albumTitle };
   const formatCounts = new Map<string, number>();
   for (const c of copies) formatCounts.set(c.format, (formatCounts.get(c.format) ?? 0) + 1);
   const formatSeen = new Map<string, number>();
@@ -457,18 +487,15 @@ export default function AlbumFormatTabs({
         </div>
       </div>
 
-      {active?.kind === "digital" && canPlay && (
-        <AlbumPlayer
-          albumId={albumId}
-          albumTitle={albumTitle}
-          albumHasCover={albumHasCover}
-          coverVersion={coverVersion}
-          artistName={artistName}
-          tracks={playableTracks}
-        />
-      )}
+      {active?.kind === "digital" && canPlay && <AlbumPlayBar queueTracks={queueTracks} context={context} />}
       {active?.kind === "digital" && (
-        <DigitalTracklist discs={discs} dominantCodec={dominantCodec} dominantQuality={dominantQuality} />
+        <DigitalTracklist
+          discs={discs}
+          dominantCodec={dominantCodec}
+          dominantQuality={dominantQuality}
+          queueTracks={queueTracks}
+          context={context}
+        />
       )}
       {active?.kind === "copy" && <CopyTracklist copy={active.copy} />}
     </div>
