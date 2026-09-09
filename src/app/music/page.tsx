@@ -186,7 +186,7 @@ export default async function MusicPage() {
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-3 @lg:grid-cols-3 @2xl:grid-cols-4 @4xl:grid-cols-5 @5xl:grid-cols-6 @min-[90rem]:grid-cols-8">
+          <div className="grid grid-cols-2 gap-3 @lg:grid-cols-3 @2xl:grid-cols-4 @4xl:grid-cols-5 @5xl:grid-cols-6">
             {artists.map((a) => (
               <ArtistCard key={a.id} artist={a} variousAlbumCount={variousAlbumCount} />
             ))}
