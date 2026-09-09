@@ -130,7 +130,12 @@ export default async function AlbumPage({
               <span className="rounded border border-dvd-border bg-dvd-bg px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-widest leading-none text-dvd">
                 {KIND_LABELS[album.kind] ?? album.kind}
               </span>
-              <AlbumActions albumId={album.id} title={displayTitle} favourite={userState.favourite} />
+              <AlbumActions
+                albumId={album.id}
+                title={displayTitle}
+                favourite={userState.favourite}
+                trackIds={queueTracks.map((t) => t.trackId)}
+              />
             </div>
           </div>
         }
