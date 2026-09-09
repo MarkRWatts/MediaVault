@@ -6,6 +6,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import CoverImage from "@/components/CoverImage";
 import ArtistActions from "@/components/music/ArtistActions";
+import AlbumCardHeart from "@/components/music/AlbumCardHeart";
 import { getArtistDetail } from "@/lib/queries-music";
 import { getArtistUserState } from "@/lib/music-user-state";
 import { requireMemberOrRedirect } from "@/lib/require-member";
@@ -42,20 +43,23 @@ function Chip({ tone, children }: { tone: keyof typeof CHIP_TONE; children: Reac
 // to view) and get the grayscale/dashed treatment. Physical-only (owned=false,
 // physicalMedia non-empty) render in full color as links since they have
 // metadata to view on the album page.
-function StudioAlbumCard({ album }: { album: ArtistCatalogueAlbum }) {
+function StudioAlbumCard({ album, favourite }: { album: ArtistCatalogueAlbum; favourite: boolean }) {
   const isFullyOwned = album.owned === true;
   const isPhysicalOnly = album.owned === false && album.physicalMedia.length > 0;
   const isTrulyMissing = album.owned === false && album.physicalMedia.length === 0;
   const physicalLabel = album.physicalMedia.includes("VINYL") ? "Vinyl" : (album.physicalMedia[0] ?? "");
 
+  // Placeholders (nothing owned, nothing on the shelf) get no heart —
+  // there's nothing to favourite yet.
   const body = (
     <div
-      className={`flex flex-col overflow-hidden rounded-lg border ${
+      className={`relative flex flex-col overflow-hidden rounded-lg border ${
         isTrulyMissing
           ? "border-dashed border-border/60 bg-bg-elevated/40"
           : "border-border bg-bg-elevated"
       }`}
     >
+      {!isTrulyMissing && <AlbumCardHeart albumId={album.id} title={album.title} favourite={favourite} />}
       <CoverImage
         albumId={album.hasCover ? album.id : null}
         version={album.coverVersion}
@@ -89,15 +93,16 @@ function StudioAlbumCard({ album }: { album: ArtistCatalogueAlbum }) {
 // physical-only), always a link (there's metadata to view either way). Kind
 // chip normally; physical-only swaps it for the medium, same distinction
 // StudioAlbumCard makes above.
-function ShelfAlbumCard({ album }: { album: ArtistShelfAlbum }) {
+function ShelfAlbumCard({ album, favourite }: { album: ArtistShelfAlbum; favourite: boolean }) {
   const isPhysicalOnly = album.owned === false && album.physicalMedia.length > 0;
   const physicalLabel = album.physicalMedia.includes("VINYL") ? "Vinyl" : (album.physicalMedia[0] ?? "");
 
   return (
     <Link
       href={`/music/album/${album.id}`}
-      className="hover-lift block overflow-hidden rounded-lg border border-border bg-bg-elevated"
+      className="hover-lift relative block overflow-hidden rounded-lg border border-border bg-bg-elevated"
     >
+      <AlbumCardHeart albumId={album.id} title={album.title} favourite={favourite} />
       <CoverImage albumId={album.hasCover ? album.id : null} version={album.coverVersion} title={album.title} className="w-full" />
       <div className="flex flex-col gap-0.5 p-2.5">
         <h3 className="line-clamp-2 text-xs text-text-muted">{album.title}</h3>
@@ -112,12 +117,13 @@ function ShelfAlbumCard({ album }: { album: ArtistShelfAlbum }) {
 
 // Plain tile for the various-artist (Compilations) grid — every entry is
 // owned by construction, so no Owned/Missing chip is needed.
-function PlainAlbumCard({ album }: { album: ArtistCatalogueAlbum }) {
+function PlainAlbumCard({ album, favourite }: { album: ArtistCatalogueAlbum; favourite: boolean }) {
   return (
     <Link
       href={`/music/album/${album.id}`}
-      className="hover-lift block overflow-hidden rounded-lg border border-border bg-bg-elevated"
+      className="hover-lift relative block overflow-hidden rounded-lg border border-border bg-bg-elevated"
     >
+      <AlbumCardHeart albumId={album.id} title={album.title} favourite={favourite} />
       <CoverImage albumId={album.hasCover ? album.id : null} version={album.coverVersion} title={album.title} className="w-full" />
       <div className="flex flex-col gap-0.5 p-2.5">
         <h3 className="line-clamp-2 text-xs font-semibold leading-snug text-text">{album.title}</h3>
@@ -158,6 +164,7 @@ export default async function ArtistPage({
   if (!Number.isInteger(artistId)) notFound();
 
   const [detail, userState] = await Promise.all([getArtistDetail(artistId), getArtistUserState(userId, artistId)]);
+  const favouriteAlbums = new Set(userState.favouriteAlbumIds);
   if (!detail) notFound();
 
   const { artist, studio, shelf, stats, gapTrackingOff } = detail;
@@ -261,7 +268,7 @@ export default async function ArtistPage({
                   return a.year - b.year;
                 })
                 .map((a) => (
-                  <PlainAlbumCard key={a.id} album={a} />
+                  <PlainAlbumCard key={a.id} album={a} favourite={favouriteAlbums.has(a.id)} />
                 ))}
             </div>
           )}
@@ -285,7 +292,7 @@ export default async function ArtistPage({
                   </div>
                   <div className={ALBUM_GRID}>
                     {group.items.map((a) => (
-                      <StudioAlbumCard key={a.id} album={a} />
+                      <StudioAlbumCard key={a.id} album={a} favourite={favouriteAlbums.has(a.id)} />
                     ))}
                   </div>
                 </div>
@@ -298,7 +305,7 @@ export default async function ArtistPage({
               <h2 className="font-display text-xl tracking-wide">Also on the shelf</h2>
               <div className={ALBUM_GRID}>
                 {shelf.map((a) => (
-                  <ShelfAlbumCard key={a.id} album={a} />
+                  <ShelfAlbumCard key={a.id} album={a} favourite={favouriteAlbums.has(a.id)} />
                 ))}
               </div>
             </section>

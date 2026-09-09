@@ -4,6 +4,7 @@ export const dynamic = "force-dynamic";
 
 import Link from "next/link";
 import CoverImage from "@/components/CoverImage";
+import AlbumCardHeart from "@/components/music/AlbumCardHeart";
 import PhysicalAddForm from "@/components/PhysicalAddForm";
 import CollapsibleSection from "@/components/CollapsibleSection";
 import FavouriteTracksTile from "@/components/music/FavouriteTracksTile";
@@ -44,8 +45,11 @@ function FavouriteAlbumCard({ album }: { album: FavouriteAlbumView }) {
   return (
     <Link
       href={`/music/album/${album.id}`}
-      className="hover-lift block overflow-hidden rounded-lg border border-border bg-bg-elevated"
+      className="hover-lift relative block overflow-hidden rounded-lg border border-border bg-bg-elevated"
     >
+      {/* Every album on this shelf is a favourite by definition; the heart
+          is the way off it. */}
+      <AlbumCardHeart albumId={album.id} title={album.title} favourite />
       <CoverImage
         albumId={album.hasCover ? album.id : null}
         version={album.coverVersion}

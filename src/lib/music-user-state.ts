@@ -4,12 +4,17 @@
 
 import { prisma } from "@/lib/db";
 
-export async function getArtistUserState(userId: string, artistId: number): Promise<{ favourite: boolean }> {
-  const row = await prisma.artistFavourite.findUnique({
-    where: { userId_artistId: { userId, artistId } },
-    select: { userId: true },
-  });
-  return { favourite: row !== null };
+/** The artist's own heart plus which of their albums this person has
+ *  hearted, for the album tiles' corner hearts. */
+export async function getArtistUserState(
+  userId: string,
+  artistId: number,
+): Promise<{ favourite: boolean; favouriteAlbumIds: number[] }> {
+  const [row, albums] = await Promise.all([
+    prisma.artistFavourite.findUnique({ where: { userId_artistId: { userId, artistId } }, select: { userId: true } }),
+    prisma.albumFavourite.findMany({ where: { userId, album: { artistId } }, select: { albumId: true } }),
+  ]);
+  return { favourite: row !== null, favouriteAlbumIds: albums.map((a) => a.albumId) };
 }
 
 /** The album's own heart plus which of its tracks this person has
