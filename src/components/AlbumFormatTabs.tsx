@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Volume2 } from "lucide-react";
 import type { AlbumDiscView, PhysicalCopyView } from "@/lib/queries-music";
 import type { PlaybackContext, QueueTrack } from "@/lib/player-types";
@@ -14,6 +14,7 @@ import CoverImage from "./CoverImage";
 import PhysicalCopyForm from "./PhysicalCopyForm";
 import FixAlbumMatchForm from "./FixAlbumMatchForm";
 import DigitalSourceForm from "./DigitalSourceForm";
+import TrackHeart from "./music/TrackHeart";
 import { qualityLabel } from "@/lib/audio-quality";
 
 const CODEC_DESCRIPTIONS: Record<string, string> = {
@@ -176,15 +177,18 @@ function DigitalTracklist({
   dominantQuality,
   queueTracks,
   context,
+  favouriteTrackIds,
 }: {
   discs: AlbumDiscView[];
   dominantCodec: string | null;
   dominantQuality: string | null;
   queueTracks: QueueTrack[];
   context: PlaybackContext;
+  favouriteTrackIds: number[];
 }) {
   const { snapshot, engine } = usePlayer();
   const multiDisc = discs.length > 1;
+  const favouriteSet = useMemo(() => new Set(favouriteTrackIds), [favouriteTrackIds]);
 
   if (discs.length === 0) {
     return <p className="py-4 text-sm text-text-faint">No track data for this album yet.</p>;
@@ -235,6 +239,9 @@ function DigitalTracklist({
                     <span className={`truncate ${isCurrent ? "text-format-digital" : "text-text"}`}>{t.title}</span>
                   </span>
                   {differsFromDominant && <AudioCodecBadge codec={t.codec} quality={trackQuality} />}
+                  {queueTrack && (
+                    <TrackHeart trackId={t.id} title={t.title} favourite={favouriteSet.has(t.id)} size="sm" />
+                  )}
                   {queueTrack && <TrackMenu tracks={[queueTrack]} label={t.title} context={context} size="sm" />}
                   <span className="shrink-0 font-mono text-xs text-text-faint">{formatDuration(t.durationSecs)}</span>
                 </li>
@@ -382,6 +389,7 @@ export default function AlbumFormatTabs({
   queueTracks,
   canPlay,
   drmOnly,
+  favouriteTrackIds,
 }: {
   meta: ReactNode;
   albumId: number;
@@ -399,6 +407,7 @@ export default function AlbumFormatTabs({
   queueTracks: QueueTrack[];
   canPlay: boolean;
   drmOnly: boolean;
+  favouriteTrackIds: number[];
 }) {
   const context: PlaybackContext = { kind: "album", albumId, title: albumTitle };
   const formatCounts = new Map<string, number>();
@@ -495,6 +504,7 @@ export default function AlbumFormatTabs({
           dominantQuality={dominantQuality}
           queueTracks={queueTracks}
           context={context}
+          favouriteTrackIds={favouriteTrackIds}
         />
       )}
       {active?.kind === "copy" && <CopyTracklist copy={active.copy} />}

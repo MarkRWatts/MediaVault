@@ -13,8 +13,9 @@ import { usePlayer } from "@/components/player/usePlayer";
 import { PlayIcon, PauseIcon, NextIcon } from "@/components/player/icons";
 import { NowPlayingCard } from "./now-playing-card";
 import { QueuePanel } from "./queue-panel";
+import { PlaylistsPanel } from "./playlists-panel";
 
-export function MobilePlayerBar() {
+export function MobilePlayerBar({ favouriteTrackCount }: { favouriteTrackCount: number }) {
   const { snapshot, engine } = usePlayer();
   const [sheetOpen, setSheetOpen] = useState(false);
   const { current } = snapshot;
@@ -96,6 +97,7 @@ export function MobilePlayerBar() {
             <div className="mx-auto flex max-w-sm flex-col gap-6">
               <NowPlayingCard />
               <QueuePanel />
+              <PlaylistsPanel favouriteTrackCount={favouriteTrackCount} />
             </div>
           </div>
         </div>

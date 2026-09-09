@@ -14,12 +14,15 @@ export default function CollapsibleSection({
   storageKey,
   title,
   count,
+  noun,
   children,
 }: {
   /** Unique across the app, e.g. "shows:Continue watching". */
   storageKey: string;
   title: string;
   count: number;
+  /** Singular noun the count pluralizes — see SectionHeader. */
+  noun?: string;
   children: ReactNode;
 }) {
   const [collapsed, setCollapsed] = useState(false);
@@ -52,7 +55,7 @@ export default function CollapsibleSection({
 
   return (
     <section className="flex flex-col gap-3">
-      <SectionHeader title={title} count={count} collapsed={collapsed} onToggle={toggle} />
+      <SectionHeader title={title} count={count} collapsed={collapsed} onToggle={toggle} noun={noun} />
       {!collapsed && children}
     </section>
   );

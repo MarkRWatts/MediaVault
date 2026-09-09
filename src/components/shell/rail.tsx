@@ -26,13 +26,15 @@
 
 import { useState, useTransition } from "react";
 import { usePathname } from "next/navigation";
-import { PanelRightClose, PanelRightOpen, ListMusic } from "lucide-react";
+import Link from "next/link";
+import { PanelRightClose, PanelRightOpen, ListMusic, Heart } from "lucide-react";
 import { setRailCollapsed } from "@/app/actions/prefs";
 import { usePlayer } from "@/components/player/usePlayer";
 import { PlayIcon, PauseIcon } from "@/components/player/icons";
 import CoverImage from "@/components/CoverImage";
 import { NowPlayingCard } from "./now-playing-card";
 import { QueuePanel } from "./queue-panel";
+import { PlaylistsPanel } from "./playlists-panel";
 
 /** How many entries remain from the current one onward — the same count
  *  QueuePanel's own heading uses, mirrored here for the collapsed strip's
@@ -43,7 +45,13 @@ function remainingCount(order: number[], currentKey: number | null): number {
   return order.length - Math.max(idx, 0);
 }
 
-export function Rail({ initialCollapsed }: { initialCollapsed: boolean }) {
+export function Rail({
+  initialCollapsed,
+  favouriteTrackCount,
+}: {
+  initialCollapsed: boolean;
+  favouriteTrackCount: number;
+}) {
   const pathname = usePathname();
   const { snapshot, engine } = usePlayer();
   const [collapsed, setCollapsed] = useState(initialCollapsed);
@@ -61,7 +69,7 @@ export function Rail({ initialCollapsed }: { initialCollapsed: boolean }) {
     });
   }
 
-  if (snapshot.queue.length === 0 && !pathname.startsWith("/music")) return null;
+  if (snapshot.queue.length === 0 && favouriteTrackCount === 0 && !pathname.startsWith("/music")) return null;
 
   const { current } = snapshot;
   const isPlaying = snapshot.status === "playing" || snapshot.status === "loading";
@@ -134,6 +142,13 @@ export function Rail({ initialCollapsed }: { initialCollapsed: boolean }) {
             </span>
           )}
         </button>
+        <Link
+          href="/music/favourites"
+          aria-label="Favourite tracks"
+          className="shrink-0 text-text-muted hover:text-pink-400"
+        >
+          <Heart size={20} aria-hidden="true" />
+        </Link>
       </div>
 
       {/* Expanded: the full Now Playing card + queue, only at xl+ once
@@ -141,8 +156,7 @@ export function Rail({ initialCollapsed }: { initialCollapsed: boolean }) {
       <div className="hidden flex-1 flex-col gap-4 overflow-y-auto overflow-x-hidden px-3 py-4 xl:group-data-[collapsed=false]:flex">
         <NowPlayingCard />
         <QueuePanel />
-        {/* Future: <PlaylistsPanel /> — quick-add-to-playlist list below
-            the queue, once playlists ship. */}
+        <PlaylistsPanel favouriteTrackCount={favouriteTrackCount} />
       </div>
     </aside>
   );

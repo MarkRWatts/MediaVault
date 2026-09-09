@@ -23,18 +23,22 @@ export default function SectionHeader({
   count,
   collapsed,
   onToggle,
+  noun = "film",
 }: {
   title: string;
   count: number;
   collapsed: boolean;
   onToggle: () => void;
+  /** Singular noun the count pluralizes, e.g. "artist" -> "3 artists". */
+  noun?: string;
 }) {
   return (
     <button type="button" onClick={onToggle} aria-expanded={!collapsed} className="flex items-center gap-2 text-left">
       <ChevronIcon collapsed={collapsed} />
       <h2 className="font-display text-xl tracking-wide">{title}</h2>
       <span className="font-mono text-xs text-text-faint">
-        {count} film{count === 1 ? "" : "s"}
+        {count} {noun}
+        {count === 1 ? "" : "s"}
       </span>
     </button>
   );

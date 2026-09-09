@@ -5,7 +5,9 @@ export const dynamic = "force-dynamic";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import CoverImage from "@/components/CoverImage";
+import ArtistActions from "@/components/music/ArtistActions";
 import { getArtistDetail } from "@/lib/queries-music";
+import { getArtistUserState } from "@/lib/music-user-state";
 import { requireMemberOrRedirect } from "@/lib/require-member";
 import type { ArtistCatalogueAlbum, ArtistShelfAlbum } from "@/lib/queries-music";
 
@@ -150,12 +152,12 @@ export default async function ArtistPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await requireMemberOrRedirect();
+  const { userId } = await requireMemberOrRedirect();
   const { id } = await params;
   const artistId = Number(id);
   if (!Number.isInteger(artistId)) notFound();
 
-  const detail = await getArtistDetail(artistId);
+  const [detail, userState] = await Promise.all([getArtistDetail(artistId), getArtistUserState(userId, artistId)]);
   if (!detail) notFound();
 
   const { artist, studio, shelf, stats, gapTrackingOff } = detail;
@@ -193,6 +195,9 @@ export default async function ArtistPage({
             {artist.disambiguation && (
               <p className="mt-1 text-sm text-text-faint">{artist.disambiguation}</p>
             )}
+          </div>
+          <div className="ml-auto shrink-0">
+            <ArtistActions artistId={artist.id} name={artist.name} favourite={userState.favourite} />
           </div>
         </div>
 

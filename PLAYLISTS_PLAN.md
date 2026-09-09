@@ -1,6 +1,6 @@
 # MediaVault — Favourites, playlists, right rail and persistent playback
 
-Drafted 2026-09-09. **Status:** PR1 (engine + right rail) in progress on `claude/favourites-playlist-system-011f07`; PR2 (favourites) and PR3 (playlists) to follow.
+Drafted 2026-09-09. **Status:** PR1 (engine + right rail) merged as #70; PR2 (favourites) on `claude/music-favourites`; PR3 (playlists) to follow.
 
 ## Context
 

@@ -6,7 +6,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import AlbumFormatTabs from "@/components/AlbumFormatTabs";
 import DeleteAlbumButton from "@/components/DeleteAlbumButton";
+import AlbumActions from "@/components/music/AlbumActions";
 import { getAlbumDetail } from "@/lib/queries-music";
+import { getAlbumUserState } from "@/lib/music-user-state";
 import { requireMemberOrRedirect } from "@/lib/require-member";
 import type { AlbumTrackView } from "@/lib/queries-music";
 import type { QueueTrack } from "@/lib/player-types";
@@ -67,12 +69,12 @@ export default async function AlbumPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await requireMemberOrRedirect();
+  const { userId } = await requireMemberOrRedirect();
   const { id } = await params;
   const albumId = Number(id);
   if (!Number.isInteger(albumId)) notFound();
 
-  const album = await getAlbumDetail(albumId);
+  const [album, userState] = await Promise.all([getAlbumDetail(albumId), getAlbumUserState(userId, albumId)]);
   if (!album) notFound();
 
   const allTracks = album.discs.flatMap((d) => d.tracks);
@@ -128,6 +130,7 @@ export default async function AlbumPage({
               <span className="rounded border border-dvd-border bg-dvd-bg px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-widest leading-none text-dvd">
                 {KIND_LABELS[album.kind] ?? album.kind}
               </span>
+              <AlbumActions albumId={album.id} title={displayTitle} favourite={userState.favourite} />
             </div>
           </div>
         }
@@ -146,6 +149,7 @@ export default async function AlbumPage({
         queueTracks={queueTracks}
         canPlay={canPlay}
         drmOnly={drmOnly}
+        favouriteTrackIds={userState.favouriteTrackIds}
       />
 
       {!album.owned && (
