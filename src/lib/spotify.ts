@@ -80,7 +80,6 @@ async function spotifyFetch(pathname: string, params: Record<string, string> = {
 interface SpotifyArtistHit {
   id: string;
   name: string;
-  popularity: number;
   images?: { url: string; width: number; height: number }[];
 }
 
@@ -105,8 +104,18 @@ export function isSpotifyConfigured(): boolean {
 
 /**
  * Search + conservative match. Ties among multiple exact-name hits (two
- * different artists who happen to share a name) are broken by Spotify's own
- * popularity score — the only ranking signal Spotify's search gives us.
+ * different artists who happen to share a name — "Eric Johnson" alone
+ * turned up 4 in the top 10 search results) are broken by taking the first
+ * exact match in Spotify's own relevance-ranked search order.
+ *
+ * This used to sort by Spotify's `popularity` field instead, but as of
+ * 2026-09 the client-credentials (app-only) auth flow this module uses no
+ * longer returns `popularity`/`genres`/`followers` at all — every hit comes
+ * back with those fields null, for search results and single-artist
+ * lookups alike. Sorting by an all-null field is a no-op (every comparison
+ * is "equal"), which happens to preserve Spotify's original order anyway,
+ * so this was silently falling back to exactly what we now do explicitly:
+ * trust Spotify's relevance ranking, don't re-sort by data we don't have.
  */
 export async function matchSpotifyArtist(name: string): Promise<SpotifyArtistMatch | null> {
   const data = (await spotifyFetch("/search", { q: name, type: "artist", limit: "10" })) as {
@@ -116,10 +125,9 @@ export async function matchSpotifyArtist(name: string): Promise<SpotifyArtistMat
   if (hits.length === 0) return null;
 
   const target = normalizeTitle(name);
-  const exact = hits.filter((h) => normalizeTitle(h.name) === target);
-  if (exact.length === 0) return null;
+  const best = hits.find((h) => normalizeTitle(h.name) === target);
+  if (!best) return null;
 
-  const best = exact.slice().sort((a, b) => b.popularity - a.popularity)[0];
   return { spotifyId: best.id, imageUrls: imagesByWidthDesc(best.images) };
 }
 
