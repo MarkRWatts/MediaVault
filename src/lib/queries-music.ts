@@ -73,6 +73,13 @@ export interface MusicIndexArtist {
    *  set. Served at /api/artist-image/<id>/photo, which is already
    *  ETag-validated, so no separate cache-buster is needed here. */
   hasPhoto: boolean;
+  /** True when every album this artist has any copy of is vinyl-only — no
+   *  digital rip, no CD — so nothing here is playable through the app. Used
+   *  to split the index grid into a "Digital & CD" section and a "Vinyl
+   *  only" one, same shelf split as the artist page's FORMAT_LISTS. An
+   *  artist with nothing owned yet (pure Discogs gap-tracking) is not
+   *  vinyl-only — it has no vinyl either. */
+  vinylOnly: boolean;
 }
 
 export interface MusicIndexData {
@@ -104,7 +111,7 @@ const INDEX_ARTIST_SELECT = {
       year: true,
       coverPath: true,
       updatedAt: true,
-      physicalCopies: { select: { id: true } },
+      physicalCopies: { select: { id: true, medium: true } },
     },
   },
 } as const;
@@ -122,7 +129,7 @@ type IndexArtistRow = {
     year: number | null;
     coverPath: string | null;
     updatedAt: Date;
-    physicalCopies: { id: number }[];
+    physicalCopies: { id: number; medium: string }[];
   }[];
 };
 
@@ -130,6 +137,13 @@ function shapeIndexArtist(a: IndexArtistRow): MusicIndexArtist {
   const studioAlbums = a.albums.filter((al) => al.kind === "STUDIO");
   const coverAlbumId = pickCoverAlbumId(a.albums);
   const coverAlbum = coverAlbumId == null ? null : a.albums.find((al) => al.id === coverAlbumId);
+  // Same "CD sits with Digital" convention as the artist page's Digital
+  // list: a CD you haven't ripped yet still counts as playable-adjacent,
+  // not vinyl-only.
+  const hasDigitalOrCD = a.albums.some(
+    (al) => al.owned || al.physicalCopies.some((pc) => pc.medium === "CD"),
+  );
+  const hasVinyl = a.albums.some((al) => al.physicalCopies.some((pc) => pc.medium === "VINYL"));
   // See getArtistDetail's totalStudio comment: studioTotal is the
   // Discogs-known count even when gap tracking never created
   // placeholders for it, so a Barenboim-style artist shows "1/282" here
@@ -143,6 +157,7 @@ function shapeIndexArtist(a: IndexArtistRow): MusicIndexArtist {
     coverAlbumId,
     coverVersion: coverAlbum ? coverAlbum.updatedAt.getTime() : null,
     hasPhoto: a.photoPath != null,
+    vinylOnly: hasVinyl && !hasDigitalOrCD,
   };
 }
 
