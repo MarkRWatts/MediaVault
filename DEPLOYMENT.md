@@ -173,56 +173,49 @@ The CIFS volume options include `uid=1000,gid=1000` for the same reason.
 
 ## Exposing to the internet (Cloudflare Tunnel)
 
-The LAN setup above terminates TLS on the VM's Caddy behind a private-IP
-DNS record. To make the app reachable from anywhere **without** opening a
-port, run a Cloudflare Tunnel connector next to the app
-(`docker-compose.cloudflared.yml`) and let Cloudflare front it. Do these in
-order; the app-side hardening this depends on (real session checks on
-every route, HMAC-verified session cookie at the proxy, `cf-connecting-ip`
-as the rate-limit key, security headers) is already in the code.
+Live since 10 Sep 2026. The LAN setup above terminates TLS on the VM's
+Caddy; internet exposure runs through `home-edge`, a Cloudflare Tunnel
+connector **already running on the VM** and shared across every app there
+(reFresh included) — there's no per-app `cloudflared` container or
+`CLOUDFLARE_TUNNEL_TOKEN` to manage. The app-side hardening this depends on
+(real session checks on every route, HMAC-verified session cookie at the
+proxy, `cf-connecting-ip` as the rate-limit key, security headers) is
+already in the code.
 
-### 1. Create the tunnel
+### 1. Add a published application route
 
-Cloudflare dashboard → Zero Trust → Networks → Tunnels → **Create a
-tunnel** (Cloudflared connector). Copy the token from the "Install and run
-a connector" step into `.env.docker` as `CLOUDFLARE_TUNNEL_TOKEN`. Under
-**Public Hostname** add `mediavault.markrwatts.com` → service
-`http://app:3000` (the compose service name; cloudflared shares the app's
-network). Cloudflare creates the proxied CNAME for you — delete the old
-private-IP `A` record for the same name if you keep it public only via the
-tunnel, or see "LAN path" below.
+Cloudflare dashboard → Zero Trust → Networks → Tunnels & Mesh →
+`home-edge` → **Published application routes** → add
+`mediavault.markrwatts.com` → service `http://mediavault:3000` (the
+`mediavault` alias `app` carries on the `edge` network — see
+`docker-compose.prod.yml`). Cloudflare auto-configures DNS as a proxied
+CNAME; delete any existing plain `A` record for the same name first (it'll
+otherwise refuse to save with "A DNS record with this name already
+exists").
 
 `BETTER_AUTH_URL` stays `https://mediavault.markrwatts.com`; the app derives
 `__Secure-` cookies, the passkey origin and `trustedOrigins` from it.
 
-### 2. Bring it up
+### 2. Block admin/scan from the internet entirely
 
-```bash
-cd ~/MediaVault
-docker compose --env-file .env.docker \
-  -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.cloudflared.yml up -d --build
-```
+Rather than gating `/admin*` and `/scan*` with Cloudflare Access (which
+would still show an OTP prompt to the internet), they're outright blocked
+for any request that arrives via the tunnel — the LAN bypass (below) never
+touches Cloudflare, so anything reaching Cloudflare for these paths is by
+definition not-LAN. Security → WAF → Custom rules:
 
-The `cloudflared` container waits for `app`'s healthcheck before
-connecting. `docker compose … logs cloudflared` should show
-"Registered tunnel connection".
+- **Name**: "Block mediavault admin/scan from internet"
+- **Expression**: `(http.host eq "mediavault.markrwatts.com") and (starts_with(http.request.uri.path, "/admin") or starts_with(http.request.uri.path, "/scan"))`
+- **Action**: Block
 
-### 3. Put Cloudflare Access in front (strongly recommended)
+This means `/admin` and `/scan` are LAN-only, full stop — including for the
+app owner away from home. Revisit if remote admin access is ever needed
+(e.g. a Cloudflare Access policy on a separate private hostname reached
+over WARP, rather than the public one).
 
-Zero Trust → Access → Applications → **Add an application** → Self-hosted,
-domain `mediavault.markrwatts.com`. Policy: **Allow**, include *Emails* =
-the same list as `ALLOWED_EMAILS` plus every household member (or *Emails
-ending in* your family domain), login method *One-time PIN*. Session
-duration a week is fine — this is a second factor in front of the app's own
-sign-in, and it keeps unauthenticated traffic (scanners, credential
-stuffing against `/api/auth/*`) from ever reaching the origin.
+### 3. WAF and rate limiting
 
-At minimum, if you want the app's own sign-in to be the only gate, protect
-`/admin*` and `/scan*` with an Access policy restricted to the app owner.
-
-### 4. WAF and rate limiting
-
-Security → WAF:
+Security → WAF (still outstanding as of 10 Sep 2026):
 
 - **Managed rules**: turn on the Cloudflare Managed Ruleset (free tier
   includes the essentials).
@@ -237,27 +230,29 @@ Security → WAF:
   origin-response timeout (the HLS playlist route waits up to 30 s for a
   first segment, which is inside it).
 
-### 5. The LAN path
+### 4. The LAN path
 
-With the tunnel up, the old direct route (LAN DNS → Caddy → `app`) still
-works if you keep the private-IP `A` record and the `edge` network. It
-bypasses Access, WAF and rate limiting — fine for devices on the home
-network, but decide that explicitly. To make the origin tunnel-only,
-remove the Caddy site block and the `edge` network membership from
-`docker-compose.prod.yml`; nothing else is listening on the host.
+LAN devices resolve `mediavault.markrwatts.com` straight to the VM's
+private IP via a router-level DNS override, bypassing Cloudflare (WAF,
+the admin/scan block, everything) entirely — same pattern as
+`staging.jinglejotter.com`'s LAN bypass. This is deliberate: it keeps
+in-home 4K streaming off the Cloudflare round-trip, and it's why the
+admin/scan WAF block above is safe to be unconditional rather than
+IP-scoped.
 
-If Caddy stays in front on the LAN, it rewrites `X-Forwarded-For` to the
-client's LAN IP (single value), which the app accepts as a fallback when
-`cf-connecting-ip` is absent — so rate limiting keys correctly on both
-paths.
+Caddy still fronts the app on the LAN and rewrites `X-Forwarded-For` to
+the client's LAN IP (single value), which the app accepts as a fallback
+when `cf-connecting-ip` is absent — so rate limiting keys correctly on
+both paths.
 
-### 6. Verify
+### 5. Verify
 
 From outside the LAN (phone on mobile data):
 
 ```bash
 curl -sSI https://mediavault.markrwatts.com/signin | grep -iE "strict-transport|x-frame|content-security|cf-ray"
-curl -sS -o /dev/null -w "%{http_code}\n" -H 'Cookie: __Secure-better-auth.session_token=forged' https://mediavault.markrwatts.com/api/films   # 401 (or Access's 302 if Access is on)
+curl -sS -o /dev/null -w "%{http_code}\n" -H 'Cookie: __Secure-better-auth.session_token=forged' https://mediavault.markrwatts.com/api/films   # 401
+curl -sS -o /dev/null -w "%{http_code}\n" https://mediavault.markrwatts.com/admin   # 403 (WAF block)
 ```
 
 ## Renaming an existing filmDB deployment to MediaVault (one-time)
@@ -362,7 +357,6 @@ works.
 ### VM deployment (in `.env.docker`)
 
 - `BETTER_AUTH_SECRET` / `BETTER_AUTH_URL`: required — the prod overlay refuses to start without them.
-- `CLOUDFLARE_TUNNEL_TOKEN`: only with `docker-compose.cloudflared.yml` (see [Exposing to the internet](#exposing-to-the-internet-cloudflare-tunnel)).
 - `DATABASE_URL`: `file:/app/data/mediavault.db` (set in the base `docker-compose.yml`).
 - `MOVIES_PATH`: `/media-share/Movies` on the VM (the CIFS named volume; the base compose default `/movies` applies only to local dev).
 - `POSTER_CACHE_DIR`: `/app/data/posters` (set in the base `docker-compose.yml`).

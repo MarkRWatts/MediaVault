@@ -10,9 +10,10 @@
 # docker-compose.yml, which the Mac's local/dev setup also uses with no
 # proxy at all (see docker-compose.override.yml).
 #
-# For internet exposure through a Cloudflare Tunnel, layer
-# docker-compose.cloudflared.yml on top as well — see DEPLOYMENT.md
-# "Exposing to the internet (Cloudflare Tunnel)".
+# Internet exposure runs through `home-edge`, a shared Cloudflare Tunnel
+# connector already running on the VM (fronts other apps too) — no
+# per-app cloudflared container needed here. See DEPLOYMENT.md "Exposing
+# to the internet (Cloudflare Tunnel)".
 services:
   app:
     networks:
