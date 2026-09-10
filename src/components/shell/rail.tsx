@@ -13,10 +13,19 @@
 // react to that. One breakpoint later than the sidebar's `lg` — see
 // globals.css's "Rail offset" block for why (a 16rem sidebar + 20rem rail
 // at `lg` would leave ~450px for content). Below `xl` the rail is forced to
-// the 4.5rem icon strip regardless of the stored preference. The same
-// `data-collapsed` (plus `id="app-rail"`) is how globals.css's
-// `body:has(#app-rail...)` rule derives --rail-w for <main>, which isn't a
-// descendant of this component.
+// the 4.5rem icon strip regardless of the stored preference — the queue and
+// cover-art buttons in that strip only reach the expanded card via that
+// preference, so below `xl` they're inert clicks (fine on a real desktop:
+// resize the window). The same `data-collapsed` (plus `id="app-rail"`) is
+// how globals.css's `body:has(#app-rail...)` rule derives --rail-w for
+// <main>, which isn't a descendant of this component.
+//
+// Visible only for a mouse/trackpad (globals.css's `desktop-input` variant,
+// `md:desktop-input:flex` below) rather than plain `md:flex` — a phone in
+// landscape is routinely wider than `md`, and without this it would land
+// in that inert-icon-strip state with no way out (mobile-player-bar.tsx's
+// tap-friendly sheet is the touch equivalent, and needs the same guard to
+// keep covering that width/orientation instead of handing off to this).
 //
 // Unlike the sidebar, the rail also hides itself entirely — most pages have
 // nothing to show here. It renders nothing until there's a queue, a
@@ -93,7 +102,7 @@ export function Rail({
       aria-label="Player"
       // group: scopes every `group-data-[collapsed=…]` element below to
       // this element's own data-collapsed, not some outer ancestor's.
-      className="group fixed top-4 bottom-4 right-[max(1rem,env(safe-area-inset-right))] z-30 hidden w-[var(--rail-w)] flex-col overflow-hidden rounded-2xl border border-border bg-bg-elevated/85 shadow-lg shadow-black/40 backdrop-blur-md transition-[width] motion-reduce:transition-none md:flex"
+      className="group fixed top-4 bottom-4 right-[max(1rem,env(safe-area-inset-right))] z-30 hidden w-[var(--rail-w)] flex-col overflow-hidden rounded-2xl border border-border bg-bg-elevated/85 shadow-lg shadow-black/40 backdrop-blur-md transition-[width] motion-reduce:transition-none md:desktop-input:flex"
     >
       {/* Collapse toggle: only meaningful at xl+ (below that the rail is
           forced regardless), so hidden entirely below xl — same pattern as

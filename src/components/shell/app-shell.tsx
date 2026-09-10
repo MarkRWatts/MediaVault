@@ -100,25 +100,35 @@ export async function AppShell({ children }: { children: React.ReactNode }) {
         <Sidebar user={shellUser} flags={flags} initialCollapsed={user.sidebarCollapsed} />
         {/* md:pl clears the floating sidebar (its width plus the 1rem inset
             on each side, the left one growing with the safe-area inset on a
-            notched phone in landscape); md:pr does the same for the rail on
-            the right (see rail.tsx and globals.css's "Rail offset" block —
-            --rail-w is 0 whenever the rail isn't mounted). transition-
-            [padding] (not just padding-left) now that both sides animate,
-            in step with the sidebar's/rail's own width transitions so
-            content reflows smoothly on collapse/expand. pb-[calc(7rem+
-            var(--player-bar-h))] clears the floating mobile tab bar (0.75rem
-            bottom offset + safe-area inset + ~3.5rem height, same as
-            before) plus the mobile now-playing strip stacked above it when
-            something's queued. flex/flex-col keeps the library pages'
-            flex-1 fill working exactly as it did under the old layout's
-            <main>. @container makes <main> the size container every page's
-            grid ladder measures (`@xl:`, `@5xl:` … variants), so column
-            counts follow the width actually available beside the sidebar
-            (and rail) rather than the viewport — see src/lib/card-grid.ts.
+            notched phone in landscape); md:desktop-input:pr does the same
+            for the rail on the right (see rail.tsx and globals.css's "Rail
+            offset" block — --rail-w is 0 whenever the rail isn't mounted),
+            but only on a real mouse/trackpad (globals.css's `desktop-input`
+            variant) since that's the only case where rail.tsx actually
+            renders past `md` — a touch device keeps mobile-player-bar.tsx's
+            strip instead, at any width, so it must keep its own clearance
+            too (see below). transition-[padding] (not just padding-left)
+            now that both sides animate, in step with the sidebar's/rail's
+            own width transitions so content reflows smoothly on
+            collapse/expand. pb-[calc(7rem+var(--player-bar-h))] clears the
+            floating mobile tab bar (0.75rem bottom offset + safe-area inset
+            + ~3.5rem height, same as before) plus the mobile now-playing
+            strip stacked above it when something's queued; md:pb-[var(
+            --player-bar-h)] drops the tab-bar portion at `md` (it's always
+            gone by then — the sidebar takes over navigation regardless of
+            input type) while leaving the strip's own clearance, which
+            --player-bar-h already zeroes past `md` for a desktop pointer
+            (see globals.css's "Mobile now-playing strip offset") but keeps
+            for touch. flex/flex-col keeps the library pages' flex-1 fill
+            working exactly as it did under the old layout's <main>.
+            @container makes <main> the size container every page's grid
+            ladder measures (`@xl:`, `@5xl:` … variants), so column counts
+            follow the width actually available beside the sidebar (and
+            rail) rather than the viewport — see src/lib/card-grid.ts.
             Chrome/Safari keep position:fixed descendants (VideoPlayer,
             confirm dialogs) viewport-relative inside an inline-size
             container. */}
-        <main className="@container flex flex-1 flex-col pb-[calc(7rem+var(--player-bar-h))] transition-[padding] motion-reduce:transition-none md:pb-0 md:pl-[calc(var(--sidebar-w)+1rem+max(1rem,env(safe-area-inset-left)))] md:pr-[calc(var(--rail-w)+1rem+max(1rem,env(safe-area-inset-right)))]">
+        <main className="@container flex flex-1 flex-col pb-[calc(7rem+var(--player-bar-h))] transition-[padding] motion-reduce:transition-none md:pb-[var(--player-bar-h)] md:pl-[calc(var(--sidebar-w)+1rem+max(1rem,env(safe-area-inset-left)))] md:desktop-input:pr-[calc(var(--rail-w)+1rem+max(1rem,env(safe-area-inset-right)))]">
           {children}
         </main>
         <Rail

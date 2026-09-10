@@ -1,5 +1,18 @@
 @import "tailwindcss";
 
+/* True only for a mouse/trackpad-driven browser (hover-capable, fine
+   pointer) — never a touchscreen, regardless of viewport width. A phone in
+   landscape is routinely wider than `md`/`lg`/even `xl`; gating rail.tsx's
+   glass card and mobile-player-bar.tsx's strip on width alone hands a
+   landscape phone the desktop rail's collapsed, non-expandable icon strip
+   with no way to reach the queue/playlists (expanding it needs `xl`, which
+   no phone reaches). This variant lets those two components (and the
+   layout offsets below that reserve space for them) switch on input
+   capability instead, so a touch device keeps the tap-friendly bottom
+   strip + sheet at any width or orientation, and only a real desktop
+   pointer gets the persistent rail. */
+@custom-variant desktop-input (@media (hover: hover) and (pointer: fine));
+
 /* ---------------------------------------------------------------------------
  * filmDB design tokens — dark, warm-charcoal "screening room" palette.
  * One accent (projector-lamp amber) used sparingly. See PLAN.md / design
@@ -90,8 +103,10 @@
   --rail-w: 0rem;
   /* Height of the mobile now-playing strip (components/shell/
      mobile-player-bar.tsx), consumed by <main>'s bottom padding on top of
-     the bottom-tabs clearance below `md`. 0 whenever the strip isn't
-     mounted (nothing queued). */
+     the bottom-tabs clearance below `md`, and on its own past `md` on a
+     touch device (see the `desktop-input` variant and "Mobile now-playing
+     strip offset" below). 0 whenever the strip isn't mounted (nothing
+     queued). */
   --player-bar-h: 0rem;
 }
 
@@ -236,15 +251,21 @@ body:has(#app-rail) {
 
 /* ---- Mobile now-playing strip offset --------------------------------- */
 
-/* components/shell/mobile-player-bar.tsx stamps id="app-player-bar" only
-   while something is queued and the viewport is below `md`; :has() lets
-   <main> reserve room for it the same way it reserves room for the
-   floating bottom tab bar, with no client JS. Matches bottom-tabs.tsx's
-   own `md:hidden` breakpoint (47.99rem ≈ just under Tailwind's 48rem
-   `md`). */
-@media (max-width: 47.99rem) {
+/* components/shell/mobile-player-bar.tsx stamps id="app-player-bar"
+   whenever something is queued; :has() lets <main> reserve room for it the
+   same way it reserves room for the floating bottom tab bar, with no
+   client JS. Set unconditionally (same "base value, override at the wider
+   breakpoint" shape as --sidebar-w/--rail-w above) because the strip
+   itself now stays visible past `md` on a touch device — see the
+   `desktop-input` custom variant above — so main's own `md:pb-[var(
+   --player-bar-h)]` (app-shell.tsx) already goes to 0 exactly when this
+   does, without a separate breakpoint of its own. */
+body:has(#app-player-bar) {
+  --player-bar-h: 4rem;
+}
+@media (min-width: 48rem) and (hover: hover) and (pointer: fine) {
   body:has(#app-player-bar) {
-    --player-bar-h: 4rem;
+    --player-bar-h: 0rem;
   }
 }
 

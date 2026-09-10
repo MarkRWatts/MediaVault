@@ -1,10 +1,18 @@
 "use client";
 
-// Mobile equivalent of the rail (rail.tsx doesn't render below md — its
-// glass card is a desktop pattern; a phone gets a slim strip above the
-// bottom tab bar instead, tapping into a full-screen sheet for the real
-// Now Playing card + queue). Same glass recipe as bottom-tabs.tsx, offset
-// to stack directly above it.
+// Touch equivalent of the rail (rail.tsx only renders for a real
+// mouse/trackpad — globals.css's `desktop-input` variant — since its glass
+// card's collapse/expand is a hover-and-precise-click pattern; a touch
+// device gets a slim strip above the bottom tab bar instead, tapping into
+// a full-screen sheet for the real Now Playing card + queue). Same glass
+// recipe as bottom-tabs.tsx, offset to stack directly above it.
+//
+// Visible below `md` unconditionally, and past `md` too on a touch device
+// (`md:desktop-input:hidden` below, rather than plain `md:hidden`) — a
+// phone in landscape is routinely wider than `md`, and without this it
+// would hide here right as rail.tsx's collapsed icon strip takes over with
+// no way to reach the full queue/playlists (that only opens at `xl`, which
+// no phone reaches).
 
 import { useEffect, useState } from "react";
 import { ChevronDown } from "lucide-react";
@@ -48,7 +56,7 @@ export function MobilePlayerBar({ favouriteTrackCount }: { favouriteTrackCount: 
           directly above it rather than overlapping. */}
       <div
         id="app-player-bar"
-        className="fixed inset-x-3 bottom-[calc(env(safe-area-inset-bottom)+0.75rem+3.5rem+0.5rem)] z-40 flex items-center gap-3 rounded-2xl border border-border bg-bg-elevated/90 px-3 py-2 shadow-lg shadow-black/40 backdrop-blur-md md:hidden"
+        className="fixed inset-x-3 bottom-[calc(env(safe-area-inset-bottom)+0.75rem+3.5rem+0.5rem)] z-40 flex items-center gap-3 rounded-2xl border border-border bg-bg-elevated/90 px-3 py-2 shadow-lg shadow-black/40 backdrop-blur-md md:desktop-input:hidden"
       >
         <button
           type="button"
@@ -88,7 +96,7 @@ export function MobilePlayerBar({ favouriteTrackCount }: { favouriteTrackCount: 
       </div>
 
       {sheetOpen && (
-        <div role="dialog" aria-modal="true" aria-label="Now playing" className="fixed inset-0 z-50 flex flex-col bg-bg md:hidden">
+        <div role="dialog" aria-modal="true" aria-label="Now playing" className="fixed inset-0 z-50 flex flex-col bg-bg md:desktop-input:hidden">
           <div className="flex items-center justify-between px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-2">
             <span className="font-display text-sm font-medium tracking-wide text-text-muted">Now Playing</span>
             <button
