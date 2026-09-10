@@ -201,7 +201,7 @@ describe("PlayerEngine", () => {
     expect(snap.status).toBe("playing");
     expect(snap.duration).toBe(137.5); // decoded duration, not t1.durationSecs (999)
     expect(fake.sources).toHaveLength(1);
-    expect(fake.sources[0]!.startedAt).toBeCloseTo(0.05, 5); // ctx.currentTime(0) + START_EPSILON
+    expect(fake.sources[0]!.startedAt).toBeCloseTo(0.1, 5); // ctx.currentTime(0) + START_EPSILON
 
     // Pacing: only the second track was requested — not the third.
     expect(loader.countFor(t2.trackId)).toBe(1);
@@ -218,7 +218,7 @@ describe("PlayerEngine", () => {
     await flush();
 
     expect(fake.sources).toHaveLength(2);
-    expect(fake.sources[1]!.startedAt).toBeCloseTo(0.05 + 100, 5);
+    expect(fake.sources[1]!.startedAt).toBeCloseTo(0.1 + 100, 5);
   });
 
   // -----------------------------------------------------------------------
@@ -279,7 +279,7 @@ describe("PlayerEngine", () => {
     await flush();
 
     expect(fake.sources).toHaveLength(2); // one for t1, one for t3 — none for t2
-    expect(fake.sources[1]!.startedAt).toBeCloseTo(0.05 + 100, 5); // same slot t2 would have used
+    expect(fake.sources[1]!.startedAt).toBeCloseTo(0.1 + 100, 5); // same slot t2 would have used
   });
 
   // -----------------------------------------------------------------------
@@ -600,13 +600,13 @@ describe("PlayerEngine", () => {
 
     expect(fake.sources).toHaveLength(2);
     const seekSource = fake.sources[1]!;
-    expect(seekSource.startedAt).toBeCloseTo(10.05, 5);
+    expect(seekSource.startedAt).toBeCloseTo(10.1, 5);
     expect(seekSource.startedOffset).toBeCloseTo(30, 5);
     expect(fake.sources[0]!.stopped).toBe(true); // old source stopped
 
     // Advance the clock by the START_EPSILON lead-in the source was
     // scheduled with, so elapsed reads exactly the seek target.
-    (fake.ctx as unknown as { currentTime: number }).currentTime = 10.05;
+    (fake.ctx as unknown as { currentTime: number }).currentTime = 10.1;
     const pos = engine.getPosition();
     expect(pos?.elapsed).toBeCloseTo(30, 5);
   });
@@ -704,7 +704,7 @@ describe("PlayerEngine", () => {
     loader.resolve(t1.trackId, 100);
     await flush();
 
-    (fake.ctx as unknown as { currentTime: number }).currentTime = 0.05 + 5; // 5s elapsed
+    (fake.ctx as unknown as { currentTime: number }).currentTime = 0.1 + 5; // 5s elapsed
     const callsBefore = loader.countFor(t1.trackId);
     engine.previous();
 
@@ -730,8 +730,8 @@ describe("PlayerEngine", () => {
     await flush();
     expect(engine.getSnapshot().current?.trackId).toBe(t2.trackId);
 
-    // t2 has barely started (schedule.startAt ~= 0.05 + 100; keep currentTime there)
-    (fake.ctx as unknown as { currentTime: number }).currentTime = 0.05 + 100 + 1; // 1s elapsed
+    // t2 has barely started (schedule.startAt ~= 0.1 + 100; keep currentTime there)
+    (fake.ctx as unknown as { currentTime: number }).currentTime = 0.1 + 100 + 1; // 1s elapsed
     engine.previous();
 
     const snap = engine.getSnapshot();
@@ -779,19 +779,20 @@ describe("PlayerEngine", () => {
   it("starts playing on the first chunk and schedules each later chunk contiguously after it", async () => {
     const t1 = makeTrack({ durationSecs: 3 });
     engine.playTracks([t1]);
+    await flush(); // resume() settled — the clock is live
 
     loader.chunk(t1.trackId, 0.5);
     let snap = engine.getSnapshot();
     expect(snap.status).toBe("playing"); // no waiting for the rest
     expect(snap.duration).toBe(3); // DB estimate until the stream completes
     expect(fake.sources).toHaveLength(1);
-    expect(fake.sources[0]!.startedAt).toBeCloseTo(0.05, 5);
+    expect(fake.sources[0]!.startedAt).toBeCloseTo(0.1, 5);
 
     loader.chunk(t1.trackId, 0.5);
     loader.chunk(t1.trackId, 0.25);
     expect(fake.sources).toHaveLength(3);
-    expect(fake.sources[1]!.startedAt).toBeCloseTo(0.55, 5);
-    expect(fake.sources[2]!.startedAt).toBeCloseTo(1.05, 5);
+    expect(fake.sources[1]!.startedAt).toBeCloseTo(0.6, 5);
+    expect(fake.sources[2]!.startedAt).toBeCloseTo(1.1, 5);
 
     loader.complete(t1.trackId);
     await flush();
@@ -803,6 +804,7 @@ describe("PlayerEngine", () => {
     const t1 = makeTrack();
     const t2 = makeTrack();
     engine.playTracks([t1, t2]);
+    await flush();
 
     loader.chunk(t1.trackId, 0.5);
     loader.chunk(t1.trackId, 0.5);
@@ -825,23 +827,24 @@ describe("PlayerEngine", () => {
     loader.chunk(t2.trackId, 0.5);
     loader.chunk(t2.trackId, 0.5);
     expect(fake.sources).toHaveLength(3);
-    expect(fake.sources[1]!.startedAt).toBeCloseTo(100.05, 5);
-    expect(fake.sources[2]!.startedAt).toBeCloseTo(100.55, 5);
+    expect(fake.sources[1]!.startedAt).toBeCloseTo(100.1, 5);
+    expect(fake.sources[2]!.startedAt).toBeCloseTo(100.6, 5);
   });
 
   it("a chunk that lands after its slot shifts the anchor forward (a pause, not a skip)", async () => {
     const t1 = makeTrack();
     engine.playTracks([t1]);
-    loader.chunk(t1.trackId, 0.5); // scheduled at 0.05, runs to 0.55
+    await flush();
+    loader.chunk(t1.trackId, 0.5); // scheduled at 0.1, runs to 0.6
 
     // The network stalls: the next chunk only arrives at t=2.
     (fake.ctx as unknown as { currentTime: number }).currentTime = 2;
     loader.chunk(t1.trackId, 0.5);
 
-    expect(fake.sources[1]!.startedAt).toBeCloseTo(2.05, 5);
+    expect(fake.sources[1]!.startedAt).toBeCloseTo(2.1, 5);
     expect(fake.sources[1]!.startedOffset).toBe(0); // nothing skipped
     // Position picks up where the audio left off (0.5 s in), not 2 s in.
-    (fake.ctx as unknown as { currentTime: number }).currentTime = 2.05;
+    (fake.ctx as unknown as { currentTime: number }).currentTime = 2.1;
     expect(engine.getPosition()?.elapsed).toBeCloseTo(0.5, 5);
   });
 
@@ -849,6 +852,7 @@ describe("PlayerEngine", () => {
     const t1 = makeTrack();
     const t2 = makeTrack();
     engine.playTracks([t1, t2]);
+    await flush();
     loader.chunk(t1.trackId, 0.5);
 
     fake.sources[0]!.onended?.(); // the only chunk so far finishes playing
@@ -864,6 +868,7 @@ describe("PlayerEngine", () => {
     const t1 = makeTrack();
     const t2 = makeTrack();
     engine.playTracks([t1, t2]);
+    await flush();
     loader.chunk(t1.trackId, 0.5);
     loader.chunk(t1.trackId, 0.5);
 
@@ -899,6 +904,7 @@ describe("PlayerEngine", () => {
   it("seek is clamped to the audio that has arrived while the stream is still in flight", async () => {
     const t1 = makeTrack({ durationSecs: 300 });
     engine.playTracks([t1]);
+    await flush();
     loader.chunk(t1.trackId, 0.5);
     loader.chunk(t1.trackId, 0.5); // 1 s downloaded of a 300 s track
 
@@ -909,14 +915,38 @@ describe("PlayerEngine", () => {
     // so nothing restarts and the position parks at 1 s until more lands.
     expect(fake.sources.every((s) => s.stopped)).toBe(true);
     expect(fake.sources).toHaveLength(2);
-    (fake.ctx as unknown as { currentTime: number }).currentTime = 0.35;
+    (fake.ctx as unknown as { currentTime: number }).currentTime = 0.4;
     expect(engine.getPosition()?.elapsed).toBeCloseTo(1, 5);
 
     // The next chunk is exactly the audio at the seek point: it starts now.
     loader.chunk(t1.trackId, 0.5);
     expect(fake.sources).toHaveLength(3);
-    expect(fake.sources[2]!.startedAt).toBeCloseTo(0.4, 5); // 0.35 + START_EPSILON
+    expect(fake.sources[2]!.startedAt).toBeCloseTo(0.5, 5); // 0.4 + START_EPSILON
     expect(fake.sources[2]!.startedOffset).toBe(0);
+  });
+
+  it("holds the first chunk until the context's resume() has resolved, then starts it with the full lead", async () => {
+    let resolveResume!: () => void;
+    (fake.ctx as unknown as { resume: () => Promise<void> }).resume = () =>
+      new Promise<void>((r) => {
+        resolveResume = r;
+      });
+    const t1 = makeTrack();
+    engine.playTracks([t1]);
+
+    loader.chunk(t1.trackId, 0.5); // lands while the device is still coming up
+    loader.chunk(t1.trackId, 0.5);
+    expect(fake.sources).toHaveLength(0);
+    expect(engine.getSnapshot().status).toBe("loading");
+
+    (fake.ctx as unknown as { currentTime: number }).currentTime = 0.2; // clock now live
+    resolveResume();
+    await flush();
+
+    expect(engine.getSnapshot().status).toBe("playing");
+    expect(fake.sources).toHaveLength(2);
+    expect(fake.sources[0]!.startedAt).toBeCloseTo(0.3, 5); // 0.2 + START_EPSILON, not the stale seed
+    expect(fake.sources[1]!.startedAt).toBeCloseTo(0.8, 5);
   });
 
   // -----------------------------------------------------------------------

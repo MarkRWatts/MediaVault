@@ -118,10 +118,14 @@ interface TrackLoad {
   abort: AbortController;
 }
 
-// Lead-in for a scheduled start — starting exactly at ctx.currentTime can
-// race the audio hardware clock on some browsers and clip the first few
-// samples.
-const START_EPSILON = 0.05;
+// Lead-in for any start placed at "now" (a cold start's first chunk, a
+// seek, a late chunk). Starting exactly at ctx.currentTime can race the
+// audio hardware clock and clip the first samples; and since every later
+// chunk of a track is laid on the timeline relative to this one, a first
+// chunk that begins even a few ms late overlaps its successor for those
+// few ms — an audible burst of static (reported on cold starts at 50 ms,
+// 2026-09-10). 100 ms is still well inside "instant".
+const START_EPSILON = 0.1;
 
 // Sentinel key for "no predecessor" anchors in `schedule` — real entry
 // keys start at 1, so -1 never collides with one.
@@ -141,6 +145,10 @@ const MAX_RETRY_AFTER_MS = 15_000;
 // link — so it bounds the time-to-first-sound without making a 5-minute
 // track into thousands of source nodes.
 const CHUNK_SECS = 0.5;
+
+// How long a cold start waits for AudioContext.resume() before scheduling
+// anyway (see awaitClock).
+const CLOCK_READY_TIMEOUT_MS = 1000;
 
 async function fetchWithRetry(url: string, signal: AbortSignal): Promise<Response> {
   let res = await fetch(url, { signal });
@@ -220,6 +228,10 @@ export class PlayerEngine {
    *  session is ignored. Loads are validated by identity instead (see
    *  isLiveLoad) so an in-flight stream survives a restart onto itself. */
   private session = 0;
+  /** False from a hard restart until the context's resume() has resolved
+   *  — i.e. the audio device is actually running and currentTime is
+   *  ticking. Nothing is anchored before then (see awaitClock). */
+  private clockRunning = false;
   private nextEntryKey = 1;
 
   private queue: QueueEntry[] = [];
@@ -436,12 +448,42 @@ export class PlayerEngine {
     source.onended = () => this.handleChunkEnded(key, index, session);
   }
 
+  // A cold start creates or resumes the AudioContext, and the OS audio
+  // device behind it takes a moment to come up — during which
+  // currentTime is not a clock anything can be placed against. Hold every
+  // anchor until resume() resolves (the device is running), then chain
+  // whatever has arrived meanwhile. Runs alongside the network fetch, so
+  // on the LAN it costs nothing. The timeout is a backstop for an engine
+  // whose resume() never settles (autoplay policy): better to try than to
+  // sit at "loading" forever.
+  private awaitClock(ctx: AudioContext, session: number) {
+    // A restart while something is audibly playing (Next, Previous, a
+    // queue edit on the current entry) is on a clock that is already
+    // proven live — no wait, so the skip is seamless.
+    const mid = this.status === "playing" || this.status === "loading";
+    if (this.clockRunning && ctx.state === "running" && mid) return;
+    this.clockRunning = false;
+    const ready = () => {
+      if (session !== this.session || this.clockRunning) return;
+      this.clockRunning = true;
+      if (this.currentKey != null) this.maybeChain(this.currentKey, session);
+    };
+    let resumed: Promise<void>;
+    try {
+      resumed = Promise.resolve(ctx.resume());
+    } catch {
+      resumed = Promise.resolve();
+    }
+    resumed.then(ready, ready);
+    setTimeout(ready, CLOCK_READY_TIMEOUT_MS);
+  }
+
   // Lay down `key`'s anchor at `startAt` and schedule every chunk received
   // so far; later chunks schedule themselves as they land (onChunk).
   private anchor(key: number, startAt: number, session: number) {
     const load = this.loads.get(key);
     const entry = this.entry(key);
-    if (!load || !entry || session !== this.session) return;
+    if (!load || !entry || session !== this.session || !this.clockRunning) return;
 
     this.schedule.set(key, {
       startAt,
@@ -704,9 +746,9 @@ export class PlayerEngine {
     const entry = this.entry(key);
     if (!entry) return;
     const ctx = this.ensureContext();
-    if (ctx.state !== "running") ctx.resume();
 
     const session = ++this.session;
+    this.awaitClock(ctx, session);
     this.stopAllSources();
     this.schedule.clear();
     // Keep `key`'s own load if prefetch pacing already started (or
