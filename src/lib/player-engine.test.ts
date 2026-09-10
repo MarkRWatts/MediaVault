@@ -187,7 +187,7 @@ describe("PlayerEngine", () => {
     trackIdCounter = 0;
     fake = createFakeAudioContext();
     loader = createFakeLoader();
-    engine = new PlayerEngine({ createContext: () => fake.ctx, loadTrack: loader.loadTrack, primeOutput: () => {} });
+    engine = new PlayerEngine({ createContext: () => fake.ctx, loadTrack: loader.loadTrack, keepWarm: () => {} });
   });
 
   // -----------------------------------------------------------------------
@@ -639,21 +639,54 @@ describe("PlayerEngine", () => {
   // 13: pause/play
   // -----------------------------------------------------------------------
 
-  it("pause suspends the context, play resumes; a buffer resolving while paused leaves status paused", async () => {
+  it("pause stops audio and freezes position without suspending the unit; a chunk arriving while paused is not played; play resumes from the paused point", async () => {
+    const t1 = makeTrack();
+    engine.playTracks([t1]);
+    await flush(); // clock live
+    loader.chunk(t1.trackId, 0.5);
+    loader.chunk(t1.trackId, 0.5); // 1 s of audio playing
+    expect(engine.getSnapshot().status).toBe("playing");
+
+    (fake.ctx as unknown as { currentTime: number }).currentTime = 0.25 + 0.6; // 0.6 s in
+    engine.pause();
+
+    let snap = engine.getSnapshot();
+    expect(snap.status).toBe("paused");
+    expect(fake.ctx.state).not.toBe("suspended"); // unit kept warm, not spun down
+    expect(fake.sources.every((s) => s.stopped)).toBe(true);
+
+    // Position is frozen even though the context clock keeps advancing.
+    expect(engine.getPosition()?.elapsed).toBeCloseTo(0.6, 5);
+    (fake.ctx as unknown as { currentTime: number }).currentTime = 0.25 + 50;
+    expect(engine.getPosition()?.elapsed).toBeCloseTo(0.6, 5);
+
+    // A chunk that lands while paused is buffered, not started.
+    const sourcesBefore = fake.sources.length;
+    loader.chunk(t1.trackId, 0.5);
+    expect(fake.sources.length).toBe(sourcesBefore);
+    expect(engine.getSnapshot().status).toBe("paused");
+
+    // Resume: a fresh source is started (from the paused point), unit was
+    // never suspended so no cold spin-up.
+    engine.play();
+    snap = engine.getSnapshot();
+    expect(snap.status).toBe("playing");
+    expect(fake.sources.some((s) => !s.stopped)).toBe(true);
+  });
+
+  it("a buffer resolving while paused leaves status paused and updates duration", async () => {
     const t1 = makeTrack();
     engine.playTracks([t1]); // still loading
 
     engine.pause();
-    expect(fake.ctx.state).toBe("suspended");
     expect(engine.getSnapshot().status).toBe("paused");
 
     loader.resolve(t1.trackId, 50);
     await flush();
-    expect(engine.getSnapshot().status).toBe("paused");
-    expect(engine.getSnapshot().duration).toBe(50); // duration still updates
+    expect(engine.getSnapshot().status).toBe("paused"); // does not auto-start
+    expect(engine.getSnapshot().duration).toBe(50);
 
     engine.play();
-    expect(fake.ctx.state).toBe("running");
     expect(engine.getSnapshot().status).toBe("playing");
   });
 

@@ -89,8 +89,9 @@ export interface EngineDeps {
    *  (Play) — autoplay policy requires it. */
   createContext: () => AudioContext;
   /** Warm the output right after a cold start's context comes alive (see
-   *  awaitClock). The default plays a short, inaudible non-silent buffer. */
-  primeOutput: (ctx: AudioContext) => void;
+     *  ensureContext, on the first Play). The default starts a permanent
+   *  inaudible keep-alive tone. */
+  keepWarm: (ctx: AudioContext) => void;
   /** Stream one track: deliver every chunk through handlers.onChunk, then
    *  resolve once the last one has been delivered (reject on failure —
    *  including a failure part-way through, after some chunks). The
@@ -153,34 +154,39 @@ const CHUNK_SECS = 0.5;
 // anyway (see awaitClock).
 const CLOCK_READY_TIMEOUT_MS = 1000;
 
-// A cold start's first audible sample is held this long after the clock
-// comes alive, behind the primer (see awaitClock / primeOutput): the OS
-// audio session and output unit settle during inaudible output rather
-// than over the first notes. Still comfortably "instant" from the click.
+// The very first start of the page is the one unavoidable cold moment
+// (the audio unit is being created); its first audible sample is held
+// this long behind the keep-alive so the unit is producing continuous
+// inaudible output before real audio, and faded in. Every later start is
+// kept warm by the keep-alive, so only this first one pays the lead.
 const COLD_START_LEAD = 0.25;
-// The primer's length — long enough to outlast any start-up settling.
-const PRIMER_SECS = 0.3;
-// Gain ramp on a cold start's first chunk, from silence to the set volume.
-// Far too short to hear as a fade, long enough to soften the onset.
+// Gain ramp on that first chunk, from silence to the set volume. Far too
+// short to hear as a fade, long enough to soften the onset.
 const COLD_START_FADE_SECS = 0.03;
 
-/** Plays PRIMER_SECS of a DC-free signal at -100 dB straight into the
- *  destination. Non-zero, so the browser treats the tab as producing
- *  audio (WebKit activates the platform audio session on the first
- *  non-silent output, which on both macOS and iOS can glitch the output
- *  for a buffer or so — the "burst of static" reported on cold starts,
- *  2026-09-10); inaudible, so whatever the start-up does to it is not
- *  heard. Chained tracks, Next and seek never needed this: sound was
- *  already flowing. */
-function defaultPrimeOutput(ctx: AudioContext) {
-  const frames = Math.round(ctx.sampleRate * PRIMER_SECS);
-  const buffer = ctx.createBuffer(1, frames, ctx.sampleRate);
+/** Starts a permanent, inaudible, DC-free tone into the destination for
+ *  the life of the context, keeping WebKit's audio output unit spun up.
+ *
+ *  WebKit (Safari, and every iOS browser — they are all WebKit) powers its
+ *  hardware output unit down whenever the graph goes silent — between
+ *  tracks, and on the suspend() a pause used to do — and powers it back up
+ *  with an audible click when sound resumes. That click was the "burst of
+ *  static" reported on every start from stopped/paused (2026-09-10),
+ *  WebKit-only: Chromium keeps the unit warm on its own. A continuous
+ *  -80 dB signal (below anything audible, alternating sign so it carries
+ *  no DC) keeps the unit engaged so no start ever cold-starts the hardware.
+ *  Returns the node so it can be torn down with the context (it never is,
+ *  in practice — one context lives for the page). */
+function defaultKeepWarm(ctx: AudioContext): AudioScheduledSourceNode {
+  const buffer = ctx.createBuffer(1, Math.round(ctx.sampleRate * 0.5), ctx.sampleRate);
   const data = buffer.getChannelData(0);
-  for (let i = 0; i < frames; i++) data[i] = i & 1 ? 1e-5 : -1e-5;
+  for (let i = 0; i < data.length; i++) data[i] = i & 1 ? 1e-4 : -1e-4;
   const source = ctx.createBufferSource();
   source.buffer = buffer;
+  source.loop = true;
   source.connect(ctx.destination);
   source.start();
+  return source;
 }
 
 async function fetchWithRetry(url: string, signal: AbortSignal): Promise<Response> {
@@ -269,8 +275,12 @@ export class PlayerEngine {
    *  COLD_START_LEAD past the clock coming alive. In the past (and so
    *  moot) for any start made mid-playback. */
   private notBefore = 0;
-  /** Set by a cold start; the next anchor fades its first chunk in. */
+  /** Set by the first cold start; the next anchor fades its first chunk in. */
   private fadeInNext = false;
+  /** Playback position frozen at the moment of pause() — the context clock
+   *  keeps running (it is never suspended, see pause), so getPosition must
+   *  report this rather than a value that would creep forward while paused. */
+  private pausedElapsed = 0;
   private nextEntryKey = 1;
 
   private queue: QueueEntry[] = [];
@@ -291,7 +301,7 @@ export class PlayerEngine {
   constructor(deps: Partial<EngineDeps> = {}) {
     this.deps = {
       createContext: deps.createContext ?? defaultCreateContext,
-      primeOutput: deps.primeOutput ?? defaultPrimeOutput,
+      keepWarm: deps.keepWarm ?? defaultKeepWarm,
       loadTrack: deps.loadTrack ?? streamTrack,
     };
   }
@@ -385,6 +395,14 @@ export class PlayerEngine {
       gain.connect(ctx.destination);
       this.ctx = ctx;
       this.gain = gain;
+      // Started here — synchronously inside the Play gesture that first
+      // reaches ensureContext — because WebKit is most reliable about
+      // engaging the output unit for audio begun in the gesture itself.
+      try {
+        this.deps.keepWarm(ctx);
+      } catch {
+        // Best effort — no keep-alive just means a possible first-start click.
+      }
     }
     return this.ctx;
   }
@@ -460,6 +478,10 @@ export class PlayerEngine {
     const info = this.schedule.get(key);
     const load = this.loads.get(key);
     if (!ctx || !info || !load || !this.gain || session !== this.session) return;
+    // Paused: the context clock still runs (it is never suspended), so a
+    // chunk that arrives now is kept in the load but not started — play()
+    // re-schedules everything from the paused point when it resumes.
+    if (this.status === "paused") return;
     const buffer = load.chunks[index];
     if (!buffer) return;
 
@@ -497,20 +519,16 @@ export class PlayerEngine {
   // whose resume() never settles (autoplay policy): better to try than to
   // sit at "loading" forever.
   private awaitClock(ctx: AudioContext, session: number) {
-    // A restart while something is audibly playing (Next, Previous, a
-    // queue edit on the current entry) is on a clock that is already
-    // proven live — no wait, so the skip is seamless.
-    const mid = this.status === "playing" || this.status === "loading";
-    if (this.clockRunning && ctx.state === "running" && mid) return;
+    // Once the clock has been proven live it stays live: the context is
+    // never suspended (see pause), so every start after the first is warm
+    // and seamless — no wait, no lead, no fade. Only the very first start
+    // of the page, or a start after the OS interrupted the unit (state no
+    // longer "running"), takes the cold path below.
+    if (this.clockRunning && ctx.state === "running") return;
     this.clockRunning = false;
     const ready = () => {
       if (session !== this.session || this.clockRunning) return;
       this.clockRunning = true;
-      try {
-        this.deps.primeOutput(ctx);
-      } catch {
-        // Best effort — a primer that can't be built just means no warm-up.
-      }
       this.notBefore = ctx.currentTime + COLD_START_LEAD;
       this.fadeInNext = true;
       if (this.currentKey != null) this.maybeChain(this.currentKey, session);
@@ -549,8 +567,8 @@ export class PlayerEngine {
 
     if (key === this.currentKey) {
       this.duration = load.complete ? load.totalSecs : (entry.durationSecs ?? null);
-      // A pause that landed while this entry was still loading suspended
-      // the context; leave the status alone so play() is what resumes it.
+      // A pause may have landed while this entry was still loading; leave
+      // the status alone so play() is what resumes it.
       if (this.status !== "paused") this.status = "playing";
       // A real track is now audibly scheduled — any earlier load-failure
       // banner (this one or an already-skipped one) no longer applies, and
@@ -1015,12 +1033,26 @@ export class PlayerEngine {
 
   play() {
     if (this.status === "playing" || this.status === "loading") return;
-    if (this.status === "paused" && this.ctx) {
-      // Also covers Safari's "interrupted" state (a phone call, another
-      // app taking the output) — resume() is the way back from both.
-      this.ctx.resume();
+    if (this.status === "paused") {
+      const ctx = this.ctx;
+      const key = this.currentKey;
+      const load = key == null ? undefined : this.loads.get(key);
       this.status = "playing";
-      this.emit();
+      // The unit was kept warm through the pause, so resuming it is
+      // silent; resume() only matters if the OS itself interrupted it
+      // (a call, another app) and dropped it out of "running".
+      if (ctx && ctx.state !== "running") ctx.resume();
+      if (key != null && load && load.chunks.length > 0) {
+        // Re-schedule the current track from where it was paused — same
+        // machinery as seek, so the position and the gapless chain pick
+        // up exactly where they left off.
+        this.seek(this.pausedElapsed);
+      } else if (key != null) {
+        // Paused before any audio had arrived — just restart the load.
+        this.startFrom(key);
+      } else {
+        this.emit();
+      }
       return;
     }
     const key = this.currentKey ?? this.order[0];
@@ -1029,7 +1061,13 @@ export class PlayerEngine {
 
   pause() {
     if (this.status !== "playing" && this.status !== "loading") return;
-    this.ctx?.suspend();
+    // Freeze the reported position before stopping — the context clock is
+    // never suspended (that would spin WebKit's output unit down and make
+    // the next play cold-start with a click; see defaultKeepWarm), so
+    // getPosition would otherwise keep advancing while paused.
+    const pos = this.getPosition();
+    this.pausedElapsed = pos ? pos.elapsed : 0;
+    this.stopAllSources();
     this.status = "paused";
     this.emit();
   }
@@ -1131,6 +1169,9 @@ export class PlayerEngine {
     if (this.currentKey == null) return null;
     const info = this.schedule.get(this.currentKey);
     const duration = info && info.duration > 0 ? info.duration : (this.duration ?? 0);
+    if (this.status === "paused") {
+      return { elapsed: duration > 0 ? Math.min(this.pausedElapsed, duration) : this.pausedElapsed, duration };
+    }
     if (this.ctx && info && duration > 0) {
       const elapsed = Math.min(Math.max(this.ctx.currentTime - info.startAt, 0), duration);
       return { elapsed, duration };
