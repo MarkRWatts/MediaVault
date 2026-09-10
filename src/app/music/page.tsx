@@ -66,6 +66,23 @@ function FavouriteAlbumCard({ album }: { album: FavouriteAlbumView }) {
 }
 
 const SHELF_ROW = "flex gap-3 overflow-x-auto pb-2";
+const ARTIST_GRID = "grid grid-cols-2 gap-3 @lg:grid-cols-3 @2xl:grid-cols-4 @4xl:grid-cols-5 @5xl:grid-cols-6";
+
+function ArtistGrid({
+  artists,
+  variousAlbumCount,
+}: {
+  artists: MusicIndexArtist[];
+  variousAlbumCount: number;
+}) {
+  return (
+    <div className={ARTIST_GRID}>
+      {artists.map((a) => (
+        <ArtistCard key={a.id} artist={a} variousAlbumCount={variousAlbumCount} />
+      ))}
+    </div>
+  );
+}
 
 export default async function MusicPage() {
   const { userId } = await requireMemberOrRedirect();
@@ -81,6 +98,11 @@ export default async function MusicPage() {
     : 0;
 
   const hasFavourites = favourites.artists.length > 0 || favourites.albums.length > 0 || favourites.trackCount > 0;
+
+  // Split the index grid by playability: vinyl-only artists have nothing
+  // the app can actually play (see MusicIndexArtist.vinylOnly).
+  const digitalArtists = artists.filter((a) => !a.vinylOnly);
+  const vinylOnlyArtists = artists.filter((a) => a.vinylOnly);
 
   const tiles: { label: string; value: number | string; href?: string }[] = [
     { label: "Artists", value: totals.artists },
@@ -187,11 +209,32 @@ export default async function MusicPage() {
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-3 @lg:grid-cols-3 @2xl:grid-cols-4 @4xl:grid-cols-5 @5xl:grid-cols-6">
-            {artists.map((a) => (
-              <ArtistCard key={a.id} artist={a} variousAlbumCount={variousAlbumCount} />
-            ))}
-          </div>
+          <>
+            {digitalArtists.length > 0 && (
+              <CollapsibleSection
+                storageKey="music:Digital & CD"
+                title="Digital & CD"
+                count={digitalArtists.length}
+                noun="artist"
+              >
+                <ArtistGrid artists={digitalArtists} variousAlbumCount={variousAlbumCount} />
+              </CollapsibleSection>
+            )}
+
+            {/* Vinyl you own nothing playable of — separated out because
+                nothing in this shelf can actually be played through the
+                app (see MusicIndexArtist.vinylOnly). */}
+            {vinylOnlyArtists.length > 0 && (
+              <CollapsibleSection
+                storageKey="music:Vinyl only"
+                title="Vinyl only"
+                count={vinylOnlyArtists.length}
+                noun="artist"
+              >
+                <ArtistGrid artists={vinylOnlyArtists} variousAlbumCount={variousAlbumCount} />
+              </CollapsibleSection>
+            )}
+          </>
         )}
       </div>
     </div>
