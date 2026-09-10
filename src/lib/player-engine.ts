@@ -532,7 +532,14 @@ export class PlayerEngine {
     const session = ++this.session;
     this.stopAllSources();
     this.schedule.clear();
-    this.buffers.clear();
+    // Keep `key`'s buffer if prefetch pacing already decoded it (the
+    // common case: Next after its target was pulled in ahead of time
+    // while its predecessor played) — a decoded AudioBuffer is immutable
+    // audio content, independent of the session/timing state being reset
+    // here, so discarding it just means downloading the exact bytes
+    // sitting in memory all over again.
+    const hadBuffer = this.buffers.has(key);
+    this.releaseBuffersExcept(key);
     this.pending.clear();
 
     this.currentKey = key;
@@ -542,7 +549,11 @@ export class PlayerEngine {
     const seedKey = this.prevKey(key) ?? NO_PREDECESSOR;
     this.schedule.set(seedKey, { startAt: ctx.currentTime + START_EPSILON, duration: 0 });
     this.emit();
-    this.prefetch(key, session);
+    // prefetch() no-ops when a buffer's already present (see its own
+    // buffers.has guard) — chain it onto the seed anchor directly instead,
+    // the same call its own success handler would have made.
+    if (hadBuffer) this.maybeChain(key, session);
+    else this.prefetch(key, session);
   }
 
   /** After any edit to the play order beyond the current entry: drop every

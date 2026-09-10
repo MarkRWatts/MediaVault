@@ -432,11 +432,16 @@ describe("PlayerEngine", () => {
     await flush();
 
     const currentKey = engine.getSnapshot().currentKey!;
+    const callsBefore = loader.countFor(t2.trackId);
     engine.removeFromQueue(currentKey);
 
     const snap = engine.getSnapshot();
-    expect(snap.status).toBe("loading");
+    // t2 was already prefetched (resolved above) — starting it should go
+    // straight to playing, not re-download bytes already sitting decoded
+    // in memory (see startFrom's buffer-preservation comment).
+    expect(snap.status).toBe("playing");
     expect(snap.current?.trackId).toBe(t2.trackId);
+    expect(loader.countFor(t2.trackId)).toBe(callsBefore);
   });
 
   it("removeFromQueue of a non-current, non-next entry does not stop anything", async () => {
@@ -628,10 +633,59 @@ describe("PlayerEngine", () => {
   });
 
   // -----------------------------------------------------------------------
+  // 13.5: next
+  // -----------------------------------------------------------------------
+
+  it("next reuses an already-prefetched successor's buffer instead of re-downloading it", async () => {
+    const t1 = makeTrack();
+    const t2 = makeTrack();
+    engine.playTracks([t1, t2]);
+    loader.resolve(t1.trackId, 100);
+    await flush();
+    // Normal prefetch pacing already pulled t2 in while t1 plays.
+    loader.resolve(t2.trackId, 80);
+    await flush();
+    const callsBefore = loader.countFor(t2.trackId);
+
+    engine.next();
+
+    const snap = engine.getSnapshot();
+    expect(snap.current?.trackId).toBe(t2.trackId);
+    expect(snap.status).toBe("playing");
+    expect(loader.countFor(t2.trackId)).toBe(callsBefore); // not re-requested
+  });
+
+  it("next while the successor is still mid-fetch issues a second request (known residual cost, not what was reported)", async () => {
+    const t1 = makeTrack();
+    const t2 = makeTrack();
+    engine.playTracks([t1, t2]);
+    loader.resolve(t1.trackId, 100);
+    await flush();
+    // t2's prefetch is in flight but hasn't resolved yet — nothing decoded
+    // to reuse, unlike the completed-prefetch case above.
+    expect(loader.countFor(t2.trackId)).toBe(1);
+
+    engine.next();
+
+    // startFrom bumps the session, so the original in-flight fetch's result
+    // (whenever it lands) will be discarded as stale, and a fresh one is
+    // requested under the new session — the original is orphaned rather
+    // than reused. Narrower than the reported bug (this only bites a skip
+    // that lands *while* the target is still downloading, not a completed
+    // one) and left as-is for now.
+    expect(engine.getSnapshot().status).toBe("loading");
+    expect(loader.countFor(t2.trackId)).toBe(2);
+
+    loader.resolve(t2.trackId, 80, 1); // the second (current-session) call
+    await flush();
+    expect(engine.getSnapshot().status).toBe("playing");
+  });
+
+  // -----------------------------------------------------------------------
   // 14: previous
   // -----------------------------------------------------------------------
 
-  it("previous restarts the current track once elapsed > 3s", async () => {
+  it("previous restarts the current track once elapsed > 3s, reusing its already-decoded buffer", async () => {
     const t1 = makeTrack();
     const t2 = makeTrack();
     engine.playTracks([t1, t2]);
@@ -643,9 +697,12 @@ describe("PlayerEngine", () => {
     engine.previous();
 
     const snap = engine.getSnapshot();
-    expect(snap.status).toBe("loading");
     expect(snap.current?.trackId).toBe(t1.trackId); // restarted, not stepped back
-    expect(loader.countFor(t1.trackId)).toBe(callsBefore + 1); // re-requested
+    // t1 is the track already playing — its buffer never left memory, so
+    // restarting it goes straight to playing rather than re-downloading
+    // the exact same bytes (see startFrom's buffer-preservation comment).
+    expect(snap.status).toBe("playing");
+    expect(loader.countFor(t1.trackId)).toBe(callsBefore);
   });
 
   it("previous steps back to the previous entry when elapsed <= 3s", async () => {
