@@ -15,15 +15,28 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ChevronDown, ChevronUp, Pencil, Trash2, Volume2, X } from "lucide-react";
+import { ChevronDown, ChevronUp, GripVertical, Pencil, Trash2, Volume2, X } from "lucide-react";
 import CoverImage from "@/components/CoverImage";
 import TrackMenu from "@/components/player/TrackMenu";
 import { PlayIcon, PauseIcon, ShuffleIcon } from "@/components/player/icons";
 import { usePlayer } from "@/components/player/usePlayer";
 import { formatTime, formatLongTime, formatDateDMY } from "@/lib/format-time";
-import { renamePlaylist, deletePlaylist, removePlaylistItem, movePlaylistItem } from "@/app/actions/music-state";
+import {
+  renamePlaylist,
+  deletePlaylist,
+  removePlaylistItem,
+  movePlaylistItem,
+  reorderPlaylistItems,
+} from "@/app/actions/music-state";
 import type { PlaybackContext, QueueTrack } from "@/lib/player-types";
 import type { PlaylistDetail, PlaylistItemView } from "@/lib/queries-playlists";
+
+/** Where a drag-and-drop reorder would land: `index` into the current
+ *  `items` array, and which edge of that row. */
+interface DropIndicator {
+  index: number;
+  edge: "before" | "after";
+}
 
 const secondaryChip =
   "inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-xs font-medium tracking-wide text-text-muted transition-colors hover:border-border-strong hover:text-text";
@@ -64,6 +77,30 @@ export default function PlaylistView({ detail }: { detail: PlaylistDetail }) {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
+  // Multi-select drag-and-drop reorder: click a row's grip handle to
+  // select it (shift-click extends a range from the last-clicked row,
+  // cmd/ctrl-click toggles one row), then drag any selected handle to
+  // move the whole selection as a group — same interaction as a file
+  // manager's list view. Dragging an unselected row drags just that row.
+  // Native HTML5 drag-and-drop, no library (see PLAYLISTS_PLAN.md).
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const anchorIndexRef = useRef<number | null>(null);
+  // Sends a drag to `onDragStart` only when it actually began on a grip
+  // handle — `draggable` has to live on the whole <li> (so the browser's
+  // default drag image is the full row, not just the tiny icon), so
+  // without this gate a drag started from the title or cover would also
+  // fire.
+  const allowDragRef = useRef(false);
+  const dragIdsRef = useRef<number[]>([]);
+  const [draggingIds, setDraggingIds] = useState<Set<number> | null>(null);
+  // The authoritative copy handleDrop reads is the ref: React state from
+  // the immediately-preceding dragover isn't guaranteed to have committed
+  // yet by the time drop fires (they're separate native events). The
+  // state twin only drives the visual indicator line.
+  const dropIndicatorRef = useRef<DropIndicator | null>(null);
+  const [dropIndicator, setDropIndicator] = useState<DropIndicator | null>(null);
+  const listRef = useRef<HTMLUListElement | null>(null);
+
   useEffect(() => {
     // A server refresh (after a mutation elsewhere, e.g. another tab) wins
     // over any optimistic local edit still in flight.
@@ -75,6 +112,42 @@ export default function PlaylistView({ detail }: { detail: PlaylistDetail }) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setItems(detail.items);
   }, [detail.items]);
+
+  useEffect(() => {
+    // Drop any selected ids a server refresh removed from the list (e.g.
+    // removed in another tab) so drag/select never references a stale id.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSelected((prev) => {
+      const validIds = new Set(items.map((it) => it.itemId));
+      const next = new Set([...prev].filter((id) => validIds.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [items]);
+
+  useEffect(() => {
+    function clearSelection() {
+      setSelected((prev) => (prev.size === 0 ? prev : new Set()));
+    }
+    function onPointerDown(e: PointerEvent) {
+      if (listRef.current && !listRef.current.contains(e.target as Node)) clearSelection();
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") clearSelection();
+    }
+    // Belt-and-braces: a drag that ends outside any row's onDrop (e.g.
+    // dropped off the list entirely) still needs the grab gate reset.
+    function onWindowMouseUp() {
+      allowDragRef.current = false;
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    window.addEventListener("mouseup", onWindowMouseUp);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("mouseup", onWindowMouseUp);
+    };
+  }, []);
 
   const context: PlaybackContext = { kind: "playlist", playlistId: detail.id, title: name };
   const isThisList = snapshot.context?.kind === "playlist" && snapshot.context.playlistId === detail.id;
@@ -200,6 +273,101 @@ export default function PlaylistView({ detail }: { detail: PlaylistDetail }) {
     });
   }
 
+  function handleGripClick(e: React.MouseEvent, item: PlaylistItemView, index: number) {
+    if (e.shiftKey && anchorIndexRef.current !== null) {
+      const [lo, hi] = [anchorIndexRef.current, index].sort((a, b) => a - b);
+      setSelected(new Set(items.slice(lo, hi + 1).map((it) => it.itemId)));
+    } else if (e.metaKey || e.ctrlKey) {
+      setSelected((prev) => {
+        const next = new Set(prev);
+        if (next.has(item.itemId)) next.delete(item.itemId);
+        else next.add(item.itemId);
+        return next;
+      });
+      anchorIndexRef.current = index;
+    } else {
+      setSelected(new Set([item.itemId]));
+      anchorIndexRef.current = index;
+    }
+  }
+
+  function handleDragStart(e: React.DragEvent<HTMLLIElement>, item: PlaylistItemView) {
+    if (!allowDragRef.current) {
+      e.preventDefault();
+      return;
+    }
+    allowDragRef.current = false;
+    const ids = selected.has(item.itemId)
+      ? items.filter((it) => selected.has(it.itemId)).map((it) => it.itemId)
+      : [item.itemId];
+    if (!selected.has(item.itemId)) setSelected(new Set(ids));
+    dragIdsRef.current = ids;
+    setDraggingIds(new Set(ids));
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", String(item.itemId));
+  }
+
+  function handleDragOver(e: React.DragEvent<HTMLLIElement>, index: number) {
+    if (dragIdsRef.current.length === 0) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    // Hovering one of the rows being dragged itself has no sensible drop
+    // meaning — keep whatever indicator was last shown over a real target.
+    if (dragIdsRef.current.includes(items[index].itemId)) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const edge: "before" | "after" = e.clientY - rect.top < rect.height / 2 ? "before" : "after";
+    dropIndicatorRef.current = { index, edge };
+    setDropIndicator({ index, edge });
+  }
+
+  function clearDragState() {
+    allowDragRef.current = false;
+    dragIdsRef.current = [];
+    dropIndicatorRef.current = null;
+    setDraggingIds(null);
+    setDropIndicator(null);
+  }
+
+  function handleDrop(e: React.DragEvent<HTMLLIElement>) {
+    e.preventDefault();
+    const draggedIds = dragIdsRef.current;
+    const indicator = dropIndicatorRef.current;
+    clearDragState();
+    if (draggedIds.length === 0 || !indicator) return;
+
+    const draggedSet = new Set(draggedIds);
+    const remaining = items.filter((it) => !draggedSet.has(it.itemId));
+    const draggedInOrder = items.filter((it) => draggedSet.has(it.itemId));
+
+    // Map the drop target — an index into the full `items` array — to an
+    // index into `remaining` (the same list with the dragged rows pulled
+    // out), since that's what's actually being spliced back together.
+    const targetItem = items[indicator.index];
+    let insertAt = remaining.length;
+    if (targetItem && !draggedSet.has(targetItem.itemId)) {
+      const idx = remaining.findIndex((it) => it.itemId === targetItem.itemId);
+      insertAt = indicator.edge === "before" ? idx : idx + 1;
+    }
+
+    const next = remaining.slice();
+    next.splice(insertAt, 0, ...draggedInOrder);
+    if (next.length === items.length && next.every((it, i) => it.itemId === items[i].itemId)) return;
+
+    const previous = items;
+    setItems(next);
+    startTransition(async () => {
+      try {
+        await reorderPlaylistItems(
+          detail.id,
+          next.map((it) => it.itemId),
+        );
+        router.refresh();
+      } catch {
+        setItems(previous);
+      }
+    });
+  }
+
   return (
     <div className="flex flex-1 flex-col gap-4">
       <div className="border-b border-border pb-6">
@@ -275,71 +443,121 @@ export default function PlaylistView({ detail }: { detail: PlaylistDetail }) {
           This playlist is empty — use &ldquo;Add to playlist&rdquo; from any track&rsquo;s … menu.
         </p>
       ) : (
-        <ul className="flex flex-col divide-y divide-border rounded-lg border border-border bg-bg-elevated">
-          {items.map((t, i) => {
-            const isCurrent = snapshot.current?.trackId === t.trackId;
-            return (
-              <li key={t.itemId} className="group flex items-center gap-3 px-3 py-2">
-                <span className="w-5 shrink-0 text-right font-mono text-xs text-text-faint">{i + 1}</span>
-                <CoverImage
-                  albumId={t.hasCover ? t.albumId : null}
-                  version={t.coverVersion}
-                  title={t.albumTitle}
-                  fallback="glyph"
-                  className="h-8 w-8 shrink-0 rounded"
-                />
-                <div className="min-w-0 flex-1">
+        <>
+          {items.length > 1 && (
+            <p className="-mb-2 font-mono text-[11px] text-text-faint">
+              Drag the grip to reorder — shift/cmd-click to select several rows first.
+            </p>
+          )}
+          <ul
+            ref={listRef}
+            className="flex flex-col divide-y divide-border rounded-lg border border-border bg-bg-elevated"
+          >
+            {items.map((t, i) => {
+              const isCurrent = snapshot.current?.trackId === t.trackId;
+              const isSelected = selected.has(t.itemId);
+              const isDragging = draggingIds?.has(t.itemId) ?? false;
+              const showBefore = dropIndicator?.index === i && dropIndicator.edge === "before";
+              const showAfter = dropIndicator?.index === i && dropIndicator.edge === "after";
+              return (
+                <li
+                  key={t.itemId}
+                  draggable
+                  onDragStart={(e) => handleDragStart(e, t)}
+                  onDragOver={(e) => handleDragOver(e, i)}
+                  onDrop={handleDrop}
+                  onDragEnd={clearDragState}
+                  className={`group relative flex items-center gap-3 px-3 py-2 transition-colors ${
+                    isSelected ? "bg-format-digital/10" : ""
+                  } ${isDragging ? "opacity-40" : ""}`}
+                >
+                  {showBefore && (
+                    <span
+                      aria-hidden
+                      className="pointer-events-none absolute inset-x-3 top-0 h-0.5 -translate-y-px rounded-full bg-format-digital"
+                    />
+                  )}
+                  {showAfter && (
+                    <span
+                      aria-hidden
+                      className="pointer-events-none absolute inset-x-3 bottom-0 h-0.5 translate-y-px rounded-full bg-format-digital"
+                    />
+                  )}
                   <button
                     type="button"
-                    onClick={() => engine.playTracks(toQueueTracks(items), { startIndex: i, context })}
-                    aria-label={`Play ${t.title}`}
-                    className="flex max-w-full items-center gap-1.5 text-left text-sm hover:underline"
+                    onMouseDown={() => {
+                      allowDragRef.current = true;
+                    }}
+                    onClick={(e) => handleGripClick(e, t, i)}
+                    aria-label={`Select ${t.title}`}
+                    aria-pressed={isSelected}
+                    className="shrink-0 cursor-grab touch-none p-1 text-text-faint transition-colors hover:text-text active:cursor-grabbing"
                   >
-                    {isCurrent && <Volume2 aria-hidden className="h-3.5 w-3.5 shrink-0 text-format-digital" />}
-                    <span className={`truncate ${isCurrent ? "text-format-digital" : "text-text"}`}>{t.title}</span>
+                    <GripVertical aria-hidden className="h-4 w-4" />
                   </button>
-                  <p className="truncate text-xs text-text-muted">
-                    {t.artist} ·{" "}
-                    <Link href={`/music/album/${t.albumId}`} className="hover:text-text hover:underline">
-                      {t.albumTitle}
-                    </Link>
-                  </p>
-                </div>
-                <span className="shrink-0 font-mono text-xs text-text-faint">{formatTime(t.durationSecs)}</span>
-                <TrackMenu tracks={[t]} label={t.title} context={context} size="sm" />
-                <div className="flex shrink-0 items-center">
-                  <button
-                    type="button"
-                    disabled={pending || i === 0}
-                    onClick={() => handleMove(i, -1)}
-                    aria-label={`Move ${t.title} up`}
-                    className="p-1 text-text-muted transition-colors hover:text-text disabled:cursor-not-allowed disabled:opacity-30"
-                  >
-                    <ChevronUp aria-hidden className="h-4 w-4" />
-                  </button>
-                  <button
-                    type="button"
-                    disabled={pending || i === items.length - 1}
-                    onClick={() => handleMove(i, 1)}
-                    aria-label={`Move ${t.title} down`}
-                    className="p-1 text-text-muted transition-colors hover:text-text disabled:cursor-not-allowed disabled:opacity-30"
-                  >
-                    <ChevronDown aria-hidden className="h-4 w-4" />
-                  </button>
-                  <button
-                    type="button"
-                    disabled={pending}
-                    onClick={() => handleRemove(t)}
-                    aria-label={`Remove ${t.title} from playlist`}
-                    className="p-1 text-text-muted transition-colors hover:text-text disabled:cursor-not-allowed disabled:opacity-30"
-                  >
-                    <X aria-hidden className="h-4 w-4" />
-                  </button>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
+                  <span className="w-5 shrink-0 text-right font-mono text-xs text-text-faint">{i + 1}</span>
+                  <CoverImage
+                    albumId={t.hasCover ? t.albumId : null}
+                    version={t.coverVersion}
+                    title={t.albumTitle}
+                    fallback="glyph"
+                    className="h-8 w-8 shrink-0 rounded"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <button
+                      type="button"
+                      onClick={() => engine.playTracks(toQueueTracks(items), { startIndex: i, context })}
+                      aria-label={`Play ${t.title}`}
+                      className="flex max-w-full items-center gap-1.5 text-left text-sm hover:underline"
+                    >
+                      {isCurrent && <Volume2 aria-hidden className="h-3.5 w-3.5 shrink-0 text-format-digital" />}
+                      <span className={`truncate ${isCurrent ? "text-format-digital" : "text-text"}`}>
+                        {t.title}
+                      </span>
+                    </button>
+                    <p className="truncate text-xs text-text-muted">
+                      {t.artist} ·{" "}
+                      <Link href={`/music/album/${t.albumId}`} className="hover:text-text hover:underline">
+                        {t.albumTitle}
+                      </Link>
+                    </p>
+                  </div>
+                  <span className="shrink-0 font-mono text-xs text-text-faint">{formatTime(t.durationSecs)}</span>
+                  <TrackMenu tracks={[t]} label={t.title} context={context} size="sm" />
+                  <div className="flex shrink-0 items-center">
+                    <button
+                      type="button"
+                      disabled={pending || i === 0}
+                      onClick={() => handleMove(i, -1)}
+                      aria-label={`Move ${t.title} up`}
+                      className="p-1 text-text-muted transition-colors hover:text-text disabled:cursor-not-allowed disabled:opacity-30"
+                    >
+                      <ChevronUp aria-hidden className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={pending || i === items.length - 1}
+                      onClick={() => handleMove(i, 1)}
+                      aria-label={`Move ${t.title} down`}
+                      className="p-1 text-text-muted transition-colors hover:text-text disabled:cursor-not-allowed disabled:opacity-30"
+                    >
+                      <ChevronDown aria-hidden className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={pending}
+                      onClick={() => handleRemove(t)}
+                      aria-label={`Remove ${t.title} from playlist`}
+                      className="p-1 text-text-muted transition-colors hover:text-text disabled:cursor-not-allowed disabled:opacity-30"
+                    >
+                      <X aria-hidden className="h-4 w-4" />
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </>
       )}
 
       {confirmingDelete && (

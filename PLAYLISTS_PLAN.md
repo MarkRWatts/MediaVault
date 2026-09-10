@@ -308,6 +308,60 @@ no playlist when nothing's playable; re-favouriting after un-favouriting
 creates a fresh row, not a resurrection; artist favouriting pulls tracks
 from every owned album, skipping unowned ones.
 
+**Bug fixed 2026-09-10** (caught immediately after shipping): `playableTrackIds`
+sorted purely by disc/track number with no album grouping, so an artist
+spanning multiple albums came out interleaved whenever two albums shared a
+disc/track number (confirmed live — Ace Of Base's linked playlist alternated
+Flowers/Happy Nation track-by-track). Fixed by sorting album-by-album first
+(release year ascending, nulls last, `sortTitle` as a tiebreak — same
+convention as the artist page's own album lists), then disc/track within
+each album. A regression test seeds two albums with colliding disc/track
+numbers and asserts they never interleave. Any playlist created before the
+fix can be corrected by un-favouriting then re-favouriting — that fully
+regenerates it from scratch.
+
+---
+
+## PR5 — Multi-item drag-and-drop reorder
+
+Requested right after PR4 shipped: the single-item up/down chevrons
+(`movePlaylistItem`) make manually fixing a big playlist's order tedious.
+Agreed with the user (2026-09-10) to add file-manager-style multi-select +
+drag: click a row's grip handle to select it, shift-click extends a range
+from the last-clicked row, cmd/ctrl-click toggles one row in/out, then
+dragging any selected handle moves the whole selection as a group. Native
+HTML5 drag-and-drop — no library, consistent with PR3's "no drag-and-drop
+library" call, since only the interaction got richer, not the mechanism.
+
+- `reorderPlaylistItems(playlistId, itemIds[])` in `music-state.ts`:
+  replaces the whole ordering in one shot (rather than one move at a time)
+  by reusing the existing `renumber` helper. `itemIds` must be exactly the
+  playlist's current item ids, just reordered — a mismatched set (stale
+  drag racing a remove in another tab) throws `"invalid item order"` rather
+  than silently dropping or duplicating rows.
+- `PlaylistView.tsx`: `selected: Set<itemId>` (shift/cmd-click semantics,
+  cleared on outside-click/Escape/whenever a removed id goes stale);
+  `draggable` lives on the whole `<li>` (so the browser's drag image is the
+  full row, not the tiny grip icon) gated by a `mousedown`-armed ref so a
+  drag can only *start* from the grip, not the title/cover/buttons; a
+  before/after insertion-line indicator computed from cursor Y vs. the
+  hovered row's midpoint. **Gotcha**: `handleDrop` must read the drop
+  target from a ref (`dropIndicatorRef`), not the `dropIndicator` state set
+  by the immediately-preceding `dragover` — those are two separate native
+  events, and React's state update from the first isn't guaranteed to have
+  committed by the time the second fires. Verified by dispatching a real
+  `DragEvent` sequence via script (this sandbox's simulated mouse-drag
+  doesn't trigger actual browser drag gestures, so this was the only way to
+  exercise it end-to-end) — using the state directly reproduced the bug
+  (drop silently no-op'd), the ref fixed it.
+- The existing up/down chevrons stay as the keyboard/no-drag fallback
+  (native HTML5 drag is mouse-only — no touch support, so the mobile sheet
+  keeps only the chevrons).
+
+Tests: `music-state.test.ts` — an arbitrary non-contiguous reorder applies
+in one call; a mismatched id set (missing id, foreign id) throws; another
+user's playlist throws `"Playlist not found"`.
+
 ---
 
 ## Risks

@@ -50,18 +50,35 @@ export async function toggleTrackFavourite(trackId: number): Promise<{ favourite
   return { favourite: !existing };
 }
 
-/** Every owned, playable track id for an album/artist, in the same order
- *  the album/artist page plays them (disc, then track number, nulls last,
- *  title as a final tiebreak) — the track set a freshly-linked playlist is
- *  seeded with. */
+/** Every owned, playable track id for an album/artist, ordered album by
+ *  album (release year ascending, nulls last, sortTitle as a tiebreak —
+ *  same convention as the artist page's own album lists), then within each
+ *  album the way its own page plays it (disc, then track number, nulls
+ *  last, title as a final tiebreak). Grouping by album first matters for
+ *  the artist case: without it, tracks from different albums that happen
+ *  to share a disc/track number interleave in whatever order the DB
+ *  returns them — the track set a freshly-linked playlist is seeded with. */
 async function playableTrackIds(where: Prisma.TrackWhereInput): Promise<number[]> {
   const tracks = await prisma.track.findMany({
     where,
-    select: { id: true, disc: true, trackNumber: true, title: true, codec: true },
+    select: {
+      id: true,
+      disc: true,
+      trackNumber: true,
+      title: true,
+      codec: true,
+      album: { select: { year: true, sortTitle: true } },
+    },
   });
   return tracks
     .filter((t) => isPlayableCodec(t.codec))
     .sort((a, b) => {
+      if (a.album.year !== b.album.year) {
+        if (a.album.year === null) return 1;
+        if (b.album.year === null) return -1;
+        return a.album.year - b.album.year;
+      }
+      if (a.album.sortTitle !== b.album.sortTitle) return a.album.sortTitle.localeCompare(b.album.sortTitle);
       if (a.disc !== b.disc) return a.disc - b.disc;
       if (a.trackNumber === null && b.trackNumber === null) return a.title.localeCompare(b.title);
       if (a.trackNumber === null) return 1;
@@ -321,5 +338,29 @@ export async function movePlaylistItem(playlistId: number, itemId: number, toPos
   ids.splice(from, 1);
   ids.splice(to, 0, itemId);
   await renumber(playlist.id, ids, new Map(items.map((it) => [it.id, it.position])));
+  revalidatePlaylist(playlist.id);
+}
+
+/** Replace the whole ordering in one shot — the multi-item drag-and-drop
+ *  reorder in PlaylistView (select several rows, drag them as a group)
+ *  sends the complete new item-id order rather than one move at a time.
+ *  `itemIds` must be exactly the playlist's current item ids, just
+ *  reordered; a mismatched set (e.g. a stale drag racing a remove in
+ *  another tab) is rejected rather than silently dropping/duplicating
+ *  rows. */
+export async function reorderPlaylistItems(playlistId: number, itemIds: number[]): Promise<void> {
+  if (!Array.isArray(itemIds)) throw new Error("invalid item order");
+  for (const id of itemIds) assertId(id, "item");
+  const { userId } = await requireMember();
+  const playlist = await ownedPlaylist(userId, playlistId);
+  const items = await prisma.playlistItem.findMany({
+    where: { playlistId: playlist.id },
+    select: { id: true, position: true },
+  });
+  const current = new Map(items.map((it) => [it.id, it.position]));
+  if (itemIds.length !== items.length || itemIds.some((id) => !current.has(id))) {
+    throw new Error("invalid item order");
+  }
+  await renumber(playlist.id, itemIds, current);
   revalidatePlaylist(playlist.id);
 }

@@ -47,6 +47,7 @@ const {
   addTracksToPlaylist,
   removePlaylistItem,
   movePlaylistItem,
+  reorderPlaylistItems,
 } = await import("@/app/actions/music-state");
 
 beforeAll(async () => {
@@ -96,7 +97,7 @@ async function seedArtist(id: number, name = `Artist ${id}`) {
   });
 }
 
-async function seedAlbum(opts: { id: number; artistId: number; title?: string; owned?: boolean }) {
+async function seedAlbum(opts: { id: number; artistId: number; title?: string; owned?: boolean; year?: number }) {
   const title = opts.title ?? `Album ${opts.id}`;
   return testPrisma.album.create({
     data: {
@@ -105,6 +106,7 @@ async function seedAlbum(opts: { id: number; artistId: number; title?: string; o
       title,
       sortTitle: title.toLowerCase(),
       owned: opts.owned ?? true,
+      year: opts.year ?? null,
       folder: `album-${opts.id}`,
     },
   });
@@ -372,6 +374,37 @@ describe("toggleArtistFavourite", () => {
 
     const items = await testPrisma.playlistItem.findMany({ where: { playlistId: playlist!.id } });
     expect(items.map((i) => i.trackId).sort()).toEqual([t1.id, t2.id].sort());
+  });
+
+  it("groups tracks by album (release year order) before disc/track order, not interleaved by matching track numbers", async () => {
+    // Regression test: both albums have a disc-1/track-1 and a disc-1/
+    // track-2, seeded in an order that would previously interleave them
+    // (whatever order the DB happened to return rows in) instead of
+    // keeping each album's tracks together.
+    await seedSignedInMember("artist-user-album-order");
+    const artist = await seedArtist(1206, "Order Artist");
+    const later = await seedAlbum({ id: 2206, artistId: artist.id, title: "Later Album", year: 2000 });
+    const earlier = await seedAlbum({ id: 2207, artistId: artist.id, title: "Earlier Album", year: 1990 });
+
+    const l1 = await seedTrack({ id: 3210, albumId: later.id, title: "Later 1" });
+    await testPrisma.track.update({ where: { id: l1.id }, data: { disc: 1, trackNumber: 1 } });
+    const l2 = await seedTrack({ id: 3211, albumId: later.id, title: "Later 2" });
+    await testPrisma.track.update({ where: { id: l2.id }, data: { disc: 1, trackNumber: 2 } });
+    const e1 = await seedTrack({ id: 3212, albumId: earlier.id, title: "Earlier 1" });
+    await testPrisma.track.update({ where: { id: e1.id }, data: { disc: 1, trackNumber: 1 } });
+    const e2 = await seedTrack({ id: 3213, albumId: earlier.id, title: "Earlier 2" });
+    await testPrisma.track.update({ where: { id: e2.id }, data: { disc: 1, trackNumber: 2 } });
+
+    await toggleArtistFavourite(artist.id);
+
+    const playlist = await testPrisma.playlist.findFirst({ where: { userId: "artist-user-album-order" } });
+    const items = await testPrisma.playlistItem.findMany({
+      where: { playlistId: playlist!.id },
+      orderBy: { position: "asc" },
+    });
+    // Earlier album (1990) first, both its tracks together, then the
+    // later album (2000) — never e1, l1, e2, l2.
+    expect(items.map((i) => i.trackId)).toEqual([e1.id, e2.id, l1.id, l2.id]);
   });
 
   it("deletes the linked playlist and its items when un-favourited", async () => {
@@ -734,25 +767,27 @@ describe("playlists", () => {
     });
   });
 
+  /** A playlist with 4 fresh tracks in position order — shared by
+   *  movePlaylistItem's and reorderPlaylistItems' tests. */
+  async function seedFourItemPlaylist(userId: string, base: number) {
+    const artist = await seedArtist(base);
+    const album = await seedAlbum({ id: base + 1, artistId: artist.id });
+    const tracks = [];
+    for (let i = 0; i < 4; i++) {
+      tracks.push(await seedTrack({ id: base + 10 + i, albumId: album.id }));
+    }
+    const { playlist, items } = await seedPlaylistWithTracks(
+      userId,
+      tracks.map((t) => t.id),
+    );
+    return { playlist, items, tracks };
+  }
+
   // -------------------------------------------------------------------------
   // movePlaylistItem
   // -------------------------------------------------------------------------
 
   describe("movePlaylistItem", () => {
-    async function seedFourItemPlaylist(userId: string, base: number) {
-      const artist = await seedArtist(base);
-      const album = await seedAlbum({ id: base + 1, artistId: artist.id });
-      const tracks = [];
-      for (let i = 0; i < 4; i++) {
-        tracks.push(await seedTrack({ id: base + 10 + i, albumId: album.id }));
-      }
-      const { playlist, items } = await seedPlaylistWithTracks(
-        userId,
-        tracks.map((t) => t.id),
-      );
-      return { playlist, items, tracks };
-    }
-
     it("moves an item down", async () => {
       await seedSignedInMember("pl-move-down");
       const { playlist, items, tracks } = await seedFourItemPlaylist("pl-move-down", 5100);
@@ -839,6 +874,49 @@ describe("playlists", () => {
       await expect(movePlaylistItem(playlistA.id, itemsB[0].id, 0)).rejects.toThrow(
         "Track is not in this playlist",
       );
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // reorderPlaylistItems
+  // -------------------------------------------------------------------------
+
+  describe("reorderPlaylistItems", () => {
+    it("applies an arbitrary full reorder (e.g. a multi-item drag) in one call", async () => {
+      await seedSignedInMember("pl-reorder-1");
+      const { playlist, items, tracks } = await seedFourItemPlaylist("pl-reorder-1", 5400);
+
+      // Drag items[1] and items[3] (a non-contiguous multi-selection) to
+      // the front, in their original relative order.
+      await reorderPlaylistItems(playlist.id, [items[1].id, items[3].id, items[0].id, items[2].id]);
+
+      const after = await orderedItems(playlist.id);
+      expect(after.map((i) => i.trackId)).toEqual([tracks[1].id, tracks[3].id, tracks[0].id, tracks[2].id]);
+      expect(after.map((i) => i.position)).toEqual([0, 1, 2, 3]);
+    });
+
+    it("throws when the id set doesn't exactly match the playlist's current items", async () => {
+      await seedSignedInMember("pl-reorder-mismatch");
+      const { playlist, items } = await seedFourItemPlaylist("pl-reorder-mismatch", 5420);
+
+      // Missing one id.
+      await expect(
+        reorderPlaylistItems(playlist.id, [items[0].id, items[1].id, items[2].id]),
+      ).rejects.toThrow("invalid item order");
+      // A foreign id mixed in.
+      await expect(
+        reorderPlaylistItems(playlist.id, [items[0].id, items[1].id, items[2].id, 999999]),
+      ).rejects.toThrow("invalid item order");
+    });
+
+    it("throws 'Playlist not found' for another user's playlist", async () => {
+      await seedSignedInMember("pl-reorder-owner-a");
+      const { playlist, items } = await seedFourItemPlaylist("pl-reorder-owner-a", 5440);
+
+      await seedSignedInMember("pl-reorder-owner-b");
+      await expect(
+        reorderPlaylistItems(playlist.id, items.map((i) => i.id)),
+      ).rejects.toThrow("Playlist not found");
     });
   });
 
