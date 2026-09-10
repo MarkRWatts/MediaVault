@@ -250,6 +250,78 @@ describe("toggleAlbumFavourite", () => {
     expect(revalidatePath).toHaveBeenCalledWith(`/music/artist/${artist.id}`);
     expect(revalidatePath).toHaveBeenCalledWith("/", "layout");
   });
+
+  it("creates a linked playlist seeded with the album's playable tracks, in disc/track order", async () => {
+    await seedSignedInMember("album-user-playlist");
+    const artist = await seedArtist(1103, "Playlist Artist");
+    const album = await seedAlbum({ id: 2103, artistId: artist.id, title: "Playlist Album" });
+    const t2 = await seedTrack({ id: 3103, albumId: album.id, title: "Disc 1 Track 2" });
+    await testPrisma.track.update({ where: { id: t2.id }, data: { disc: 1, trackNumber: 2 } });
+    const t1 = await seedTrack({ id: 3104, albumId: album.id, title: "Disc 1 Track 1" });
+    await testPrisma.track.update({ where: { id: t1.id }, data: { disc: 1, trackNumber: 1 } });
+    const t3 = await seedTrack({ id: 3105, albumId: album.id, title: "Disc 2 Track 1", codec: "drm" });
+    await testPrisma.track.update({ where: { id: t3.id }, data: { disc: 2, trackNumber: 1 } });
+
+    await toggleAlbumFavourite(album.id);
+
+    const playlist = await testPrisma.playlist.findFirst({ where: { userId: "album-user-playlist" } });
+    expect(playlist?.sourceAlbumId).toBe(album.id);
+    expect(playlist?.sourceArtistId).toBeNull();
+    expect(playlist?.name).toBe("Playlist Artist — Playlist Album");
+
+    const items = await testPrisma.playlistItem.findMany({
+      where: { playlistId: playlist!.id },
+      orderBy: { position: "asc" },
+    });
+    // DRM track (t3) is excluded; the two playable tracks come back in
+    // disc/track order, not creation order.
+    expect(items.map((i) => i.trackId)).toEqual([t1.id, t2.id]);
+    expect(items.map((i) => i.position)).toEqual([0, 1]);
+  });
+
+  it("deletes the linked playlist and its items when un-favourited", async () => {
+    await seedSignedInMember("album-user-unlink");
+    const artist = await seedArtist(1104);
+    const album = await seedAlbum({ id: 2104, artistId: artist.id });
+    await seedTrack({ id: 3106, albumId: album.id });
+
+    await toggleAlbumFavourite(album.id);
+    const playlist = await testPrisma.playlist.findFirst({ where: { userId: "album-user-unlink" } });
+    expect(playlist).not.toBeNull();
+
+    await toggleAlbumFavourite(album.id);
+
+    expect(await testPrisma.playlist.findUnique({ where: { id: playlist!.id } })).toBeNull();
+    expect(await testPrisma.playlistItem.findMany({ where: { playlistId: playlist!.id } })).toEqual([]);
+  });
+
+  it("favourites without creating a playlist when the album has no playable tracks", async () => {
+    await seedSignedInMember("album-user-empty");
+    const artist = await seedArtist(1105);
+    const album = await seedAlbum({ id: 2105, artistId: artist.id });
+    await seedTrack({ id: 3107, albumId: album.id, codec: "drm" });
+
+    const result = await toggleAlbumFavourite(album.id);
+
+    expect(result).toEqual({ favourite: true });
+    expect(await testPrisma.playlist.findFirst({ where: { userId: "album-user-empty" } })).toBeNull();
+  });
+
+  it("creates a fresh linked playlist when re-favourited after being unfavourited", async () => {
+    await seedSignedInMember("album-user-refavourite");
+    const artist = await seedArtist(1106);
+    const album = await seedAlbum({ id: 2106, artistId: artist.id });
+    await seedTrack({ id: 3108, albumId: album.id });
+
+    await toggleAlbumFavourite(album.id); // on
+    const first = await testPrisma.playlist.findFirst({ where: { userId: "album-user-refavourite" } });
+    await toggleAlbumFavourite(album.id); // off
+    await toggleAlbumFavourite(album.id); // on again
+
+    const second = await testPrisma.playlist.findFirst({ where: { userId: "album-user-refavourite" } });
+    expect(second).not.toBeNull();
+    expect(second!.id).not.toBe(first!.id);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -280,6 +352,52 @@ describe("toggleArtistFavourite", () => {
 
     expect(revalidatePath).toHaveBeenCalledWith(`/music/artist/${artist.id}`);
     expect(revalidatePath).toHaveBeenCalledWith("/", "layout");
+  });
+
+  it("creates a linked playlist across every owned album, skipping unowned ones", async () => {
+    await seedSignedInMember("artist-user-playlist");
+    const artist = await seedArtist(1203, "Playlist Artist");
+    const owned = await seedAlbum({ id: 2203, artistId: artist.id, title: "Owned Album" });
+    const unowned = await seedAlbum({ id: 2204, artistId: artist.id, title: "Unowned Album", owned: false });
+    const t1 = await seedTrack({ id: 3203, albumId: owned.id, title: "A" });
+    const t2 = await seedTrack({ id: 3204, albumId: owned.id, title: "B" });
+    await seedTrack({ id: 3205, albumId: unowned.id, title: "C" });
+
+    await toggleArtistFavourite(artist.id);
+
+    const playlist = await testPrisma.playlist.findFirst({ where: { userId: "artist-user-playlist" } });
+    expect(playlist?.sourceArtistId).toBe(artist.id);
+    expect(playlist?.sourceAlbumId).toBeNull();
+    expect(playlist?.name).toBe("Playlist Artist");
+
+    const items = await testPrisma.playlistItem.findMany({ where: { playlistId: playlist!.id } });
+    expect(items.map((i) => i.trackId).sort()).toEqual([t1.id, t2.id].sort());
+  });
+
+  it("deletes the linked playlist and its items when un-favourited", async () => {
+    await seedSignedInMember("artist-user-unlink");
+    const artist = await seedArtist(1204);
+    const album = await seedAlbum({ id: 2205, artistId: artist.id });
+    await seedTrack({ id: 3206, albumId: album.id });
+
+    await toggleArtistFavourite(artist.id);
+    const playlist = await testPrisma.playlist.findFirst({ where: { userId: "artist-user-unlink" } });
+    expect(playlist).not.toBeNull();
+
+    await toggleArtistFavourite(artist.id);
+
+    expect(await testPrisma.playlist.findUnique({ where: { id: playlist!.id } })).toBeNull();
+    expect(await testPrisma.playlistItem.findMany({ where: { playlistId: playlist!.id } })).toEqual([]);
+  });
+
+  it("favourites without creating a playlist when the artist has no playable tracks", async () => {
+    await seedSignedInMember("artist-user-empty");
+    const artist = await seedArtist(1205);
+
+    const result = await toggleArtistFavourite(artist.id);
+
+    expect(result).toEqual({ favourite: true });
+    expect(await testPrisma.playlist.findFirst({ where: { userId: "artist-user-empty" } })).toBeNull();
   });
 });
 

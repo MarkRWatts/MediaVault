@@ -291,6 +291,7 @@ model Artist {
   backdropSource String? // fanart | theaudiodb | manual
 
   favourites      ArtistFavourite[]
+  linkedPlaylists Playlist[]
 
   @@index([sortName])
 }
@@ -327,7 +328,8 @@ model Album {
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
 
-  favourites     AlbumFavourite[]
+  favourites      AlbumFavourite[]
+  linkedPlaylists Playlist[]
 
   @@unique([artistId, folder])
   @@index([artistId])
@@ -744,6 +746,21 @@ model Playlist {
   updatedAt DateTime       @updatedAt
   items     PlaylistItem[]
 
+  // Set when this playlist was auto-created by favouriting an album or
+  // artist (toggleAlbumFavourite/toggleArtistFavourite in music-state.ts)
+  // — at most one of these two is ever set. Cascades so deleting the
+  // album/artist takes its linked playlist with it; un-favouriting deletes
+  // it explicitly in the action rather than relying on that FK. The
+  // @@unique pairs, not a plain @unique on the column, because NULL (an
+  // ordinary playlist) must never collide, while a second linked playlist
+  // for the same (user, album) must be impossible.
+  sourceAlbumId  Int?
+  sourceArtistId Int?
+  sourceAlbum    Album?  @relation(fields: [sourceAlbumId], references: [id], onDelete: Cascade)
+  sourceArtist   Artist? @relation(fields: [sourceArtistId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, sourceAlbumId])
+  @@unique([userId, sourceArtistId])
   @@index([userId])
 }
 

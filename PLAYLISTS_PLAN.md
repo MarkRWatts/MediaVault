@@ -1,6 +1,6 @@
 # MediaVault — Favourites, playlists, right rail and persistent playback
 
-Drafted 2026-09-09. **Status:** PR1 (engine + right rail) merged as #70; PR2 (favourites) merged as #71; PR3 (playlists) on `claude/playlists`.
+Drafted 2026-09-09. **Status:** PR1 (engine + right rail) merged as #70; PR2 (favourites) merged as #71; PR3 (playlists) merged as #72; PR4 (auto-linked playlists on favourite) below.
 
 ## Context
 
@@ -263,6 +263,50 @@ Browser: create from rail → detail page; rename; add track/album from menus;
 reorder with buttons and keyboard; remove; Play/Shuffle from rail row and
 page; delete with confirm; rail refreshes after each mutation while audio
 keeps playing.
+
+---
+
+## PR4 — Auto-linked playlists on favourite
+
+Merges "favourite" and "give this its own playlist" into one click, mimicking
+Spotify's "Add to Your Library" (agreed with the user 2026-09-10, after an
+earlier draft of this PR proposed a separate manual "add all tracks" button
+instead — the user wanted the existing heart to do both jobs, fewest clicks
+being the whole point).
+
+Schema (migration `playlist_source_links`): `Playlist` gains nullable
+`sourceAlbumId` / `sourceArtistId` (`onDelete: Cascade` to each, so deleting
+the album/artist takes its linked playlist with it), with
+`@@unique([userId, sourceAlbumId])` / `@@unique([userId, sourceArtistId])` —
+SQLite/Postgres treat NULL as distinct per row, so ordinary playlists (both
+columns null) are unaffected and at most one linked playlist can exist per
+(user, album/artist).
+
+- `toggleAlbumFavourite` / `toggleArtistFavourite` in `music-state.ts`:
+  turning **on** creates the `*Favourite` row and, via `createLinkedPlaylist`
+  (one `$transaction`), a `Playlist` named `"{artist} — {album}"` or the
+  artist's name, seeded with every owned/playable track in disc/track-number
+  order (`playableTrackIds`) — skipped, not erroring, when there's nothing
+  playable. Turning **off** deletes the `*Favourite` row and
+  `deleteMany`s the linked playlist (`{userId, sourceAlbumId/sourceArtistId}`,
+  items cascade) in the same `$transaction` — **unconditionally**, even if
+  the playlist had since been hand-edited (the user's explicit call: no
+  "only if untouched" survivor logic, matching the fewest-clicks philosophy).
+- Deliberately **frozen**: a rescan that adds tracks to an already-favourited
+  album never touches its linked playlist. Re-toggling off/on regenerates it
+  from scratch instead of resurrecting/patching the old row.
+- No new UI: the existing heart on `AlbumActions.tsx` / `ArtistActions.tsx`
+  does this once the action changes underneath it; the auto-playlist shows
+  up in the rail like any other (cover already derives from its first
+  item's track). Album's separate `ListPlus` "add to any playlist" button is
+  untouched — mixing tracks into an arbitrary/other playlist is a distinct,
+  still-useful use case from "give this album its own playlist."
+
+Tests: `music-state.test.ts` — linked playlist created with correct
+name/tracks/order (DRM excluded); deleted (with its items) on un-favourite;
+no playlist when nothing's playable; re-favouriting after un-favouriting
+creates a fresh row, not a resurrection; artist favouriting pulls tracks
+from every owned album, skipping unowned ones.
 
 ---
 

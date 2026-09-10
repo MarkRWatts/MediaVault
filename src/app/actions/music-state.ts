@@ -14,6 +14,7 @@
 // there (components/shell/app-shell.tsx reads the count per request).
 
 import { revalidatePath } from "next/cache";
+import type { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
 import { requireMember } from "@/lib/require-member";
 import { getFavouriteTracks, isPlayableCodec } from "@/lib/queries-music";
@@ -49,15 +50,66 @@ export async function toggleTrackFavourite(trackId: number): Promise<{ favourite
   return { favourite: !existing };
 }
 
+/** Every owned, playable track id for an album/artist, in the same order
+ *  the album/artist page plays them (disc, then track number, nulls last,
+ *  title as a final tiebreak) — the track set a freshly-linked playlist is
+ *  seeded with. */
+async function playableTrackIds(where: Prisma.TrackWhereInput): Promise<number[]> {
+  const tracks = await prisma.track.findMany({
+    where,
+    select: { id: true, disc: true, trackNumber: true, title: true, codec: true },
+  });
+  return tracks
+    .filter((t) => isPlayableCodec(t.codec))
+    .sort((a, b) => {
+      if (a.disc !== b.disc) return a.disc - b.disc;
+      if (a.trackNumber === null && b.trackNumber === null) return a.title.localeCompare(b.title);
+      if (a.trackNumber === null) return 1;
+      if (b.trackNumber === null) return -1;
+      return a.trackNumber - b.trackNumber;
+    })
+    .map((t) => t.id);
+}
+
+/** Create the playlist a freshly-favourited album/artist is linked to,
+ *  seeded with every playable track — skipped (favouriting still
+ *  succeeds) when there's nothing to put in it. `link` sets exactly one of
+ *  sourceAlbumId/sourceArtistId, matching the @@unique pair on Playlist. */
+async function createLinkedPlaylist(
+  userId: string,
+  name: string,
+  trackIds: number[],
+  link: { sourceAlbumId: number } | { sourceArtistId: number },
+): Promise<void> {
+  if (trackIds.length === 0) return;
+  await prisma.$transaction(async (tx) => {
+    const playlist = await tx.playlist.create({ data: { userId, name, ...link } });
+    await tx.playlistItem.createMany({
+      data: trackIds.map((trackId, position) => ({ playlistId: playlist.id, trackId, position })),
+    });
+  });
+}
+
 export async function toggleAlbumFavourite(albumId: number): Promise<{ favourite: boolean }> {
   assertId(albumId, "album");
   const { userId } = await requireMember();
-  const album = await prisma.album.findUnique({ where: { id: albumId }, select: { artistId: true } });
+  const album = await prisma.album.findUnique({
+    where: { id: albumId },
+    select: { artistId: true, title: true, artist: { select: { name: true } } },
+  });
   if (!album) throw new Error("album not found");
 
   const existing = await prisma.albumFavourite.findUnique({ where: { userId_albumId: { userId, albumId } } });
-  if (existing) await prisma.albumFavourite.delete({ where: { userId_albumId: { userId, albumId } } });
-  else await prisma.albumFavourite.create({ data: { userId, albumId } });
+  if (existing) {
+    await prisma.$transaction([
+      prisma.albumFavourite.delete({ where: { userId_albumId: { userId, albumId } } }),
+      prisma.playlist.deleteMany({ where: { userId, sourceAlbumId: albumId } }), // items cascade
+    ]);
+  } else {
+    await prisma.albumFavourite.create({ data: { userId, albumId } });
+    const trackIds = await playableTrackIds({ albumId, album: { owned: true } });
+    await createLinkedPlaylist(userId, `${album.artist.name} — ${album.title}`, trackIds, { sourceAlbumId: albumId });
+  }
   revalidateFavourites(`/music/album/${albumId}`, `/music/artist/${album.artistId}`);
   return { favourite: !existing };
 }
@@ -65,12 +117,20 @@ export async function toggleAlbumFavourite(albumId: number): Promise<{ favourite
 export async function toggleArtistFavourite(artistId: number): Promise<{ favourite: boolean }> {
   assertId(artistId, "artist");
   const { userId } = await requireMember();
-  const artist = await prisma.artist.findUnique({ where: { id: artistId }, select: { id: true } });
+  const artist = await prisma.artist.findUnique({ where: { id: artistId }, select: { id: true, name: true } });
   if (!artist) throw new Error("artist not found");
 
   const existing = await prisma.artistFavourite.findUnique({ where: { userId_artistId: { userId, artistId } } });
-  if (existing) await prisma.artistFavourite.delete({ where: { userId_artistId: { userId, artistId } } });
-  else await prisma.artistFavourite.create({ data: { userId, artistId } });
+  if (existing) {
+    await prisma.$transaction([
+      prisma.artistFavourite.delete({ where: { userId_artistId: { userId, artistId } } }),
+      prisma.playlist.deleteMany({ where: { userId, sourceArtistId: artistId } }), // items cascade
+    ]);
+  } else {
+    await prisma.artistFavourite.create({ data: { userId, artistId } });
+    const trackIds = await playableTrackIds({ album: { artistId, owned: true } });
+    await createLinkedPlaylist(userId, artist.name, trackIds, { sourceArtistId: artistId });
+  }
   revalidateFavourites(`/music/artist/${artistId}`);
   return { favourite: !existing };
 }
