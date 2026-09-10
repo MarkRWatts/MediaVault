@@ -38,7 +38,18 @@ class FakeSourceNode {
 }
 
 class FakeGainNode {
-  gain = { value: 1 };
+  gain = {
+    value: 1,
+    setValueAtTime(v: number) {
+      this.value = v;
+    },
+    linearRampToValueAtTime(v: number) {
+      this.value = v;
+    },
+    cancelScheduledValues() {
+      // no-op
+    },
+  };
   connect() {
     // no-op
   }
@@ -176,7 +187,7 @@ describe("PlayerEngine", () => {
     trackIdCounter = 0;
     fake = createFakeAudioContext();
     loader = createFakeLoader();
-    engine = new PlayerEngine({ createContext: () => fake.ctx, loadTrack: loader.loadTrack });
+    engine = new PlayerEngine({ createContext: () => fake.ctx, loadTrack: loader.loadTrack, primeOutput: () => {} });
   });
 
   // -----------------------------------------------------------------------
@@ -201,7 +212,7 @@ describe("PlayerEngine", () => {
     expect(snap.status).toBe("playing");
     expect(snap.duration).toBe(137.5); // decoded duration, not t1.durationSecs (999)
     expect(fake.sources).toHaveLength(1);
-    expect(fake.sources[0]!.startedAt).toBeCloseTo(0.1, 5); // ctx.currentTime(0) + START_EPSILON
+    expect(fake.sources[0]!.startedAt).toBeCloseTo(0.25, 5); // clock live at 0 + COLD_START_LEAD
 
     // Pacing: only the second track was requested — not the third.
     expect(loader.countFor(t2.trackId)).toBe(1);
@@ -218,7 +229,7 @@ describe("PlayerEngine", () => {
     await flush();
 
     expect(fake.sources).toHaveLength(2);
-    expect(fake.sources[1]!.startedAt).toBeCloseTo(0.1 + 100, 5);
+    expect(fake.sources[1]!.startedAt).toBeCloseTo(0.25 + 100, 5);
   });
 
   // -----------------------------------------------------------------------
@@ -279,7 +290,7 @@ describe("PlayerEngine", () => {
     await flush();
 
     expect(fake.sources).toHaveLength(2); // one for t1, one for t3 — none for t2
-    expect(fake.sources[1]!.startedAt).toBeCloseTo(0.1 + 100, 5); // same slot t2 would have used
+    expect(fake.sources[1]!.startedAt).toBeCloseTo(0.25 + 100, 5); // same slot t2 would have used
   });
 
   // -----------------------------------------------------------------------
@@ -786,13 +797,13 @@ describe("PlayerEngine", () => {
     expect(snap.status).toBe("playing"); // no waiting for the rest
     expect(snap.duration).toBe(3); // DB estimate until the stream completes
     expect(fake.sources).toHaveLength(1);
-    expect(fake.sources[0]!.startedAt).toBeCloseTo(0.1, 5);
+    expect(fake.sources[0]!.startedAt).toBeCloseTo(0.25, 5); // COLD_START_LEAD past the clock coming alive
 
     loader.chunk(t1.trackId, 0.5);
     loader.chunk(t1.trackId, 0.25);
     expect(fake.sources).toHaveLength(3);
-    expect(fake.sources[1]!.startedAt).toBeCloseTo(0.6, 5);
-    expect(fake.sources[2]!.startedAt).toBeCloseTo(1.1, 5);
+    expect(fake.sources[1]!.startedAt).toBeCloseTo(0.75, 5);
+    expect(fake.sources[2]!.startedAt).toBeCloseTo(1.25, 5);
 
     loader.complete(t1.trackId);
     await flush();
@@ -827,15 +838,15 @@ describe("PlayerEngine", () => {
     loader.chunk(t2.trackId, 0.5);
     loader.chunk(t2.trackId, 0.5);
     expect(fake.sources).toHaveLength(3);
-    expect(fake.sources[1]!.startedAt).toBeCloseTo(100.1, 5);
-    expect(fake.sources[2]!.startedAt).toBeCloseTo(100.6, 5);
+    expect(fake.sources[1]!.startedAt).toBeCloseTo(100.25, 5);
+    expect(fake.sources[2]!.startedAt).toBeCloseTo(100.75, 5);
   });
 
   it("a chunk that lands after its slot shifts the anchor forward (a pause, not a skip)", async () => {
     const t1 = makeTrack();
     engine.playTracks([t1]);
     await flush();
-    loader.chunk(t1.trackId, 0.5); // scheduled at 0.1, runs to 0.6
+    loader.chunk(t1.trackId, 0.5); // scheduled at 0.25, runs to 0.75
 
     // The network stalls: the next chunk only arrives at t=2.
     (fake.ctx as unknown as { currentTime: number }).currentTime = 2;
@@ -945,8 +956,9 @@ describe("PlayerEngine", () => {
 
     expect(engine.getSnapshot().status).toBe("playing");
     expect(fake.sources).toHaveLength(2);
-    expect(fake.sources[0]!.startedAt).toBeCloseTo(0.3, 5); // 0.2 + START_EPSILON, not the stale seed
-    expect(fake.sources[1]!.startedAt).toBeCloseTo(0.8, 5);
+    expect(fake.sources[0]!.startedAt).toBeCloseTo(0.45, 5); // 0.2 + COLD_START_LEAD, not the stale seed
+    expect(fake.sources[1]!.startedAt).toBeCloseTo(0.95, 5);
+    expect(fake.gains[0]!.gain.value).toBe(0.85); // faded up to the set volume
   });
 
   // -----------------------------------------------------------------------

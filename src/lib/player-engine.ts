@@ -88,6 +88,9 @@ export interface EngineDeps {
   /** Construct the one AudioContext. Only ever called from a user gesture
    *  (Play) — autoplay policy requires it. */
   createContext: () => AudioContext;
+  /** Warm the output right after a cold start's context comes alive (see
+   *  awaitClock). The default plays a short, inaudible non-silent buffer. */
+  primeOutput: (ctx: AudioContext) => void;
   /** Stream one track: deliver every chunk through handlers.onChunk, then
    *  resolve once the last one has been delivered (reject on failure —
    *  including a failure part-way through, after some chunks). The
@@ -149,6 +152,36 @@ const CHUNK_SECS = 0.5;
 // How long a cold start waits for AudioContext.resume() before scheduling
 // anyway (see awaitClock).
 const CLOCK_READY_TIMEOUT_MS = 1000;
+
+// A cold start's first audible sample is held this long after the clock
+// comes alive, behind the primer (see awaitClock / primeOutput): the OS
+// audio session and output unit settle during inaudible output rather
+// than over the first notes. Still comfortably "instant" from the click.
+const COLD_START_LEAD = 0.25;
+// The primer's length — long enough to outlast any start-up settling.
+const PRIMER_SECS = 0.3;
+// Gain ramp on a cold start's first chunk, from silence to the set volume.
+// Far too short to hear as a fade, long enough to soften the onset.
+const COLD_START_FADE_SECS = 0.03;
+
+/** Plays PRIMER_SECS of a DC-free signal at -100 dB straight into the
+ *  destination. Non-zero, so the browser treats the tab as producing
+ *  audio (WebKit activates the platform audio session on the first
+ *  non-silent output, which on both macOS and iOS can glitch the output
+ *  for a buffer or so — the "burst of static" reported on cold starts,
+ *  2026-09-10); inaudible, so whatever the start-up does to it is not
+ *  heard. Chained tracks, Next and seek never needed this: sound was
+ *  already flowing. */
+function defaultPrimeOutput(ctx: AudioContext) {
+  const frames = Math.round(ctx.sampleRate * PRIMER_SECS);
+  const buffer = ctx.createBuffer(1, frames, ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < frames; i++) data[i] = i & 1 ? 1e-5 : -1e-5;
+  const source = ctx.createBufferSource();
+  source.buffer = buffer;
+  source.connect(ctx.destination);
+  source.start();
+}
 
 async function fetchWithRetry(url: string, signal: AbortSignal): Promise<Response> {
   let res = await fetch(url, { signal });
@@ -232,6 +265,12 @@ export class PlayerEngine {
    *  — i.e. the audio device is actually running and currentTime is
    *  ticking. Nothing is anchored before then (see awaitClock). */
   private clockRunning = false;
+  /** Earliest AudioContext time a cold start may place audible output —
+   *  COLD_START_LEAD past the clock coming alive. In the past (and so
+   *  moot) for any start made mid-playback. */
+  private notBefore = 0;
+  /** Set by a cold start; the next anchor fades its first chunk in. */
+  private fadeInNext = false;
   private nextEntryKey = 1;
 
   private queue: QueueEntry[] = [];
@@ -252,6 +291,7 @@ export class PlayerEngine {
   constructor(deps: Partial<EngineDeps> = {}) {
     this.deps = {
       createContext: deps.createContext ?? defaultCreateContext,
+      primeOutput: deps.primeOutput ?? defaultPrimeOutput,
       loadTrack: deps.loadTrack ?? streamTrack,
     };
   }
@@ -424,7 +464,7 @@ export class PlayerEngine {
     if (!buffer) return;
 
     let when = info.startAt + load.offsets[index];
-    const earliest = ctx.currentTime + START_EPSILON;
+    const earliest = Math.max(ctx.currentTime + START_EPSILON, this.notBefore);
     if (when < earliest) {
       info.startAt += earliest - when;
       when = earliest;
@@ -466,6 +506,13 @@ export class PlayerEngine {
     const ready = () => {
       if (session !== this.session || this.clockRunning) return;
       this.clockRunning = true;
+      try {
+        this.deps.primeOutput(ctx);
+      } catch {
+        // Best effort — a primer that can't be built just means no warm-up.
+      }
+      this.notBefore = ctx.currentTime + COLD_START_LEAD;
+      this.fadeInNext = true;
       if (this.currentKey != null) this.maybeChain(this.currentKey, session);
     };
     let resumed: Promise<void>;
@@ -491,6 +538,14 @@ export class PlayerEngine {
       complete: load.complete,
     });
     for (let i = 0; i < load.chunks.length; i++) this.scheduleChunk(key, i, session);
+    if (this.fadeInNext && load.chunks.length > 0 && this.gain) {
+      this.fadeInNext = false;
+      const at = this.schedule.get(key)?.startAt ?? startAt;
+      const g = this.gain.gain;
+      g.cancelScheduledValues(at);
+      g.setValueAtTime(0, at);
+      g.linearRampToValueAtTime(this.volume, at + COLD_START_FADE_SECS);
+    }
 
     if (key === this.currentKey) {
       this.duration = load.complete ? load.totalSecs : (entry.durationSecs ?? null);
@@ -1060,7 +1115,13 @@ export class PlayerEngine {
   setVolume(v: number) {
     const clamped = Math.min(Math.max(v, 0), 1);
     this.volume = clamped;
-    if (this.gain) this.gain.gain.value = clamped;
+    if (this.gain && this.ctx) {
+      // Through the automation timeline, not .value, so it composes with
+      // (and cancels) a cold-start fade in progress.
+      const g = this.gain.gain;
+      g.cancelScheduledValues(this.ctx.currentTime);
+      g.setValueAtTime(clamped, this.ctx.currentTime);
+    }
     this.emit();
   }
 
