@@ -117,12 +117,17 @@ a DVD and a BluRay rip of the same film = 1 film, 2 versions).
 
 - **Music, gapless, in-browser — built** as planned (`src/lib/player-engine.ts`
   behind `PlayerProvider` in the app shell, `/api/audio/[trackId]`, `src/lib/audio-stream.ts`):
-  Web Audio API with prefetched decoded buffers and sample-accurate scheduling.
-  Playback persists while you navigate, and a right-hand rail holds the Now Playing card
-  and a cross-album queue (Play next / Add to queue). Safari decodes ALAC natively; other
-  browsers get a server-side ALAC→FLAC remux, which is lossless-to-lossless (bit-identical PCM),
-  not a quality-losing transcode. Shuffle and repeat-album exist; listening history doesn't
-  yet (see Roadmap and `PLAYLISTS_PLAN.md`).
+  Web Audio API with sample-accurate scheduling. Playback persists while you navigate,
+  and a right-hand rail holds the Now Playing card and a cross-album queue (Play next /
+  Add to queue). Since 2026-09-10 the server decodes every track to a raw PCM stream at
+  the browser's own sample rate (`?rate=`), and the engine schedules each half-second
+  chunk as it arrives, so a track starts ~100 ms after the click on the LAN instead of
+  after a whole-file download — the earlier design (original bytes / ALAC→FLAC remux /
+  WAV fallback for Safari, all through `decodeAudioData`) could not play a byte until
+  the last one had landed. Still lossless: 16- or 24-bit to match the source, and the
+  only resample is ffmpeg's, when the device's context rate differs from the file's.
+  Shuffle and repeat-album exist; listening history doesn't yet (see Roadmap and
+  `PLAYLISTS_PLAN.md`).
 - **Video — the "stays external" decision was reversed.** In-browser film
   playback shipped (`VideoPlayer.tsx`, `/api/video/[versionId]/*`,
   `src/lib/video-cache.ts`): a file that's already browser-playable is served

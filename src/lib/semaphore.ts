@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 // A counting semaphore for the ffmpeg work an authenticated member can start
 // on demand (src/lib/video-cache.ts prepares, src/lib/audio-stream.ts
-// remuxes). Without one, every Play/album-track click spawned another
+// decodes to PCM). Without one, every Play/album-track click spawned another
 // encoder — N members (or one member with a script) could pin the VM's CPU
 // and fill its disk. Process-local, like the job maps it protects.
 
@@ -81,7 +81,8 @@ export function prepareSemaphore(): Semaphore {
   return (registry.prepare ??= new Semaphore(envInt("PREPARE_CONCURRENCY", 2), envInt("PREPARE_QUEUE", 6)));
 }
 
-/** Concurrent on-the-fly audio remuxes (FLAC/WAV for the album player).
+/** Concurrent on-the-fly audio decodes (the PCM stream behind the music
+ *  player — one ffmpeg per track, held until the stream is drained).
  *  Never queued: the route answers 503 and the player retries. */
 export function audioSemaphore(): Semaphore {
   return (registry.audio ??= new Semaphore(envInt("AUDIO_CONCURRENCY", 4), 0));

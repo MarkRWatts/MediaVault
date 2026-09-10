@@ -4,9 +4,9 @@ import type { QueueTrack } from "./player-types";
 
 // -----------------------------------------------------------------------
 // Fakes: a fake AudioContext (no jsdom/Web Audio available in this test
-// environment) and a controllable loadBuffer that hands back a deferred
-// per call so tests can resolve/reject fetches in whatever order a real
-// network would.
+// environment) and a controllable loadTrack that hands back a deferred
+// per call (plus a hook to deliver chunks) so tests can stream, resolve or
+// reject fetches in whatever order a real network would.
 // -----------------------------------------------------------------------
 
 class FakeSourceNode {
@@ -89,20 +89,31 @@ function createDeferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
-/** Every call to loadBuffer gets its own deferred (keyed by trackId, in call
- *  order) so a test can resolve/reject any specific fetch — including a
- *  track requested more than once across its life in the queue — without
- *  affecting any other in-flight fetch. */
-function createFakeLoader() {
-  const calls: { trackId: number; deferred: Deferred<AudioBuffer>; onProgress?: (p: { loaded: number; total: number | null }) => void }[] = [];
+type Progress = { loaded: number; total: number | null };
+interface LoadCall {
+  trackId: number;
+  deferred: Deferred<void>;
+  handlers: { onChunk: (chunk: AudioBuffer) => void; onProgress?: (p: Progress) => void };
+  signal: AbortSignal;
+}
 
-  const loadBuffer = (
+/** Every call to loadTrack gets its own deferred (keyed by trackId, in call
+ *  order) so a test can resolve/reject any specific stream — including a
+ *  track requested more than once across its life in the queue — without
+ *  affecting any other in-flight one. `chunk` delivers one slice of audio
+ *  without finishing the stream; `resolve` is the common "one chunk, then
+ *  done" shorthand. */
+function createFakeLoader() {
+  const calls: LoadCall[] = [];
+
+  const loadTrack = (
     _ctx: AudioContext,
     trackId: number,
-    onProgress?: (p: { loaded: number; total: number | null }) => void,
-  ): Promise<AudioBuffer> => {
-    const deferred = createDeferred<AudioBuffer>();
-    calls.push({ trackId, deferred, onProgress });
+    handlers: LoadCall["handlers"],
+    signal: AbortSignal,
+  ): Promise<void> => {
+    const deferred = createDeferred<void>();
+    calls.push({ trackId, deferred, handlers, signal });
     return deferred.promise;
   };
 
@@ -110,20 +121,23 @@ function createFakeLoader() {
   const countFor = (trackId: number) => callsFor(trackId).length;
   const nthFor = (trackId: number, n = 0) => {
     const c = callsFor(trackId)[n];
-    if (!c) throw new Error(`no loadBuffer call #${n} for trackId ${trackId}`);
-    return c.deferred;
+    if (!c) throw new Error(`no loadTrack call #${n} for trackId ${trackId}`);
+    return c;
   };
-  const resolve = (trackId: number, durationSecs: number, n = 0) =>
-    nthFor(trackId, n).resolve({ duration: durationSecs } as unknown as AudioBuffer);
+  const chunk = (trackId: number, durationSecs: number, n = 0) =>
+    nthFor(trackId, n).handlers.onChunk({ duration: durationSecs } as unknown as AudioBuffer);
+  const complete = (trackId: number, n = 0) => nthFor(trackId, n).deferred.resolve();
+  const resolve = (trackId: number, durationSecs: number, n = 0) => {
+    chunk(trackId, durationSecs, n);
+    complete(trackId, n);
+  };
   const reject = (trackId: number, err: unknown = new Error("load failed"), n = 0) =>
-    nthFor(trackId, n).reject(err);
-  const progress = (trackId: number, loaded: number, total: number | null, n = 0) => {
-    const c = callsFor(trackId)[n];
-    if (!c) throw new Error(`no loadBuffer call #${n} for trackId ${trackId}`);
-    c.onProgress?.({ loaded, total });
-  };
+    nthFor(trackId, n).deferred.reject(err);
+  const progress = (trackId: number, loaded: number, total: number | null, n = 0) =>
+    nthFor(trackId, n).handlers.onProgress?.({ loaded, total });
+  const aborted = (trackId: number, n = 0) => nthFor(trackId, n).signal.aborted;
 
-  return { loadBuffer, calls, countFor, resolve, reject, progress };
+  return { loadTrack, calls, countFor, chunk, complete, resolve, reject, progress, aborted };
 }
 
 /** Flush every pending microtask (a real macrotask tick guarantees every
@@ -162,7 +176,7 @@ describe("PlayerEngine", () => {
     trackIdCounter = 0;
     fake = createFakeAudioContext();
     loader = createFakeLoader();
-    engine = new PlayerEngine({ createContext: () => fake.ctx, loadBuffer: loader.loadBuffer });
+    engine = new PlayerEngine({ createContext: () => fake.ctx, loadTrack: loader.loadTrack });
   });
 
   // -----------------------------------------------------------------------
@@ -655,30 +669,28 @@ describe("PlayerEngine", () => {
     expect(loader.countFor(t2.trackId)).toBe(callsBefore); // not re-requested
   });
 
-  it("next while the successor is still mid-fetch issues a second request (known residual cost, not what was reported)", async () => {
+  it("next while the successor is still mid-fetch keeps that stream rather than re-requesting it", async () => {
     const t1 = makeTrack();
     const t2 = makeTrack();
     engine.playTracks([t1, t2]);
     loader.resolve(t1.trackId, 100);
     await flush();
-    // t2's prefetch is in flight but hasn't resolved yet — nothing decoded
-    // to reuse, unlike the completed-prefetch case above.
+    // t2's stream is in flight (requested once t1's own stream completed).
     expect(loader.countFor(t2.trackId)).toBe(1);
 
     engine.next();
 
-    // startFrom bumps the session, so the original in-flight fetch's result
-    // (whenever it lands) will be discarded as stale, and a fresh one is
-    // requested under the new session — the original is orphaned rather
-    // than reused. Narrower than the reported bug (this only bites a skip
-    // that lands *while* the target is still downloading, not a completed
-    // one) and left as-is for now.
+    // The in-flight stream is the one the new current entry wants — it
+    // carries on under the new session instead of being orphaned and
+    // fetched a second time.
     expect(engine.getSnapshot().status).toBe("loading");
-    expect(loader.countFor(t2.trackId)).toBe(2);
+    expect(loader.countFor(t2.trackId)).toBe(1);
+    expect(loader.aborted(t2.trackId)).toBe(false);
 
-    loader.resolve(t2.trackId, 80, 1); // the second (current-session) call
+    loader.resolve(t2.trackId, 80);
     await flush();
     expect(engine.getSnapshot().status).toBe("playing");
+    expect(engine.getSnapshot().duration).toBe(80);
   });
 
   // -----------------------------------------------------------------------
@@ -758,6 +770,153 @@ describe("PlayerEngine", () => {
     await flush();
 
     expect(loader.countFor(t2.trackId)).toBe(2);
+  });
+
+  // -----------------------------------------------------------------------
+  // 15.5: progressive (chunked) delivery
+  // -----------------------------------------------------------------------
+
+  it("starts playing on the first chunk and schedules each later chunk contiguously after it", async () => {
+    const t1 = makeTrack({ durationSecs: 3 });
+    engine.playTracks([t1]);
+
+    loader.chunk(t1.trackId, 0.5);
+    let snap = engine.getSnapshot();
+    expect(snap.status).toBe("playing"); // no waiting for the rest
+    expect(snap.duration).toBe(3); // DB estimate until the stream completes
+    expect(fake.sources).toHaveLength(1);
+    expect(fake.sources[0]!.startedAt).toBeCloseTo(0.05, 5);
+
+    loader.chunk(t1.trackId, 0.5);
+    loader.chunk(t1.trackId, 0.25);
+    expect(fake.sources).toHaveLength(3);
+    expect(fake.sources[1]!.startedAt).toBeCloseTo(0.55, 5);
+    expect(fake.sources[2]!.startedAt).toBeCloseTo(1.05, 5);
+
+    loader.complete(t1.trackId);
+    await flush();
+    snap = engine.getSnapshot();
+    expect(snap.duration).toBeCloseTo(1.25, 5); // real total once complete
+  });
+
+  it("requests the successor only once the current entry's own stream has completed", async () => {
+    const t1 = makeTrack();
+    const t2 = makeTrack();
+    engine.playTracks([t1, t2]);
+
+    loader.chunk(t1.trackId, 0.5);
+    loader.chunk(t1.trackId, 0.5);
+    expect(engine.getSnapshot().status).toBe("playing");
+    expect(loader.countFor(t2.trackId)).toBe(0); // still streaming t1 — don't compete with it
+
+    loader.complete(t1.trackId);
+    await flush();
+    expect(loader.countFor(t2.trackId)).toBe(1);
+  });
+
+  it("holds a successor's chunks until the predecessor's end is known, then chains them at that instant", async () => {
+    const t1 = makeTrack();
+    const t2 = makeTrack();
+    engine.playTracks([t1, t2]);
+    loader.resolve(t1.trackId, 100);
+    await flush();
+
+    // t2 streams in two chunks; both land while t1 plays.
+    loader.chunk(t2.trackId, 0.5);
+    loader.chunk(t2.trackId, 0.5);
+    expect(fake.sources).toHaveLength(3);
+    expect(fake.sources[1]!.startedAt).toBeCloseTo(100.05, 5);
+    expect(fake.sources[2]!.startedAt).toBeCloseTo(100.55, 5);
+  });
+
+  it("a chunk that lands after its slot shifts the anchor forward (a pause, not a skip)", async () => {
+    const t1 = makeTrack();
+    engine.playTracks([t1]);
+    loader.chunk(t1.trackId, 0.5); // scheduled at 0.05, runs to 0.55
+
+    // The network stalls: the next chunk only arrives at t=2.
+    (fake.ctx as unknown as { currentTime: number }).currentTime = 2;
+    loader.chunk(t1.trackId, 0.5);
+
+    expect(fake.sources[1]!.startedAt).toBeCloseTo(2.05, 5);
+    expect(fake.sources[1]!.startedOffset).toBe(0); // nothing skipped
+    // Position picks up where the audio left off (0.5 s in), not 2 s in.
+    (fake.ctx as unknown as { currentTime: number }).currentTime = 2.05;
+    expect(engine.getPosition()?.elapsed).toBeCloseTo(0.5, 5);
+  });
+
+  it("ends the track when its last chunk ends — even if the stream's completion lands after that", async () => {
+    const t1 = makeTrack();
+    const t2 = makeTrack();
+    engine.playTracks([t1, t2]);
+    loader.chunk(t1.trackId, 0.5);
+
+    fake.sources[0]!.onended?.(); // the only chunk so far finishes playing
+    expect(engine.getSnapshot().current?.trackId).toBe(t1.trackId); // not known to be the last yet
+
+    loader.complete(t1.trackId);
+    await flush();
+    expect(engine.getSnapshot().current?.trackId).toBe(t2.trackId);
+    expect(loader.countFor(t2.trackId)).toBe(1);
+  });
+
+  it("a stream that fails part-way plays what arrived, flags the error, and moves on at the end of it", async () => {
+    const t1 = makeTrack();
+    const t2 = makeTrack();
+    engine.playTracks([t1, t2]);
+    loader.chunk(t1.trackId, 0.5);
+    loader.chunk(t1.trackId, 0.5);
+
+    loader.reject(t1.trackId, new Error("network dropped"));
+    await flush();
+
+    let snap = engine.getSnapshot();
+    expect(snap.status).toBe("playing");
+    expect(snap.lastError).toEqual({ title: t1.title, message: "network dropped" });
+    expect(snap.duration).toBeCloseTo(1, 5); // what we have is all there is
+    expect(loader.countFor(t2.trackId)).toBe(1); // successor pulled in as if the stream had completed
+
+    fake.sources[1]!.onended?.(); // the last chunk that did arrive
+    await flush();
+    snap = engine.getSnapshot();
+    expect(snap.current?.trackId).toBe(t2.trackId);
+  });
+
+  it("aborts a successor's stream when a queue edit displaces it", async () => {
+    const t1 = makeTrack();
+    const t2 = makeTrack();
+    engine.playTracks([t1, t2]);
+    loader.resolve(t1.trackId, 100);
+    await flush();
+    loader.chunk(t2.trackId, 0.5); // t2 streaming, partly here
+    expect(loader.aborted(t2.trackId)).toBe(false);
+
+    engine.playNext([makeTrack()]);
+
+    expect(loader.aborted(t2.trackId)).toBe(true);
+  });
+
+  it("seek is clamped to the audio that has arrived while the stream is still in flight", async () => {
+    const t1 = makeTrack({ durationSecs: 300 });
+    engine.playTracks([t1]);
+    loader.chunk(t1.trackId, 0.5);
+    loader.chunk(t1.trackId, 0.5); // 1 s downloaded of a 300 s track
+
+    (fake.ctx as unknown as { currentTime: number }).currentTime = 0.3;
+    engine.seek(200);
+
+    // Clamped to the 1 s that's here: both chunks are behind that point,
+    // so nothing restarts and the position parks at 1 s until more lands.
+    expect(fake.sources.every((s) => s.stopped)).toBe(true);
+    expect(fake.sources).toHaveLength(2);
+    (fake.ctx as unknown as { currentTime: number }).currentTime = 0.35;
+    expect(engine.getPosition()?.elapsed).toBeCloseTo(1, 5);
+
+    // The next chunk is exactly the audio at the seek point: it starts now.
+    loader.chunk(t1.trackId, 0.5);
+    expect(fake.sources).toHaveLength(3);
+    expect(fake.sources[2]!.startedAt).toBeCloseTo(0.4, 5); // 0.35 + START_EPSILON
+    expect(fake.sources[2]!.startedOffset).toBe(0);
   });
 
   // -----------------------------------------------------------------------

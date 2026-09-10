@@ -50,14 +50,14 @@ export interface PlayerLoadError {
   message: string;
 }
 
-/** Bytes downloaded so far for the *current* entry's in-flight fetch —
- *  null once it's decoded (or nothing is loading). `total` is only known
- *  when the response declared a Content-Length; an ffmpeg-remuxed track
- *  (the common case: FLAC on the LAN, a lossy AAC remux off it — see
- *  audio-stream.ts) streams from a live encode with no size upfront, so
- *  the player bars fall back to an indeterminate spinner rather than a
- *  percentage when `total` is null. Exists so a large lossless file on a
- *  slow connection reads as "downloading" instead of looking identical to
+/** Bytes downloaded so far for the *current* entry's in-flight stream —
+ *  null once its first audio is scheduled (or nothing is loading). `total`
+ *  is the server's estimate from the track's duration (X-Audio-Estimated-
+ *  Bytes, see audio-stream.ts), null if it had none, in which case the
+ *  player bars show a running byte count rather than a percentage. Since
+ *  playback now starts on the first half-second of audio this is only
+ *  ever visible for the moment before that lands — it exists so a stalled
+ *  connection reads as "downloading" instead of looking identical to
  *  normal playback (status "loading" renders the same pause icon as
  *  "playing" — see mobile-player-bar.tsx / now-playing-card.tsx). */
 export interface PlayerLoadProgress {

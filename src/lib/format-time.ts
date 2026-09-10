@@ -9,13 +9,11 @@ export function formatTime(secs: number | null | undefined): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-/** "Downloading 4.2 MB", or "Downloading 40%" once the response declared a
- *  Content-Length (see PlayerLoadProgress in player-types.ts — an
- *  ffmpeg-remuxed track streams from a live encode with no size upfront,
- *  so `total` is often null and this falls back to a running byte count
- *  rather than a percentage). Null input (nothing loading) reads as null,
- *  not a placeholder string, so callers can decide whether to render
- *  anything at all. */
+/** "Downloading 40%" when the total is known (the audio route's estimate
+ *  from the track's duration — see PlayerLoadProgress in player-types.ts),
+ *  else "Downloading 4.2 MB" as a running byte count. Null input (nothing
+ *  loading) reads as null, not a placeholder string, so callers can decide
+ *  whether to render anything at all. */
 export function formatLoadProgress(progress: { loaded: number; total: number | null } | null): string | null {
   if (!progress) return null;
   if (progress.total && progress.total > 0) {

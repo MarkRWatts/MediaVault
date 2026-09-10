@@ -34,7 +34,7 @@ sign-in and watch history.
   its own Discogs release for its own tracklist, catalogue number, and cover
   art (falling back to the digital files' own embedded artwork) — alongside
   **gapless in-browser music playback** — app-wide persistent player with queue
-  that keeps playing while you browse, lossless end-to-end (ALAC is served as FLAC,
+  that keeps playing while you browse, lossless end-to-end (every track streams as raw PCM at the device's sample rate,
   sample-accurate Web Audio track joins, no transcoding of lossy files).
 - **Collections** — film series (James Bond, Alien, …) in release-order
   timelines with missing films greyed out.
