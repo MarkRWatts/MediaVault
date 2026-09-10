@@ -269,6 +269,7 @@ model Artist {
   sortName        String
   folder          String?  @unique // top-level folder under MUSIC_PATH; null for vinyl-only artists with no digital rips
   discogsId       Int?     @unique // Discogs artist id
+  spotifyId       String?  @unique // Spotify artist id (base62) — see spotify.ts; only set on an exact-name match, no fallback tier
   disambiguation  String?
   various         Boolean  @default(false) // Compilations pseudo-artist
   matchConfidence String   @default("UNMATCHED") // EXACT | SEARCH | LOW | UNMATCHED
@@ -280,15 +281,17 @@ model Artist {
   // Roon-style enrichment (see artist-bio.ts) — best-effort, multi-source,
   // cached like Album.coverPath. TheAudioDB/Fanart.tv were keyed by a
   // MusicBrainz artist id and no longer run post-Discogs-cutover (see
-  // artist-bio.ts); Discogs' own /artists/{id} (needs no mbid, only the
-  // artist's already-resolved discogsId) is the primary source in practice
-  // now, with Wikipedia-by-name as the last-resort fallback. Null simply
-  // means "not fetched yet" or "no source had anything", same convention as
-  // the rest of this app's enrichment fields — never blocks anything.
+  // artist-bio.ts). Spotify (see spotify.ts) is the primary photo source
+  // when an exact-name match is found, since its images are noticeably
+  // higher-res than Discogs'; Spotify has no bio field at all, so Discogs'
+  // /artists/{id} remains the bio source, with Wikipedia-by-name as the
+  // last-resort fallback for both. Null simply means "not fetched yet" or
+  // "no source had anything", same convention as the rest of this app's
+  // enrichment fields — never blocks anything.
   bio            String? // biography text
   bioSource      String? // theaudiodb | discogs | wikipedia | manual
   photoPath      String? // cached portrait/thumb image, relative to POSTER_CACHE_DIR/artists/
-  photoSource    String? // theaudiodb | discogs | fanart | wikipedia | manual
+  photoSource    String? // theaudiodb | spotify | discogs | fanart | wikipedia | manual
   backdropPath   String? // cached wide background/banner image, relative to POSTER_CACHE_DIR/artists/
   backdropSource String? // fanart | theaudiodb | manual
 

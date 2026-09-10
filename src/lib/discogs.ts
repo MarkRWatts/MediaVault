@@ -18,6 +18,7 @@ import { MUSIC_GAP_MIN_OWNED, MUSIC_GAP_MIN_PCT } from "@/lib/constants";
 import { guardAndCreateRun, updateProgress, finishRun, failRun } from "@/lib/runs";
 import { fetchCover, fetchDiscogsPhysicalCopyCover, fetchDiscogsAlbumCover } from "@/lib/cover-art";
 import { fetchArtistEnrichment, type DiscogsArtistData } from "@/lib/artist-bio";
+import { isSpotifyConfigured, matchSpotifyArtist, fetchSpotifyArtistImages } from "@/lib/spotify";
 
 const DISCOGS_API_BASE = "https://api.discogs.com";
 const USER_AGENT = "MediaVault/1.4 (https://github.com/MarkRWatts/MediaVault)";
@@ -1156,10 +1157,17 @@ function stripDiscogsMarkup(text: string): string {
  * Roon-style bio/photo/backdrop, best-effort — see fetchArtistEnrichment.
  * TheAudioDB and Fanart.tv are keyed by a MusicBrainz artist id, which no
  * longer exists in this app — always passes null, which fetchArtistEnrichment
- * already treats as "skip those tiers". Discogs (see fetchDiscogsArtistImages
- * above) needs no mbid at all, so it's the primary source in practice now;
- * Wikipedia-by-name remains the last-resort fallback when an artist has no
- * discogsId (e.g. unmatched artists).
+ * already treats as "skip those tiers". Spotify (photo only, see spotify.ts)
+ * is tried first when configured — its images beat Discogs' on resolution —
+ * falling back to Discogs (bio + photo, needs no mbid) and finally
+ * Wikipedia-by-name.
+ *
+ * Like discogsId, a Spotify match is resolved once and cached
+ * (Artist.spotifyId) rather than re-searched every run — but only on
+ * success: a "no confident match" result isn't persisted, so an artist
+ * Spotify has nothing for gets retried on each future run rather than
+ * permanently giving up (cheap: this only fires while needsPhoto is still
+ * true, i.e. no source has produced a photo yet).
  */
 async function enrichArtistBioAndImages(
   artistId: number,
@@ -1169,7 +1177,15 @@ async function enrichArtistBioAndImages(
 ): Promise<void> {
   const current = await prisma.artist.findUnique({
     where: { id: artistId },
-    select: { bio: true, bioSource: true, photoPath: true, photoSource: true, backdropPath: true, backdropSource: true },
+    select: {
+      bio: true,
+      bioSource: true,
+      photoPath: true,
+      photoSource: true,
+      backdropPath: true,
+      backdropSource: true,
+      spotifyId: true,
+    },
   });
   if (!current) return;
 
@@ -1180,8 +1196,33 @@ async function enrichArtistBioAndImages(
 
   try {
     const discogs = discogsId && (needsBio || needsPhoto) ? await fetchDiscogsArtistImages(discogsId) : null;
-    const result = await fetchArtistEnrichment({ id: artistId, mbid: null, name: artistName, needsBio, needsPhoto, needsBackdrop, discogs });
+
+    let spotify: { imageUrls: string[] } | null = null;
+    let newSpotifyId: string | null = null;
+    if (needsPhoto && isSpotifyConfigured()) {
+      if (current.spotifyId) {
+        spotify = await fetchSpotifyArtistImages(current.spotifyId);
+      } else {
+        const match = await matchSpotifyArtist(artistName);
+        if (match) {
+          newSpotifyId = match.spotifyId;
+          spotify = { imageUrls: match.imageUrls };
+        }
+      }
+    }
+
+    const result = await fetchArtistEnrichment({
+      id: artistId,
+      mbid: null,
+      name: artistName,
+      needsBio,
+      needsPhoto,
+      needsBackdrop,
+      discogs,
+      spotify,
+    });
     const data: Record<string, string> = {};
+    if (newSpotifyId) data.spotifyId = newSpotifyId;
     if (result.bio) {
       data.bio = result.bio.text;
       data.bioSource = result.bio.source;

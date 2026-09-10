@@ -9,12 +9,18 @@
 //    MusicBrainz artist id. No signup needed at this app's scale — the
 //    shared public test key "2" works fine; set AUDIODB_API_KEY to use a
 //    personal one instead.
+//  - Spotify (photo only — no bio field exists on Spotify's artist object),
+//    passed in by the caller (see discogs.ts's enrichArtistBioAndImages)
+//    rather than fetched here, same shape as the Discogs data below. Only
+//    present when spotify.ts's conservative exact-name match succeeded —
+//    its images are noticeably higher-res than Discogs', so this is the
+//    primary *photo* source today when SPOTIFY_CLIENT_ID/SECRET are set.
 //  - Discogs (bio + photo), passed in by the caller (see discogs.ts's
 //    fetchDiscogsArtistImages) rather than fetched here — it already has the
 //    artist's resolved Discogs id from the matching pipeline, so there's no
-//    name-search/disambiguation to do in this module. In practice this is
-//    the primary source today: it needs no MusicBrainz id at all, unlike the
-//    two tiers above and below it.
+//    name-search/disambiguation to do in this module. Remains the bio
+//    source regardless of Spotify (which has none), and the photo fallback
+//    when Spotify isn't configured or found no confident match.
 //  - Fanart.tv (better backdrop art specifically) — strictly requires a
 //    free personal API key, no shared key exists, so this is skipped
 //    entirely unless FANART_API_KEY is set.
@@ -40,13 +46,20 @@ const ARTISTS_DIR = path.join(POSTER_CACHE_DIR, "artists");
 const MIN_IMAGE_BYTES = 5 * 1024;
 
 export type BioSource = "theaudiodb" | "discogs" | "wikipedia" | "manual";
-export type ImageSource = "theaudiodb" | "discogs" | "fanart" | "wikipedia" | "manual";
+export type ImageSource = "theaudiodb" | "spotify" | "discogs" | "fanart" | "wikipedia" | "manual";
 
 /** Pre-fetched by the caller (discogs.ts already knows the artist's resolved
  *  Discogs id) rather than looked up here — see fetchArtistEnrichment. */
 export interface DiscogsArtistData {
   profile: string | null;
   imageUrls: string[]; // primary image(s) first, then secondary
+}
+
+/** Pre-fetched by the caller (discogs.ts resolves/reuses Artist.spotifyId)
+ *  rather than looked up here — see fetchArtistEnrichment. No bio field:
+ *  Spotify's artist object carries no biography text. */
+export interface SpotifyArtistData {
+  imageUrls: string[]; // widest first
 }
 
 async function getJson(url: string): Promise<unknown> {
@@ -152,6 +165,7 @@ export interface ArtistEnrichmentTarget {
   needsPhoto: boolean;
   needsBackdrop: boolean;
   discogs?: DiscogsArtistData | null;
+  spotify?: SpotifyArtistData | null;
 }
 
 export interface ArtistEnrichmentResult {
@@ -173,6 +187,7 @@ export async function fetchArtistEnrichment(target: ArtistEnrichmentTarget): Pro
   const audioDb = target.mbid ? await fetchAudioDbArtist(target.mbid) : null;
   const fanart = target.mbid ? await fetchFanartArtist(target.mbid) : null;
   const discogs = target.discogs ?? null;
+  const spotify = target.spotify ?? null;
   // Wikipedia is a single request that can serve both bio and photo — only
   // fetch it once, lazily, and only if something still needs it.
   let wikipedia: WikipediaSummary | null | undefined;
@@ -193,15 +208,19 @@ export async function fetchArtistEnrichment(target: ArtistEnrichmentTarget): Pro
   }
 
   if (target.needsPhoto) {
+    const spotifyPhoto = spotify?.imageUrls[0];
     const discogsPhoto = discogs?.imageUrls[0];
-    const url = audioDb?.thumbUrl || discogsPhoto || fanart?.thumbUrls[0] || (await getWikipedia())?.thumbnailUrl;
+    const url =
+      audioDb?.thumbUrl || spotifyPhoto || discogsPhoto || fanart?.thumbUrls[0] || (await getWikipedia())?.thumbnailUrl;
     const source: ImageSource = audioDb?.thumbUrl
       ? "theaudiodb"
-      : discogsPhoto
-        ? "discogs"
-        : fanart?.thumbUrls[0]
-          ? "fanart"
-          : "wikipedia";
+      : spotifyPhoto
+        ? "spotify"
+        : discogsPhoto
+          ? "discogs"
+          : fanart?.thumbUrls[0]
+            ? "fanart"
+            : "wikipedia";
     if (url) {
       const buf = await downloadImage(url);
       if (buf) result.photo = { fileName: await cacheArtistImage(target.id, "photo", buf), source };

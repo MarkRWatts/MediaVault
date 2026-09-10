@@ -5,6 +5,8 @@ import { MintCodeForm } from "@/components/admin/MintCodeForm";
 import { CodeRowActions } from "@/components/admin/CodeRowActions";
 import ScanControls from "@/components/admin/ScanControls";
 import { JellyfinClientForm } from "@/components/admin/JellyfinClientForm";
+import { jellyfinConfigured } from "@/lib/jellyfin";
+import { isSpotifyConfigured } from "@/lib/spotify";
 
 // DB-backed listing: must render per-request, not be frozen at build time
 // (the Docker image is built with no database present).
@@ -48,6 +50,95 @@ const TONE_CLASS = {
   dead: "border-missing-border bg-missing-bg text-missing",
 } as const;
 
+// "active" = working as intended right now; "reduced" = working, but a key
+// would improve it (still worth calling out, hence amber not green);
+// "dormant" = configuring it wouldn't currently do anything (a structural
+// reason unrelated to the key itself); "off" = optional and simply unused.
+const API_TONE_CLASS = {
+  active: "border-good-border bg-good-bg text-good",
+  reduced: "border-accent-border bg-accent-dim text-accent",
+  dormant: "border-missing-border bg-missing-bg text-missing",
+  off: "border-border-strong bg-bg-hover text-text-muted",
+} as const;
+
+interface ApiStatusRow {
+  name: string;
+  purpose: string;
+  status: string;
+  tone: keyof typeof API_TONE_CLASS;
+}
+
+// Every external API this app calls anywhere, not just the music-enrich
+// ones — read directly from process.env (server component, never sent to
+// the client). "Dormant" rows reflect src/lib/artist-bio.ts's
+// MusicBrainz-id gate, not a missing key — see that file's module comment.
+function apiStatusRows(): ApiStatusRow[] {
+  const tmdbSet = Boolean(process.env.TMDB_API_KEY);
+  const theporndbSet = Boolean(process.env.THEPORNDB_API_KEY);
+  const discogsTokenSet = Boolean(process.env.DISCOGS_TOKEN);
+  const spotifySet = isSpotifyConfigured();
+  const jellyfinSet = jellyfinConfigured();
+
+  return [
+    {
+      name: "TMDB",
+      purpose: "Film/TV metadata, posters, collections",
+      status: tmdbSet ? "Configured" : "Not configured — falls back to filename-only detection",
+      tone: tmdbSet ? "active" : "off",
+    },
+    {
+      name: "ThePornDB",
+      purpose: "Adult metadata & artwork",
+      status: theporndbSet ? "Configured" : "Not configured — no adult metadata enrichment",
+      tone: theporndbSet ? "active" : "off",
+    },
+    {
+      name: "Discogs",
+      purpose: "Music matching, discography, covers, bio & fallback photo",
+      status: discogsTokenSet
+        ? "Configured — 60 requests/min"
+        : "Unauthenticated — 25 requests/min (set DISCOGS_TOKEN for 60)",
+      tone: discogsTokenSet ? "active" : "reduced",
+    },
+    {
+      name: "Spotify",
+      purpose: "Artist photos (primary source)",
+      status: spotifySet ? "Configured" : "Not configured — artist photos fall back to Discogs/Wikipedia",
+      tone: spotifySet ? "active" : "off",
+    },
+    {
+      name: "TheAudioDB",
+      purpose: "Artist bio/photo/backdrop",
+      status: "Dormant — needs a MusicBrainz artist id, which no longer exists post-Discogs-cutover",
+      tone: "dormant",
+    },
+    {
+      name: "Fanart.tv",
+      purpose: "Artist backdrop art",
+      status: "Dormant — same MusicBrainz-id gate as TheAudioDB, regardless of FANART_API_KEY",
+      tone: "dormant",
+    },
+    {
+      name: "Wikipedia",
+      purpose: "Artist bio/photo, last-resort fallback",
+      status: "Always available — no key required",
+      tone: "active",
+    },
+    {
+      name: "iTunes Search",
+      purpose: "Album cover art, fallback source",
+      status: "Always available — no key required",
+      tone: "active",
+    },
+    {
+      name: "Jellyfin",
+      purpose: "In-app playback brokering & SSO",
+      status: jellyfinSet ? "Configured" : "Not configured — in-app playback unavailable",
+      tone: jellyfinSet ? "active" : "off",
+    },
+  ];
+}
+
 // Owner-only (see HOUSEHOLDS_PLAN.md part 3): access-code minting/revoking
 // and the content-free activity log, both product-owner tooling rather
 // than anything a household member needs. Ported from the template app's
@@ -78,6 +169,7 @@ export default async function AdminPage() {
   ]);
   const userName = new Map(users.map((u) => [u.id, u.name || u.email || u.id]));
   const householdName = new Map(households.map((h) => [h.id, h.name]));
+  const apiStatus = apiStatusRows();
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-8 px-4 py-10 sm:px-6">
@@ -98,6 +190,42 @@ export default async function AdminPage() {
           before running a full music enrich — it raises Discogs&rsquo; rate limit from 25 to 60 requests/min.
         </p>
         <ScanControls />
+      </section>
+
+      <section className="flex flex-col gap-4">
+        <h2 className="font-display text-xl tracking-wide text-text">APIs</h2>
+        <p className="text-sm text-text-muted">
+          Every external service the scan/enrich pipelines and playback can call, and whether each
+          is currently configured. Green means working as-is; amber means working but a key would
+          improve it; red means dormant for a structural reason — setting the key alone won&rsquo;t
+          fix it; grey means optional and simply unused.
+        </p>
+        <div className="overflow-x-auto rounded-lg border border-border bg-bg-elevated">
+          <table className="w-full min-w-[560px] text-left text-sm">
+            <thead>
+              <tr className="border-b border-border text-xs uppercase tracking-widest text-text-faint">
+                <th className="px-4 py-3 font-medium">API</th>
+                <th className="px-4 py-3 font-medium">Used for</th>
+                <th className="px-4 py-3 font-medium">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {apiStatus.map((api) => (
+                <tr key={api.name} className="border-b border-border/60 last:border-0">
+                  <td className="px-4 py-3 font-medium text-text">{api.name}</td>
+                  <td className="px-4 py-3 text-text-muted">{api.purpose}</td>
+                  <td className="px-4 py-3">
+                    <span
+                      className={`inline-block rounded-full border px-2.5 py-0.5 text-xs font-medium ${API_TONE_CLASS[api.tone]}`}
+                    >
+                      {api.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <section className="flex flex-col gap-4">
