@@ -106,21 +106,27 @@ const FLAC_REMUX_ARGS = ["-map", "0:a:0", "-c:a", "flac", "-f", "flac", "-"];
 // CoreAudio does, with a literal null error). 16-bit PCM matches the
 // library's source depth, so this is still lossless.
 const WAV_ARGS = ["-map", "0:a:0", "-c:a", "pcm_s16le", "-f", "wav"];
-// Off-LAN lossy fallback for alac/flac (see header comment). Same
-// container/codec (audio/mp4, AAC) as the existing aac-passthrough case —
-// but NOT the same streamability: an initial version of this used
-// fragmented mp4 (movflags frag_keyframe+empty_moov) so it could stream
-// straight from ffmpeg's stdout like FLAC_REMUX_ARGS does, and every
-// engine tested (Chromium included, not just Safari) rejected it —
-// decodeAudioData wants a complete, non-fragmented container, the same
-// requirement that already routes WAV through a temp file below. A track
-// that fails to decode retries as WAV (fetchAndDecode's catch), and WAV
-// is uncompressed — so a decode failure here doesn't just fail, it makes
-// the "smaller off-LAN download" fix download something far *larger*
-// than the original lossless file. Plain (non-fragmented) `-f mp4` needs
-// a seekable output for its moov atom, so this goes through
-// tempFileConvertStream exactly like WAV_ARGS does.
-const AAC_REMOTE_ARGS = ["-map", "0:a:0", "-c:a", "aac", "-b:a", "256k", "-f", "mp4"];
+// Off-LAN lossy fallback for alac/flac (see header comment). Two earlier
+// attempts before this one:
+//   1. Fragmented mp4 (movflags frag_keyframe+empty_moov), so it could
+//      stream straight from ffmpeg's stdout like FLAC_REMUX_ARGS does —
+//      decodeAudioData rejected it outright, confirmed in Chromium too,
+//      not just Safari.
+//   2. Plain (non-fragmented) mp4 through a temp file (tempFileConvertStream,
+//      same reason WAV needs one — a seekable output for the moov atom) —
+//      decodes fine, but the whole encode (tens of seconds for a long
+//      track on the VM's older 4-core Xeon) has to finish before a single
+//      byte reaches the client, which just traded a correctness bug for a
+//      "why is this slow" one.
+// ADTS is AAC's own self-framing bitstream format (no container-level
+// index/seek table to finalize), so it's both streamable from stdout AND,
+// per Apple's own use of it for HLS audio, expected to decode on Safari —
+// confirmed decoding correctly in Chromium; NOT yet confirmed on an actual
+// iPhone. If it turns out Safari rejects this too, the existing WAV retry
+// (fetchAndDecode's catch) is still there as a safety net — worth knowing
+// that a bad outcome there means a giant uncompressed download, exactly
+// the failure mode this whole off-LAN path exists to avoid.
+const AAC_REMOTE_ARGS = ["-map", "0:a:0", "-c:a", "aac", "-b:a", "256k", "-f", "adts", "-"];
 
 // Spawn a child process and hand back its stdout as a Web ReadableStream.
 // `Readable.toWeb` wires up errors that arrive *on the stream itself*, but a
@@ -185,14 +191,16 @@ function flacRemuxStream(absPath: string, musicRoot: string, onDone: () => void)
   return remuxStream(absPath, musicRoot, FLAC_REMUX_ARGS, onDone);
 }
 
-// Shared by WAV and the AAC-remote fallback — both need a *seekable*
-// output file (a non-seekable pipe leaves placeholder size/moov fields
-// that strict decoders reject, and for the AAC case, a workaround via
-// fragmented mp4 turned out not to decode at all — see AAC_REMOTE_ARGS),
-// so both convert to a temp file first — the header gets written
-// correctly on close — then stream that, unlinking once the response
-// ends. The slot (audioSemaphore) is only held for the conversion itself;
-// the caller releases it before this returns.
+function aacRemoteStream(absPath: string, musicRoot: string, onDone: () => void) {
+  return remuxStream(absPath, musicRoot, AAC_REMOTE_ARGS, onDone);
+}
+
+// WAV can't be streamed straight from ffmpeg's stdout: a non-seekable
+// output leaves the RIFF size fields as placeholders, which strict
+// decoders (Safari) reject. Convert to a temp file first — the header
+// gets written correctly on close — then stream that, unlinking once the
+// response ends. The slot (audioSemaphore) is only held for the
+// conversion itself; the caller releases it before this returns.
 async function tempFileConvertStream(
   absPath: string,
   musicRoot: string,
@@ -248,10 +256,6 @@ async function tempFileConvertStream(
 
 function wavConvertStream(absPath: string, musicRoot: string) {
   return tempFileConvertStream(absPath, musicRoot, WAV_ARGS, "out.wav");
-}
-
-function aacRemoteConvertStream(absPath: string, musicRoot: string) {
-  return tempFileConvertStream(absPath, musicRoot, AAC_REMOTE_ARGS, "out.m4a");
 }
 
 /**
@@ -321,21 +325,21 @@ export async function getTrackAudio(
     };
   }
 
-  // Converts to a temp file before anything is streamed (see
-  // tempFileConvertStream), so the slot is only held for the encode
-  // itself — same shape as the wav branch above.
+  // Streams straight from ffmpeg's stdout, same as FLAC below: ADTS is
+  // self-framing (see AAC_REMOTE_ARGS), so unlike the mp4 attempts that
+  // came before it, nothing needs a seekable temp file to finalize —
+  // playback can start as soon as the first bytes arrive instead of
+  // waiting out the whole encode.
   if (format.kind === "aac-remote") {
-    let aacStream: ReadableStream<Uint8Array> | null;
-    try {
-      aacStream = await aacRemoteConvertStream(absPath, musicRoot);
-    } finally {
+    const stream = await aacRemoteStream(absPath, musicRoot, release);
+    if (!stream) {
       release();
+      return null;
     }
-    if (!aacStream) return null;
     return {
-      stream: aacStream,
-      contentType: "audio/mp4",
-      filename: track.fileName.replace(/\.[^./\\]+$/, "") + ".m4a",
+      stream,
+      contentType: "audio/aac",
+      filename: track.fileName.replace(/\.[^./\\]+$/, "") + ".aac",
     };
   }
 
