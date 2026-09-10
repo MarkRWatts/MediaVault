@@ -11,6 +11,7 @@ import { ChevronDown } from "lucide-react";
 import CoverImage from "@/components/CoverImage";
 import { usePlayer } from "@/components/player/usePlayer";
 import { PlayIcon, PauseIcon, NextIcon } from "@/components/player/icons";
+import { formatLoadProgress } from "@/lib/format-time";
 import { NowPlayingCard } from "./now-playing-card";
 import { QueuePanel } from "./queue-panel";
 import { PlaylistsPanel } from "./playlists-panel";
@@ -33,6 +34,12 @@ export function MobilePlayerBar({ favouriteTrackCount }: { favouriteTrackCount: 
   if (!current) return null;
 
   const isPlaying = snapshot.status === "playing" || snapshot.status === "loading";
+  // "loading" renders the same pause icon as "playing" (tapping it should
+  // still pause the intent to play) — this is the distinct cue that
+  // something's actually downloading rather than already making sound, for
+  // exactly the case that made a stuck/slow fetch look like silent
+  // playback (see player-engine.ts's lastError/loadProgress comments).
+  const loadingLabel = snapshot.status === "loading" ? (formatLoadProgress(snapshot.loadProgress) ?? "Loading…") : null;
 
   return (
     <>
@@ -58,7 +65,7 @@ export function MobilePlayerBar({ favouriteTrackCount }: { favouriteTrackCount: 
           />
           <div className="min-w-0">
             <p className="truncate text-sm font-medium text-text">{current.title}</p>
-            <p className="truncate text-xs text-text-muted">{current.artist}</p>
+            <p className="truncate text-xs text-text-muted">{loadingLabel ?? current.artist}</p>
           </div>
         </button>
 

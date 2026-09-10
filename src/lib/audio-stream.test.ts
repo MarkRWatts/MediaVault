@@ -15,6 +15,21 @@ describe("resolvePlaybackFormat", () => {
     expect(resolvePlaybackFormat("flac")).toEqual({ kind: "flac" });
   });
 
+  it("prefers a small lossy AAC remux for alac/flac when preferLossyRemote is set", () => {
+    expect(resolvePlaybackFormat("alac", { preferLossyRemote: true })).toEqual({ kind: "aac-remote" });
+    expect(resolvePlaybackFormat("flac", { preferLossyRemote: true })).toEqual({ kind: "aac-remote" });
+    // Already-lossy/already-small codecs don't get a further degraded
+    // remote variant — there's nothing to save.
+    expect(resolvePlaybackFormat("mp3", { preferLossyRemote: true })).toEqual({
+      kind: "passthrough",
+      contentType: "audio/mpeg",
+    });
+    expect(resolvePlaybackFormat("aac", { preferLossyRemote: true })).toEqual({
+      kind: "passthrough",
+      contentType: "audio/mp4",
+    });
+  });
+
   it("is case-insensitive", () => {
     expect(resolvePlaybackFormat("MP3")).toEqual({ kind: "passthrough", contentType: "audio/mpeg" });
     expect(resolvePlaybackFormat("ALAC")).toEqual({ kind: "flac" });

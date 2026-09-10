@@ -1,16 +1,25 @@
 // Serves track audio bytes for the in-browser gapless album player
-// (AlbumPlayer.tsx via /api/audio/[trackId]). Two playback formats:
+// (AlbumPlayer.tsx via /api/audio/[trackId]). Three playback formats:
 //
 //   - mp3 / aac: the ORIGINAL file, streamed byte-for-byte. Both codecs
 //     decode natively in every browser's Web Audio, and re-encoding a lossy
 //     format is a straight quality loss for zero benefit — so these are
 //     passed through untouched (see resolvePlaybackFormat).
-//   - alac / flac: neither decodes natively outside Safari (ALAC) or at all
-//     via decodeAudioData in most engines, so these are remuxed to FLAC via
-//     `ffmpeg -i <in> -map 0:a:0 -c:a flac -f flac -`. This is a
-//     lossless-to-lossless re-encode (bit-identical PCM, different
+//   - alac / flac, on the LAN: neither decodes natively outside Safari
+//     (ALAC) or at all via decodeAudioData in most engines, so these are
+//     remuxed to FLAC via `ffmpeg -i <in> -map 0:a:0 -c:a flac -f flac -`.
+//     This is a lossless-to-lossless re-encode (bit-identical PCM, different
 //     container/entropy coding) — not the quality-losing transcode this
 //     library otherwise refuses to do (see PLAN.md "Future: playback").
+//   - alac / flac, off the LAN (preferLossyRemote): the player has to fetch
+//     the *entire* file before decodeAudioData can start (no progressive
+//     decode API — see player-engine.ts), and a lossless remux of a
+//     multi-minute track can run tens of MB; over a slow/high-latency
+//     mobile connection that can take long enough to look like silent,
+//     stuck playback (see the off-LAN iPhone report this was added for,
+//     2026-09-10). So off-LAN, these get a 256kbps AAC remux instead — a
+//     5-10x smaller download — matching VideoPlayer's off-LAN 720p default
+//     (src/lib/request-network.ts). LAN playback stays fully lossless.
 //
 // Mirrors ffprobe.ts / cover-art.ts's local-ffmpeg-vs-docker fallback, but
 // *streams* ffmpeg's stdout straight into the HTTP response instead of
@@ -54,11 +63,15 @@ export interface TrackAudio {
  * Pure codec -> playback-format decision, split out from getTrackAudio so
  * it's testable without a database or ffmpeg. "passthrough" means serve the
  * original bytes as-is (with the given Content-Type); "flac" means remux
- * through ffmpeg; null means unplayable (DRM, unknown, or no codec at all).
+ * losslessly through ffmpeg; "aac-remote" means remux to a small lossy AAC
+ * (only offered for alac/flac, and only when preferLossyRemote is set —
+ * see the header comment); null means unplayable (DRM, unknown, or no
+ * codec at all).
  */
 export function resolvePlaybackFormat(
   codec: string | null | undefined,
-): { kind: "passthrough"; contentType: string } | { kind: "flac" } | null {
+  opts?: { preferLossyRemote?: boolean },
+): { kind: "passthrough"; contentType: string } | { kind: "flac" } | { kind: "aac-remote" } | null {
   switch ((codec ?? "").toLowerCase()) {
     case "mp3":
       return { kind: "passthrough", contentType: "audio/mpeg" };
@@ -66,7 +79,7 @@ export function resolvePlaybackFormat(
       return { kind: "passthrough", contentType: "audio/mp4" };
     case "alac":
     case "flac":
-      return { kind: "flac" };
+      return opts?.preferLossyRemote ? { kind: "aac-remote" } : { kind: "flac" };
     default:
       return null; // drm | unknown | null
   }
@@ -93,6 +106,25 @@ const FLAC_REMUX_ARGS = ["-map", "0:a:0", "-c:a", "flac", "-f", "flac", "-"];
 // CoreAudio does, with a literal null error). 16-bit PCM matches the
 // library's source depth, so this is still lossless.
 const WAV_ARGS = ["-map", "0:a:0", "-c:a", "pcm_s16le", "-f", "wav"];
+// Off-LAN lossy fallback for alac/flac (see header comment): fragmented
+// MP4 so it, like FLAC above, can stream straight from ffmpeg's stdout —
+// a plain `-f mp4` mux needs a seekable output to write its moov atom
+// (the WAV problem below), fragmented mp4 doesn't. Same container/codec
+// (audio/mp4, AAC) as the existing aac-passthrough case, which is already
+// proven to decode fine in every engine this app targets.
+const AAC_REMOTE_ARGS = [
+  "-map",
+  "0:a:0",
+  "-c:a",
+  "aac",
+  "-b:a",
+  "256k",
+  "-movflags",
+  "frag_keyframe+empty_moov+default_base_moof",
+  "-f",
+  "mp4",
+  "-",
+];
 
 // Spawn a child process and hand back its stdout as a Web ReadableStream.
 // `Readable.toWeb` wires up errors that arrive *on the stream itself*, but a
@@ -114,14 +146,18 @@ function fileToWebStream(readStream: ReadStream): ReadableStream<Uint8Array> {
   return Readable.toWeb(readStream) as ReadableStream<Uint8Array>;
 }
 
-async function flacRemuxStream(
+// Shared by flacRemuxStream and aacRemoteStream — both just an ffmpeg
+// filter chain streamed straight from stdout, differing only in the output
+// args (see FLAC_REMUX_ARGS / AAC_REMOTE_ARGS above).
+async function remuxStream(
   absPath: string,
   musicRoot: string,
+  outputArgs: string[],
   onDone: () => void,
 ): Promise<ReadableStream<Uint8Array> | null> {
   const hasLocal = await detectLocalFfmpeg();
   if (hasLocal) {
-    return spawnToWebStream("ffmpeg", ["-i", absPath, ...FLAC_REMUX_ARGS], onDone);
+    return spawnToWebStream("ffmpeg", ["-i", absPath, ...outputArgs], onDone);
   }
 
   const dockerImage = process.env.FFPROBE_DOCKER_IMAGE;
@@ -134,19 +170,27 @@ async function flacRemuxStream(
   return spawnToWebStream(
     "docker",
     [
-    "run",
-    "--rm",
-    "--entrypoint",
-    "/ffmpeg",
-    "-v",
-    `${musicRoot}:/probe-root:ro`,
-    dockerImage,
-    "-i",
-    containerIn,
-    ...FLAC_REMUX_ARGS,
+      "run",
+      "--rm",
+      "--entrypoint",
+      "/ffmpeg",
+      "-v",
+      `${musicRoot}:/probe-root:ro`,
+      dockerImage,
+      "-i",
+      containerIn,
+      ...outputArgs,
     ],
     onDone,
   );
+}
+
+function flacRemuxStream(absPath: string, musicRoot: string, onDone: () => void) {
+  return remuxStream(absPath, musicRoot, FLAC_REMUX_ARGS, onDone);
+}
+
+function aacRemoteStream(absPath: string, musicRoot: string, onDone: () => void) {
+  return remuxStream(absPath, musicRoot, AAC_REMOTE_ARGS, onDone);
 }
 
 // WAV can't be streamed straight from ffmpeg's stdout: a non-seekable output
@@ -212,7 +256,7 @@ async function wavConvertStream(absPath: string, musicRoot: string): Promise<Rea
  */
 export async function getTrackAudio(
   trackId: number,
-  opts?: { wav?: boolean },
+  opts?: { wav?: boolean; preferLossyRemote?: boolean },
 ): Promise<TrackAudio | null | typeof AUDIO_BUSY> {
   const track = await prisma.track.findUnique({
     where: { id: trackId },
@@ -220,7 +264,7 @@ export async function getTrackAudio(
   });
   if (!track || !track.album?.owned) return null;
 
-  const format = resolvePlaybackFormat(track.codec);
+  const format = resolvePlaybackFormat(track.codec, { preferLossyRemote: opts?.preferLossyRemote });
   if (!format) return null;
 
   const musicPath = process.env.MUSIC_PATH;
@@ -270,6 +314,19 @@ export async function getTrackAudio(
 
   // Streams straight from ffmpeg's stdout: the slot is held until the child
   // exits (or fails to start).
+  if (format.kind === "aac-remote") {
+    const stream = await aacRemoteStream(absPath, musicRoot, release);
+    if (!stream) {
+      release();
+      return null;
+    }
+    return {
+      stream,
+      contentType: "audio/mp4",
+      filename: track.fileName.replace(/\.[^./\\]+$/, "") + ".m4a",
+    };
+  }
+
   const stream = await flacRemuxStream(absPath, musicRoot, release);
   if (!stream) {
     release();

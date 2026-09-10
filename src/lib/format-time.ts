@@ -9,6 +9,23 @@ export function formatTime(secs: number | null | undefined): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+/** "Downloading 4.2 MB", or "Downloading 40%" once the response declared a
+ *  Content-Length (see PlayerLoadProgress in player-types.ts — an
+ *  ffmpeg-remuxed track streams from a live encode with no size upfront,
+ *  so `total` is often null and this falls back to a running byte count
+ *  rather than a percentage). Null input (nothing loading) reads as null,
+ *  not a placeholder string, so callers can decide whether to render
+ *  anything at all. */
+export function formatLoadProgress(progress: { loaded: number; total: number | null } | null): string | null {
+  if (!progress) return null;
+  if (progress.total && progress.total > 0) {
+    const pct = Math.min(100, Math.round((progress.loaded / progress.total) * 100));
+    return `Downloading ${pct}%`;
+  }
+  const mb = progress.loaded / (1024 * 1024);
+  return `Downloading ${mb < 0.1 ? "…" : `${mb.toFixed(1)} MB`}`;
+}
+
 /** Same, but for summing a list: "1:23:45" once it passes an hour. */
 export function formatLongTime(secs: number): string {
   const total = Math.max(0, Math.round(secs));

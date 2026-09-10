@@ -53,6 +53,7 @@ import {
   EMPTY_SNAPSHOT,
   type PlaybackContext,
   type PlayerLoadError,
+  type PlayerLoadProgress,
   type PlayerSnapshot,
   type PlayerStatus,
   type QueueEntry,
@@ -63,9 +64,11 @@ export interface EngineDeps {
   /** Construct the one AudioContext. Only ever called from a user gesture
    *  (Play) — autoplay policy requires it. */
   createContext: () => AudioContext;
-  /** Fetch + decode one track. The default hits /api/audio/<id> (FLAC)
-   *  and retries as WAV for engines whose decodeAudioData rejects FLAC. */
-  loadBuffer: (ctx: AudioContext, trackId: number) => Promise<AudioBuffer>;
+  /** Fetch + decode one track. The default hits /api/audio/<id> (FLAC, or a
+   *  small lossy remux off-LAN) and retries as WAV for engines whose
+   *  decodeAudioData rejects FLAC. onProgress, if given, is called
+   *  repeatedly while the fetch is in flight. */
+  loadBuffer: (ctx: AudioContext, trackId: number, onProgress?: (p: PlayerLoadProgress) => void) => Promise<AudioBuffer>;
 }
 
 interface ScheduleInfo {
@@ -102,7 +105,38 @@ function decodeAudioData(ctx: AudioContext, data: ArrayBuffer): Promise<AudioBuf
   });
 }
 
-async function fetchAudioBytes(url: string): Promise<ArrayBuffer> {
+// Reads the response body incrementally (rather than the simpler
+// res.arrayBuffer()) purely to report progress as it downloads — without
+// this, a large lossless file on a slow connection looks identical, byte
+// for byte, to a hung request until the whole thing lands. See the header
+// comment on why decodeAudioData still needs the complete buffer either
+// way: this doesn't make playback start any sooner, only tells the UI
+// something real is happening instead of nothing.
+async function readBytesWithProgress(res: Response, onProgress?: (p: PlayerLoadProgress) => void): Promise<ArrayBuffer> {
+  if (!res.body || !onProgress) return res.arrayBuffer();
+
+  const totalHeader = res.headers.get("Content-Length");
+  const total = totalHeader != null && Number.isFinite(Number(totalHeader)) ? Number(totalHeader) : null;
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let loaded = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    loaded += value.byteLength;
+    onProgress({ loaded, total });
+  }
+  const out = new Uint8Array(loaded);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out.buffer as ArrayBuffer;
+}
+
+async function fetchAudioBytes(url: string, onProgress?: (p: PlayerLoadProgress) => void): Promise<ArrayBuffer> {
   let res = await fetch(url);
   if (res.status === 503) {
     const secs = Number(res.headers.get("Retry-After"));
@@ -111,14 +145,19 @@ async function fetchAudioBytes(url: string): Promise<ArrayBuffer> {
     res = await fetch(url);
   }
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.arrayBuffer();
+  return readBytesWithProgress(res, onProgress);
 }
 
-/** The production loadBuffer: FLAC first (smaller over the wire); if THIS
- *  engine can't decode FLAC (Safari's decodeAudioData rejects it, with a
+/** The production loadBuffer: a small lossy remux off-LAN or FLAC on it
+ *  (smaller over the wire either way, see audio-stream.ts); if THIS engine
+ *  can't decode what it got (Safari's decodeAudioData rejects FLAC, with a
  *  null error no less), retry once as lossless WAV before giving up. */
-export function fetchAndDecode(ctx: AudioContext, trackId: number): Promise<AudioBuffer> {
-  const loadAndDecode = (url: string) => fetchAudioBytes(url).then((data) => decodeAudioData(ctx, data));
+export function fetchAndDecode(
+  ctx: AudioContext,
+  trackId: number,
+  onProgress?: (p: PlayerLoadProgress) => void,
+): Promise<AudioBuffer> {
+  const loadAndDecode = (url: string) => fetchAudioBytes(url, onProgress).then((data) => decodeAudioData(ctx, data));
   return loadAndDecode(`/api/audio/${trackId}`).catch(() => loadAndDecode(`/api/audio/${trackId}?fmt=wav`));
 }
 
@@ -163,6 +202,7 @@ export class PlayerEngine {
   private volume = DEFAULT_VOLUME;
   private context: PlaybackContext | null = null;
   private lastError: PlayerLoadError | null = null;
+  private loadProgress: PlayerLoadProgress | null = null;
 
   private readonly listeners = new Set<() => void>();
   private snapshot: PlayerSnapshot = EMPTY_SNAPSHOT;
@@ -202,6 +242,7 @@ export class PlayerEngine {
       volume: this.volume,
       context: this.context,
       lastError: this.lastError,
+      loadProgress: this.loadProgress,
     };
     for (const listener of this.listeners) listener();
   }
@@ -316,8 +357,11 @@ export class PlayerEngine {
       // the context; leave the status alone so play() is what resumes it.
       if (this.status !== "paused") this.status = "playing";
       // A real track is now audibly scheduled — any earlier load-failure
-      // banner (this one or an already-skipped one) no longer applies.
+      // banner (this one or an already-skipped one) no longer applies, and
+      // its own download (if this is the entry that was just downloading)
+      // is done.
       this.lastError = null;
+      this.loadProgress = null;
       this.emit();
     }
 
@@ -339,8 +383,21 @@ export class PlayerEngine {
     if (!ctx) return;
 
     this.pending.add(key);
+    // Only the current entry's download is worth showing — a background
+    // prefetch of the next track happens while its predecessor is already
+    // audibly playing, so there's nothing for a progress indicator to
+    // usefully tell the user there.
+    if (key === this.currentKey) this.loadProgress = null;
+    const onProgress =
+      key === this.currentKey
+        ? (p: PlayerLoadProgress) => {
+            if (session !== this.session || key !== this.currentKey) return;
+            this.loadProgress = p;
+            this.emit();
+          }
+        : undefined;
     this.deps
-      .loadBuffer(ctx, entry.trackId)
+      .loadBuffer(ctx, entry.trackId, onProgress)
       .then((buffer) => {
         this.pending.delete(key);
         if (session !== this.session || !this.wanted(key)) return;
@@ -358,6 +415,7 @@ export class PlayerEngine {
         // from "plays but no sound" without a laptop tethered to inspect
         // the console.
         this.lastError = { title: entry.title, message: err instanceof Error ? err.message : String(err) };
+        this.loadProgress = null;
         // Leave a zero-duration passthrough anchor so the chain can still
         // advance past this broken entry instead of stalling forever.
         const prevKey = this.prevKey(key) ?? NO_PREDECESSOR;
@@ -434,7 +492,10 @@ export class PlayerEngine {
       // passthrough anchor (see prefetch()'s catch) also leaves `info` set
       // but for a track that itself failed, so it must not clear the
       // banner that failure just raised.
-      if (this.sources.has(next)) this.lastError = null;
+      if (this.sources.has(next)) {
+        this.lastError = null;
+        this.loadProgress = null;
+      }
     } else {
       // Prefetch for `next` hasn't resolved yet — scheduleAt will flip this
       // back to "playing" (and set the real duration) once it does.

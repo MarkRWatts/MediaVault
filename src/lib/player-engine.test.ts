@@ -94,11 +94,15 @@ function createDeferred<T>(): Deferred<T> {
  *  track requested more than once across its life in the queue — without
  *  affecting any other in-flight fetch. */
 function createFakeLoader() {
-  const calls: { trackId: number; deferred: Deferred<AudioBuffer> }[] = [];
+  const calls: { trackId: number; deferred: Deferred<AudioBuffer>; onProgress?: (p: { loaded: number; total: number | null }) => void }[] = [];
 
-  const loadBuffer = (_ctx: AudioContext, trackId: number): Promise<AudioBuffer> => {
+  const loadBuffer = (
+    _ctx: AudioContext,
+    trackId: number,
+    onProgress?: (p: { loaded: number; total: number | null }) => void,
+  ): Promise<AudioBuffer> => {
     const deferred = createDeferred<AudioBuffer>();
-    calls.push({ trackId, deferred });
+    calls.push({ trackId, deferred, onProgress });
     return deferred.promise;
   };
 
@@ -113,8 +117,13 @@ function createFakeLoader() {
     nthFor(trackId, n).resolve({ duration: durationSecs } as unknown as AudioBuffer);
   const reject = (trackId: number, err: unknown = new Error("load failed"), n = 0) =>
     nthFor(trackId, n).reject(err);
+  const progress = (trackId: number, loaded: number, total: number | null, n = 0) => {
+    const c = callsFor(trackId)[n];
+    if (!c) throw new Error(`no loadBuffer call #${n} for trackId ${trackId}`);
+    c.onProgress?.({ loaded, total });
+  };
 
-  return { loadBuffer, calls, countFor, resolve, reject };
+  return { loadBuffer, calls, countFor, resolve, reject, progress };
 }
 
 /** Flush every pending microtask (a real macrotask tick guarantees every
@@ -301,6 +310,36 @@ describe("PlayerEngine", () => {
     const snap = engine.getSnapshot();
     expect(snap.status).toBe("playing");
     expect(snap.lastError).toBeNull();
+  });
+
+  it("surfaces loadProgress for the current track's fetch and clears it once scheduled", async () => {
+    const t1 = makeTrack();
+    engine.playTracks([t1]);
+    expect(engine.getSnapshot().loadProgress).toBeNull();
+
+    loader.progress(t1.trackId, 1024, 4096);
+    expect(engine.getSnapshot().loadProgress).toEqual({ loaded: 1024, total: 4096 });
+
+    loader.progress(t1.trackId, 4096, 4096);
+    expect(engine.getSnapshot().loadProgress).toEqual({ loaded: 4096, total: 4096 });
+
+    loader.resolve(t1.trackId, 180);
+    await flush();
+    expect(engine.getSnapshot().loadProgress).toBeNull();
+  });
+
+  it("does not surface progress for a background prefetch of a track that isn't current yet", async () => {
+    const t1 = makeTrack();
+    const t2 = makeTrack();
+    engine.playTracks([t1, t2]);
+    loader.resolve(t1.trackId, 100);
+    await flush();
+    // t2 is now being prefetched in the background while t1 plays.
+    expect(loader.countFor(t2.trackId)).toBe(1);
+
+    loader.progress(t2.trackId, 500, 2000);
+    // t1 is still current — t2's own download isn't shown.
+    expect(engine.getSnapshot().loadProgress).toBeNull();
   });
 
   it("dismissError clears lastError and is a no-op once already clear", async () => {

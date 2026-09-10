@@ -27,7 +27,7 @@ import {
   RepeatIcon,
   VolumeIcon,
 } from "@/components/player/icons";
-import { formatTime } from "@/lib/format-time";
+import { formatTime, formatLoadProgress } from "@/lib/format-time";
 import type { PlaybackContext } from "@/lib/player-types";
 
 function contextLabel(context: PlaybackContext | null): string | null {
@@ -102,6 +102,11 @@ export function NowPlayingCard() {
   const isPlaying = snapshot.status === "playing" || snapshot.status === "loading";
   const isIdle = snapshot.status === "idle";
   const label = contextLabel(snapshot.context);
+  // See mobile-player-bar.tsx's comment: "loading" looks identical to
+  // "playing" everywhere else in this component (same pause icon, same
+  // progress-bar slider), so this is the one place that tells a slow
+  // download apart from actual silent playback.
+  const loadingLabel = snapshot.status === "loading" ? (formatLoadProgress(snapshot.loadProgress) ?? "Loading…") : null;
 
   function seekToClientX(clientX: number) {
     const el = trackRef.current;
@@ -150,7 +155,11 @@ export function NowPlayingCard() {
           <span className="text-format-digital">{current.artist}</span>
           <span className="text-text-muted"> · {current.albumTitle}</span>
         </p>
-        {label && <p className="mt-0.5 truncate text-[11px] text-text-faint">Playing from {label}</p>}
+        {loadingLabel ? (
+          <p className="mt-0.5 truncate text-[11px] text-format-digital">{loadingLabel}</p>
+        ) : (
+          label && <p className="mt-0.5 truncate text-[11px] text-text-faint">Playing from {label}</p>
+        )}
       </div>
 
       <div className="flex shrink-0 items-center justify-center gap-4">
