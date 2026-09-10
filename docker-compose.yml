@@ -72,6 +72,11 @@ services:
       # but setting one raises the rate limit (25/min -> 60/min), strongly
       # recommended before a full-catalogue Enrich Music pass.
       DISCOGS_TOKEN: ${DISCOGS_TOKEN:-}
+      # Spotify artist photos (see src/lib/spotify.ts) — optional, the
+      # primary artist-photo source when both are set (Client Credentials
+      # flow, a free Spotify Developer app). Leave blank to skip this tier.
+      SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID:-}
+      SPOTIFY_CLIENT_SECRET: ${SPOTIFY_CLIENT_SECRET:-}
       # Artist bio/photo/backdrop enrichment (see src/lib/artist-bio.ts).
       # AUDIODB_API_KEY is optional (falls back to the shared public test
       # key); FANART_API_KEY is optional too but strictly required for any
