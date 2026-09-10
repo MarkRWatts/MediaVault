@@ -17,7 +17,7 @@ import type { AlbumKind } from "@/lib/constants";
 import { MUSIC_GAP_MIN_OWNED, MUSIC_GAP_MIN_PCT } from "@/lib/constants";
 import { guardAndCreateRun, updateProgress, finishRun, failRun } from "@/lib/runs";
 import { fetchCover, fetchDiscogsPhysicalCopyCover, fetchDiscogsAlbumCover } from "@/lib/cover-art";
-import { fetchArtistEnrichment } from "@/lib/artist-bio";
+import { fetchArtistEnrichment, type DiscogsArtistData } from "@/lib/artist-bio";
 
 const DISCOGS_API_BASE = "https://api.discogs.com";
 const USER_AGENT = "MediaVault/1.4 (https://github.com/MarkRWatts/MediaVault)";
@@ -1110,14 +1110,63 @@ async function reconcileArtistAlbums(artistId: number, artistName: string, log: 
 // --- Per-artist driver ---
 
 /**
+ * Discogs' own artist photos/bio via GET /artists/{id} — a plain endpoint
+ * this app otherwise never calls (matching/discography only ever hits
+ * /database/search, /releases/{id} and /masters/{id}). Only usable once an
+ * artist already has a resolved discogsId (see matchArtist/enrichOneArtist)
+ * — that id is what makes this disambiguation-safe: a name search for e.g.
+ * "Kebu" also returns an unrelated same-named rapper with no images, but by
+ * the time this runs the artist row already points at the correct one.
+ *
+ * Discogs profile text uses its own bbcode-like markup — [a=Name]/[l=Name]
+ * artist/label links, and bare [a12345] id-only refs when Discogs has no
+ * name cached inline — stripped to plain text since this becomes
+ * Artist.bio, shown to users verbatim.
+ */
+async function fetchDiscogsArtistImages(discogsId: number): Promise<DiscogsArtistData | null> {
+  try {
+    const data = (await discogsFetch(`/artists/${discogsId}`)) as {
+      profile?: string;
+      images?: { type?: string; uri?: string }[];
+    } | null;
+    if (!data) return null;
+    const images = data.images ?? [];
+    const primary = images.filter((i) => i.type === "primary");
+    const secondary = images.filter((i) => i.type !== "primary");
+    const imageUrls = [...primary, ...secondary].map((i) => i.uri).filter((u): u is string => Boolean(u));
+    const profile = data.profile ? stripDiscogsMarkup(data.profile) : null;
+    return { profile: profile || null, imageUrls };
+  } catch {
+    return null;
+  }
+}
+
+function stripDiscogsMarkup(text: string): string {
+  return text
+    .replace(/\r\n/g, "\n")
+    .replace(/\[url=[^\]]+\]([^[]*)\[\/url\]/gi, "$1")
+    .replace(/\[(?:a|l|m|r|f)=([^\]]+)\]/gi, "$1")
+    .replace(/\[(?:a|l|m|r|f)\d+\]/gi, "") // bare id-only ref, no name cached — drop entirely
+    .replace(/\[\/?[a-z]+\]/gi, "")
+    .replace(/ +,/g, ",") // tidies the "by ," left by a dropped bare id-ref right after a leading word
+    .trim();
+}
+
+/**
  * Roon-style bio/photo/backdrop, best-effort — see fetchArtistEnrichment.
  * TheAudioDB and Fanart.tv are keyed by a MusicBrainz artist id, which no
  * longer exists in this app — always passes null, which fetchArtistEnrichment
- * already treats as "skip those tiers, Wikipedia-by-name only" (a known,
- * accepted regression from the MusicBrainz-to-Discogs cutover, left
- * out of scope for this migration — see PLAN.md).
+ * already treats as "skip those tiers". Discogs (see fetchDiscogsArtistImages
+ * above) needs no mbid at all, so it's the primary source in practice now;
+ * Wikipedia-by-name remains the last-resort fallback when an artist has no
+ * discogsId (e.g. unmatched artists).
  */
-async function enrichArtistBioAndImages(artistId: number, artistName: string, log: string[]): Promise<void> {
+async function enrichArtistBioAndImages(
+  artistId: number,
+  artistName: string,
+  discogsId: number | null,
+  log: string[],
+): Promise<void> {
   const current = await prisma.artist.findUnique({
     where: { id: artistId },
     select: { bio: true, bioSource: true, photoPath: true, photoSource: true, backdropPath: true, backdropSource: true },
@@ -1130,7 +1179,8 @@ async function enrichArtistBioAndImages(artistId: number, artistName: string, lo
   if (!needsBio && !needsPhoto && !needsBackdrop) return;
 
   try {
-    const result = await fetchArtistEnrichment({ id: artistId, mbid: null, name: artistName, needsBio, needsPhoto, needsBackdrop });
+    const discogs = discogsId && (needsBio || needsPhoto) ? await fetchDiscogsArtistImages(discogsId) : null;
+    const result = await fetchArtistEnrichment({ id: artistId, mbid: null, name: artistName, needsBio, needsPhoto, needsBackdrop, discogs });
     const data: Record<string, string> = {};
     if (result.bio) {
       data.bio = result.bio.text;
@@ -1185,12 +1235,12 @@ async function enrichOneArtist(artist: Artist, log: string[]): Promise<void> {
     // manually-matched album (POST /api/album-match) has its own identity
     // regardless of whether the artist itself is matched.
     await fetchMissingCoversForArtist(artist.id, artist.name, log);
-    await enrichArtistBioAndImages(artist.id, artist.name, log);
+    await enrichArtistBioAndImages(artist.id, artist.name, null, log);
     return;
   }
 
   await reconcileArtistAlbums(artist.id, artist.name, log);
-  await enrichArtistBioAndImages(artist.id, artist.name, log);
+  await enrichArtistBioAndImages(artist.id, artist.name, discogsId, log);
 }
 
 async function doMusicEnrich(runId: number): Promise<void> {

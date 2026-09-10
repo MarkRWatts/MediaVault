@@ -22,6 +22,7 @@ function ArtistCard({ artist, variousAlbumCount }: { artist: MusicIndexArtist; v
       className="hover-lift group flex flex-col overflow-hidden rounded-lg border border-border bg-bg-elevated"
     >
       <CoverImage
+        src={artist.hasPhoto ? `/api/artist-image/${artist.id}/photo` : null}
         albumId={artist.coverAlbumId}
         version={artist.coverVersion}
         title={artist.name}

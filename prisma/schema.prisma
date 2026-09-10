@@ -280,13 +280,15 @@ model Artist {
   // Roon-style enrichment (see artist-bio.ts) — best-effort, multi-source,
   // cached like Album.coverPath. TheAudioDB/Fanart.tv were keyed by a
   // MusicBrainz artist id and no longer run post-Discogs-cutover (see
-  // artist-bio.ts) — only the Wikipedia-by-name tier remains. Null simply
+  // artist-bio.ts); Discogs' own /artists/{id} (needs no mbid, only the
+  // artist's already-resolved discogsId) is the primary source in practice
+  // now, with Wikipedia-by-name as the last-resort fallback. Null simply
   // means "not fetched yet" or "no source had anything", same convention as
   // the rest of this app's enrichment fields — never blocks anything.
   bio            String? // biography text
-  bioSource      String? // theaudiodb | wikipedia | manual
+  bioSource      String? // theaudiodb | discogs | wikipedia | manual
   photoPath      String? // cached portrait/thumb image, relative to POSTER_CACHE_DIR/artists/
-  photoSource    String? // theaudiodb | fanart | wikipedia | manual
+  photoSource    String? // theaudiodb | discogs | fanart | wikipedia | manual
   backdropPath   String? // cached wide background/banner image, relative to POSTER_CACHE_DIR/artists/
   backdropSource String? // fanart | theaudiodb | manual
 

@@ -9,6 +9,12 @@
 //    MusicBrainz artist id. No signup needed at this app's scale — the
 //    shared public test key "2" works fine; set AUDIODB_API_KEY to use a
 //    personal one instead.
+//  - Discogs (bio + photo), passed in by the caller (see discogs.ts's
+//    fetchDiscogsArtistImages) rather than fetched here — it already has the
+//    artist's resolved Discogs id from the matching pipeline, so there's no
+//    name-search/disambiguation to do in this module. In practice this is
+//    the primary source today: it needs no MusicBrainz id at all, unlike the
+//    two tiers above and below it.
 //  - Fanart.tv (better backdrop art specifically) — strictly requires a
 //    free personal API key, no shared key exists, so this is skipped
 //    entirely unless FANART_API_KEY is set.
@@ -33,8 +39,15 @@ const ARTISTS_DIR = path.join(POSTER_CACHE_DIR, "artists");
 // download or a tiny placeholder served on a technicality 200.
 const MIN_IMAGE_BYTES = 5 * 1024;
 
-export type BioSource = "theaudiodb" | "wikipedia" | "manual";
-export type ImageSource = "theaudiodb" | "fanart" | "wikipedia" | "manual";
+export type BioSource = "theaudiodb" | "discogs" | "wikipedia" | "manual";
+export type ImageSource = "theaudiodb" | "discogs" | "fanart" | "wikipedia" | "manual";
+
+/** Pre-fetched by the caller (discogs.ts already knows the artist's resolved
+ *  Discogs id) rather than looked up here — see fetchArtistEnrichment. */
+export interface DiscogsArtistData {
+  profile: string | null;
+  imageUrls: string[]; // primary image(s) first, then secondary
+}
 
 async function getJson(url: string): Promise<unknown> {
   const res = await fetch(url, { headers: { "User-Agent": USER_AGENT }, signal: AbortSignal.timeout(30_000) });
@@ -138,6 +151,7 @@ export interface ArtistEnrichmentTarget {
   needsBio: boolean;
   needsPhoto: boolean;
   needsBackdrop: boolean;
+  discogs?: DiscogsArtistData | null;
 }
 
 export interface ArtistEnrichmentResult {
@@ -158,6 +172,7 @@ export async function fetchArtistEnrichment(target: ArtistEnrichmentTarget): Pro
 
   const audioDb = target.mbid ? await fetchAudioDbArtist(target.mbid) : null;
   const fanart = target.mbid ? await fetchFanartArtist(target.mbid) : null;
+  const discogs = target.discogs ?? null;
   // Wikipedia is a single request that can serve both bio and photo — only
   // fetch it once, lazily, and only if something still needs it.
   let wikipedia: WikipediaSummary | null | undefined;
@@ -169,6 +184,8 @@ export async function fetchArtistEnrichment(target: ArtistEnrichmentTarget): Pro
   if (target.needsBio) {
     if (audioDb?.bio) {
       result.bio = { text: audioDb.bio, source: "theaudiodb" };
+    } else if (discogs?.profile) {
+      result.bio = { text: discogs.profile, source: "discogs" };
     } else {
       const wiki = await getWikipedia();
       if (wiki?.extract) result.bio = { text: wiki.extract, source: "wikipedia" };
@@ -176,8 +193,15 @@ export async function fetchArtistEnrichment(target: ArtistEnrichmentTarget): Pro
   }
 
   if (target.needsPhoto) {
-    const url = audioDb?.thumbUrl || fanart?.thumbUrls[0] || (await getWikipedia())?.thumbnailUrl;
-    const source: ImageSource = audioDb?.thumbUrl ? "theaudiodb" : fanart?.thumbUrls[0] ? "fanart" : "wikipedia";
+    const discogsPhoto = discogs?.imageUrls[0];
+    const url = audioDb?.thumbUrl || discogsPhoto || fanart?.thumbUrls[0] || (await getWikipedia())?.thumbnailUrl;
+    const source: ImageSource = audioDb?.thumbUrl
+      ? "theaudiodb"
+      : discogsPhoto
+        ? "discogs"
+        : fanart?.thumbUrls[0]
+          ? "fanart"
+          : "wikipedia";
     if (url) {
       const buf = await downloadImage(url);
       if (buf) result.photo = { fileName: await cacheArtistImage(target.id, "photo", buf), source };

@@ -68,6 +68,11 @@ export interface MusicIndexArtist {
    *  keeps per-width/per-format derivatives keyed by URL, so the URL must
    *  change when the cover does. Null when coverAlbumId is null. */
   coverVersion: number | null;
+  /** True when Roon-style enrichment (artist-bio.ts) found a real artist
+   *  portrait — the card prefers this over coverAlbumId's CD/album art when
+   *  set. Served at /api/artist-image/<id>/photo, which is already
+   *  ETag-validated, so no separate cache-buster is needed here. */
+  hasPhoto: boolean;
 }
 
 export interface MusicIndexData {
@@ -90,6 +95,7 @@ const INDEX_ARTIST_SELECT = {
   sortName: true,
   various: true,
   studioTotal: true,
+  photoPath: true,
   albums: {
     select: {
       id: true,
@@ -108,6 +114,7 @@ type IndexArtistRow = {
   name: string;
   various: boolean;
   studioTotal: number | null;
+  photoPath: string | null;
   albums: {
     id: number;
     kind: string;
@@ -135,6 +142,7 @@ function shapeIndexArtist(a: IndexArtistRow): MusicIndexArtist {
     totalStudio: Math.max(a.studioTotal ?? 0, studioAlbums.length),
     coverAlbumId,
     coverVersion: coverAlbum ? coverAlbum.updatedAt.getTime() : null,
+    hasPhoto: a.photoPath != null,
   };
 }
 
