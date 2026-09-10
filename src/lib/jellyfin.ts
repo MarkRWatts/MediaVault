@@ -525,6 +525,29 @@ async function resolveJellyfinUserId(email: string): Promise<string | null> {
   return match?.Id ?? null;
 }
 
+// Resolves and caches a user's Jellyfin identity if it isn't already known.
+// Was previously inlined into syncJellyfinAdultAccess, which made it look
+// like an adult-access-only concern -- it isn't: startJellyfinPlayback (see
+// jellyfin-playback.ts) needs the same id to pass Jellyfin 12's now-mandatory
+// PlaybackInfo UserId, for any member regardless of adult access, so
+// jf-viewer.ts's currentViewer() calls this too.
+export async function linkJellyfinUserId(user: { id: string; email: string; jellyfinUserId: string | null }): Promise<string | null> {
+  if (user.jellyfinUserId) return user.jellyfinUserId;
+  if (!jellyfinConfigured()) return null;
+  try {
+    const jellyfinUserId = await resolveJellyfinUserId(user.email);
+    if (!jellyfinUserId) return null;
+    await prisma.user.update({ where: { id: user.id }, data: { jellyfinUserId } });
+    return jellyfinUserId;
+  } catch (err) {
+    // Called from currentViewer() on effectively every page load -- Jellyfin
+    // being briefly unreachable must never take the rest of the app down
+    // with it, so this degrades to "not linked yet" and self-heals next call.
+    console.error("[jellyfin] failed to resolve Jellyfin user id:", err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
+
 export async function syncJellyfinAdultAccess(
   user: { id: string; email: string; jellyfinUserId: string | null },
   enabled: boolean,
@@ -535,12 +558,8 @@ export async function syncJellyfinAdultAccess(
   if (!folderId) return { status: "error", message: "ADULT_JELLYFIN_FOLDER_ID is not set" };
 
   try {
-    let jellyfinUserId = user.jellyfinUserId;
-    if (!jellyfinUserId) {
-      jellyfinUserId = await resolveJellyfinUserId(user.email);
-      if (!jellyfinUserId) return { status: "not-linked" };
-      await prisma.user.update({ where: { id: user.id }, data: { jellyfinUserId } });
-    }
+    const jellyfinUserId = await linkJellyfinUserId(user);
+    if (!jellyfinUserId) return { status: "not-linked" };
 
     const jfUser: JellyfinUser = await jellyfinRequest("GET", `/Users/${jellyfinUserId}`);
     const policy = jfUser.Policy;

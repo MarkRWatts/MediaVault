@@ -8,6 +8,7 @@ import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { jellyfinDeviceId } from "@/lib/jellyfin-playback";
+import { linkJellyfinUserId } from "@/lib/jellyfin";
 
 export interface Viewer {
   userId: string;
@@ -19,8 +20,13 @@ export async function currentViewer(): Promise<Viewer | null> {
   const session = await auth.api.getSession({ headers: await headers() });
   const userId = session?.user?.id;
   if (!userId) return null;
-  const user = await prisma.user.findUnique({ where: { id: userId }, select: { jellyfinUserId: true } });
-  return { userId, jellyfinUserId: user?.jellyfinUserId ?? null, deviceId: jellyfinDeviceId(userId) };
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, jellyfinUserId: true } });
+  if (!user) return null;
+  // Jellyfin 12's PlaybackInfo now rejects requests with no UserId, so every
+  // viewer needs their Jellyfin id resolved here, not just the ones who've
+  // toggled adult access (the only prior path that cached it).
+  const jellyfinUserId = await linkJellyfinUserId({ id: userId, email: user.email, jellyfinUserId: user.jellyfinUserId });
+  return { userId, jellyfinUserId, deviceId: jellyfinDeviceId(userId) };
 }
 
 export async function jellyfinItemForVersion(versionId: number): Promise<string | null> {
