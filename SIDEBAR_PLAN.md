@@ -6,7 +6,7 @@ apps share one shell. Drafted 2026-09-09. **Status:** PR 1 (shell swap)
 merged as #68 the same day, with decision 1 resolved as "retire
 UserMenu"; PR 2 (library grids on container queries against `<main>`)
 built on `claude/grid-container-queries` — it also converted the
-collections, music, adult, report and stats ladders, not just
+collections, music, report and stats ladders, not just
 `CARD_COLUMNS`, since the rail squeezes them all the same way.
 
 This reverses the "deliberately not adopted from the template" note in
@@ -53,8 +53,7 @@ right width.
   set by `src/proxy.ts` and hides `<Nav />` when `isPreAuthPath()` matches
   (`/signin`, `/signup`, `/invite/*`). `/consent` and `/onboarding` get
   the header today even though they are card pages.
-- `src/components/Nav.tsx` (server, one Prisma read for `isAppOwner` and
-  `adultLibraryAccess`), `NavLinks.tsx` (client, active state), and
+- `src/components/Nav.tsx` (server, one Prisma read for `isAppOwner`), `NavLinks.tsx` (client, active state), and
   `UserMenu.tsx` (dropdown with Account / Admin / Sign out, shipped in
   PR #67).
 - Mobile is a wrapping header row with a horizontally scrolling link strip.
@@ -79,7 +78,6 @@ Primary rows, in sidebar order:
 | `/music` | Music | `Disc3` | always |
 | `/collections` | Collections | `Library` | always |
 | `/stats` | Stats | `ChartColumn` | always |
-| `/adult` | Adult | `EyeOff` | `User.adultLibraryAccess` |
 
 Owner rows (second group, tinted like Jingle Jotter's, only when `User.isAppOwner`):
 
@@ -93,14 +91,14 @@ Bottom of the rail: avatar + name linking to `/account`, exactly as the
 siblings do. Sign out already lives on `/account` (`SignOutButton`).
 
 Mobile tabs: Movies, Shows, Music, Collections, More. "More" holds Stats,
-Adult (gated), Scan / Report / Admin (gated), then Account after the divider.
+Scan / Report / Admin (gated), then Account after the divider.
 
-Because two groups are gated, `nav-items.ts` exports a
-`navItemsFor({ isOwner, hasAdultAccess })` helper that returns
+Because the owner group is gated, `nav-items.ts` exports a
+`navItemsFor(flags)` helper that returns
 `{ primary, owner, mobileTabs, more }`, and both `Sidebar` and `BottomTabs`
 take the flags as props from `AppShell`. That keeps the visibility rule in
 one file and unit-testable. As today, these are UX niceties; the pages'
-`requireOwnerOrRedirect` / `requireAdultAccessOrRedirect` remain the
+`requireOwnerOrRedirect` and friends on the pages remain the
 security boundary.
 
 `/music/formats` is not in the nav today and stays out; it is reached from
@@ -135,7 +133,7 @@ only for this check. Do **not** introduce `(app)` / `(auth)` route groups:
 relative to `src/app` and asserts those files exist.
 
 `AppShell` does one Prisma read per request, replacing `Nav.tsx`'s:
-`{ name, email, image, isAppOwner, adultLibraryAccess, sidebarCollapsed }`.
+`{ name, email, image, isAppOwner, sidebarCollapsed }`.
 
 ### Tokens
 
@@ -198,10 +196,7 @@ the nav is hidden on `/consent`.
    alternative is mounting `UserMenu` at the rail's bottom with the panel
    opening upward, which keeps the one-click sign-out but diverges from the
    other apps. Either way `scripts/e2e-passkey.ts` changes (below).
-2. **Adult row on mobile.** It is gated, but "More" is a shared-device
-   surface. Recommended: keep it in More, gated the same way, since the
-   opt-in is per-user and the pages redirect anyway.
-3. **Global search.** The roadmap's search box is a natural fit for the top
+2. **Global search.** The roadmap's search box is a natural fit for the top
    of the expanded rail (and a magnifier row when collapsed). Not in scope,
    but leave the brand block's markup simple enough to slot it in.
 
@@ -243,7 +238,7 @@ the rail expanded and collapsed.
 
 - New `src/components/shell/nav-items.test.ts`: `isNavItemActive` cases
   (`/` exact, prefix elsewhere, `/music/album/x` → Music) and `navItemsFor`
-  gating (owner rows only with `isOwner`, Adult only with `hasAdultAccess`).
+  gating (owner rows only with `isOwner`).
 - `scripts/e2e-passkey.ts` lines 173–176 open the account menu and click
   "Sign out"; change to navigate to `/account` and click the Sign out
   button. Line 295 asserts `>= 2` Sign out buttons on the stale page and

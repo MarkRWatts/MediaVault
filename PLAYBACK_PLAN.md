@@ -80,9 +80,7 @@ served straight from the share with byte ranges. HLS only replaces the
 
 ### Routes
 
-Films (`/api/video/[versionId]/…`) and scenes (`/api/adult-video/[sceneId]/…`)
-get the same three additions, scenes behind `requireAdultAccessOrResponse`
-as today:
+Films (`/api/video/[versionId]/…`) get three additions:
 
 - `GET hls/[variant]/index.m3u8` — self-starting like `/stream` today: kicks
   off the prepare if nothing's cached or running, waits for the playlist to
@@ -192,7 +190,7 @@ deploy to prepare again.
 
 | Phase | Work | Est. |
 |---|---|---|
-| A ✅ | **Server: HLS output.** `buildFfmpegArgs` grows a target (`{ kind: "hls", dir }`) and a variant; `video-cache.ts` moves to directory entries with the `.complete` marker, orphan rule, and budget accounting; playlist + segment routes for films and scenes, self-starting playlist; `/stream` reduced to direct-play. Unit tests for args and filename validation; the real-ffmpeg integration test asserts a playlist, an init segment, ≥1 media segment, `ENDLIST` on completion, and the orphan/make-room behaviour on directories. | 1 day |
+| A ✅ | **Server: HLS output.** `buildFfmpegArgs` grows a target (`{ kind: "hls", dir }`) and a variant; `video-cache.ts` moves to directory entries with the `.complete` marker, orphan rule, and budget accounting; playlist + segment routes for films, self-starting playlist; `/stream` reduced to direct-play. Unit tests for args and filename validation; the real-ffmpeg integration test asserts a playlist, an init segment, ≥1 media segment, `ENDLIST` on completion, and the orphan/make-room behaviour on directories. | 1 day |
 | B ✅ | **Player: native HLS or hls.js**, tier-based source selection, handoff URL change, quality control with per-device memory and the stall hint. Playwright e2e (Chromium → hls.js path) against a synthetic film: plays, seeks while preparing, switches quality preserving time. | 1 day |
 | C ✅ | **Remote variant** args and key; status per variant; README/DEPLOYMENT notes (CPU expectation, cache-clear on deploy). | 0.5 day |
 | D ⏳ | **Verification on real hardware**: Safari on the Mac and the iPhone over Tailscale from outside the LAN (the case that motivated this), tvOS handoff, a DVD-era MPEG-2 source (video transcode path), a Blu-ray remux with TrueHD (audio transcode path). | 0.5 day |
@@ -207,7 +205,9 @@ position, direct play by byte range). D is the manual pass in
 ## Status (5 Sep 2026)
 
 In-app playback now goes through Jellyfin for every Version the sync has
-matched to a Jellyfin item (`src/lib/jellyfin-playback.ts`, the
+matched to a Jellyfin item — and, since the same day, for every TV
+episode file too (`/api/tv-video/<id>/jf/*`, a Play button on each
+episode row, per-episode progress and a continue-watching row on Shows) (`src/lib/jellyfin-playback.ts`, the
 `/api/video/<id>/jf/*` routes, `VideoPlayer` in `source="jellyfin"`
 mode). A day of production testing showed this app's own
 streaming-while-preparing design working but living at its limits: a

@@ -1,8 +1,7 @@
 // Transactional email sending — ported from jinglejotter.com's
 // lib/email.ts `sendEmail()` (same provider: Resend, plain `fetch`, no SDK
-// dependency). Phase 1.5 of HOUSEHOLDS_PLAN.md: this is standalone plumbing,
-// not yet wired into anything — Phase 3's `emailOTP` plugin config will
-// import this into its `sendVerificationOTP` callback to actually send sign-in
+// dependency). Phase 1.5 of HOUSEHOLDS_PLAN.md. Used by src/lib/otp-email.ts
+// (the `emailOTP` plugin's `sendVerificationOTP` callback) to send sign-in
 // codes. Deliberately skips jinglejotter's branded-HTML-email template system
 // (cream/berry Christmas chrome, logo asset) — that's cosmetic and specific to
 // that app; callers here just pass their own html/text.

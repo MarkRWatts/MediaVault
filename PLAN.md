@@ -1,231 +1,228 @@
-# MediaVault — Plan
+# MediaVault — Architecture and current state
 
-A good-looking web app + lightweight database indexing the DVD/BluRay rips in
-a NAS SMB share (mounted at `/Volumes/media/Movies` on the Mac;
-the deploy VM mounts the same SMB share and the container sees it read-only at
-`/movies` via `MOVIES_PATH`).
+Last reviewed 10 September 2026. This is the map of how the app is built
+today and what is still worth building. The design records for the larger
+rollouts are separate files (`HOUSEHOLDS_PLAN.md`, `PASSKEYS_PLAN.md`,
+`PLAYBACK_PLAN.md`, `PLAYLISTS_PLAN.md`, `SIDEBAR_PLAN.md`); this file
+summarises the result rather than the path.
 
-> **Status (2026-09):** everything below through "Build order" is the
-> original film-only plan, kept as the record of the founding decisions. The
-> app has since grown TV shows, a Discogs-backed music library with physical
-> pressings, an opt-in Adult media type, barcode scanning, in-browser video
-> and gapless audio playback, households with email-code and passkey sign-in,
-> Jellyfin SSO, and per-member watch history — see README.md for the current
-> feature list, `HOUSEHOLDS_PLAN.md` and `PASSKEYS_PLAN.md` for those
-> rollouts. The two "Future" sections at the end are updated to what
-> actually shipped, and **"Roadmap"** below them is the current list of
-> what's worth building next.
+## Purpose
+
+One shared catalogue of a household's DVD/Blu-ray rips, TV box sets and
+music, indexed from a NAS SMB share that Jellyfin also serves. The
+founding decisions still hold: ground truth comes from the files
+themselves (ffprobe, not filenames), metadata is enriched from public APIs
+and cached locally so the app is self-contained afterwards, "missing"
+items are real rows so gaps can be browsed like owned items, and the UI is
+dark and poster-forward.
 
 ## Stack
 
-- **Next.js 16** (App Router, TypeScript, Tailwind) — same family as jobAppTracker.
-- **SQLite + Prisma** — "lightweight database"; single file in a Docker volume,
-  `prisma migrate deploy` at boot exactly like jobAppTracker. No db container.
-- **ffprobe** (from the `ffmpeg` apk package in the runtime image) for ground
-  truth: width/height, audio streams (multiple soundtracks), duration, size.
-  Local dev without ffprobe on PATH falls back to
-  `docker run --entrypoint /ffprobe mwader/static-ffmpeg` (verified working
-  against the share).
-- **TMDB API** (free key, `TMDB_API_KEY` env) for enrichment: posters, overview,
-  release dates, and crucially `belongs_to_collection` → the canonical list of
-  films in each collection, which is what powers "missing film" detection.
-  Posters are cached to a local volume so the app is self-contained after
-  enrichment. The app degrades gracefully with no key (scan-only data).
+- **Next.js 16** App Router with React 19 and TypeScript. Server
+  Components read Prisma directly; mutations are server actions or route
+  handlers. `src/proxy.ts` (this Next.js version's middleware) gates every
+  request on a signed session cookie. Read the guides in
+  `node_modules/next/dist/docs/` before writing Next code; this version
+  differs from older conventions.
+- **Prisma 7 + SQLite** through `@prisma/adapter-better-sqlite3`. One
+  database file in the data volume, `prisma migrate deploy` at boot, 36
+  migrations to date. Generated client lives in `src/generated/prisma`.
+- **Tailwind 4** with the app's own dark tokens; container queries size the
+  poster grids to the width beside the sidebar and rail.
+- **BetterAuth 1.7** with the `emailOTP`, `organization` (renamed to
+  Household/Member/Invitation), `passkey`, `jwt` and `oauthProvider`
+  plugins. Resend sends the sign-in codes.
+- **ffprobe/ffmpeg** in the runtime image; local dev without them shells
+  out through `FFPROBE_DOCKER_IMAGE`.
+- **External APIs**: TMDB (films, shows, collections, certificates),
+  Discogs (all music metadata, barcodes, pressings), Spotify (artist
+  photos), Wikipedia (artist biography fallback), UPCitemdb (movie
+  barcodes), Jellyfin (playback, library sync, SSO).
+- **Client libraries**: hls.js for video on non-Apple browsers, the Web
+  Audio API for music, `@zxing/browser` for the camera barcode scanner,
+  lucide-react icons.
 
 ## Data model
 
-- `Film` — one movie identity. `title`, `year`, `imdbId?`, `tmdbId?`, enrichment
-  fields (overview, posterPath, releaseDate, runtime, rating), `collectionId?`,
-  `owned` flag. **Missing films are rows too** (`owned=false`), created from
-  TMDB collection parts we don't have on disk.
-- `Version` — one file on disk, belongs to a Film. `filePath`, `edition?`
-  ("Theatrical Release", "2003 Directors Cut", "Extended Edition"…), `width`,
-  `height`, `format` (**BLURAY** if height ≥ 720, **DVD** if ≤ 576, else SD/HD
-  judgement), `sizeBytes`, `durationSecs`, `videoCodec`, `container`.
-- `AudioTrack` — per Version: codec, language, channels, title ("Surround 5.1").
-- `Collection` — TMDB collection: name, posterPath, overview. Films ordered by
-  release date = timeline order.
-- `ScanRun` — bookkeeping: started/finished, files seen, unmatched names.
+Shared library (nothing here is per user):
 
-Identity/merge rule: group files into one Film by `imdbId` when present, else
-normalised `title+year` (Alien theatrical + director's cut = 1 film, 2 versions;
-a DVD and a BluRay rip of the same film = 1 film, 2 versions).
+- **Films**: `Film` (one identity, owned or missing), `Version` (one file
+  on disk with format, resolution, codec, HDR range, Jellyfin id),
+  `AudioTrack` (per version, with default and audio-description
+  dispositions), `FilmPhysicalCopy` (a DVD, Blu-ray or UHD disc on the
+  shelf, independent of any rip), `Collection` (TMDB collection).
+- **TV**: `Show`, `ShowSeason`, `Episode` (owned or missing, disc-order
+  numbering), `EpisodeFile` (file with specs and Jellyfin id).
+- **Music**: `Artist` (Discogs id, Spotify id, photo, bio), `Album` (owned
+  or a Discogs back-catalogue placeholder; cover art, digital source,
+  Discogs identity), `Track` (file, codec, bit depth, sample rate),
+  `PhysicalCopy` (a CD or vinyl pressing, optionally linked to its own
+  Discogs release), `PhysicalTrack` (that pressing's tracklist).
+- **Runs**: `ScanRun` (one row per scan, enrich or sync run, with progress
+  and a JSON log), `ScanQueueItem` (barcodes scanned but not yet resolved,
+  shared across devices).
 
-## Scanner (server-side, triggered from UI + on first boot)
+Accounts and access (BetterAuth-generated plus app additions):
 
-1. Walk `MOVIES_PATH` (depth ≤ 3 — handles loose files, collection folders, and
-   Indiana-Jones-style film folders inside collection folders).
-2. Parse Jellyfin-style names, tolerant of the real mess observed:
-   `Name (Year)`, `[imdbid-ttXXX]`, `[tmdbid-XXX]`, `[1080p]`/`[720p]`,
-   edition tags (`[Extended Edition]`, `[2003 Directors Cut]`, `(Special Edition)`),
-   stray ` - ` before tags, underscores (`The_A-Team`), missing years
-   (`Serenity.mkv`), typos (`(2003)mkv.mkv`).
-3. ffprobe each file (cache by path+mtime+size so rescans are cheap).
-4. Upsert Films/Versions/AudioTracks; report unparseable/unmatched files.
+- `User` (with `isAppOwner`, sidebar and rail preferences, a cached
+  Jellyfin user id), `Session`, `Account`, `Verification`, `Passkey`.
+- `Household`, `Member`, `Invitation`; `AccessCode`; `AuditLog`
+  (content-free record of who did what kind of action).
+- OIDC provider tables (`Jwks`, `OauthClient`, tokens, consents) for
+  Jellyfin SSO.
 
-## Enrichment (needs TMDB_API_KEY)
+Personal layer (per user, cascade-deleted with the user):
 
-1. Match: `imdbid` → TMDB `/find`, else search by title+year, else title only
-   (flag low-confidence matches in the report).
-2. Pull details + `belongs_to_collection`; fetch each collection's parts and
-   create `owned=false` Films for the ones not on disk (skip unreleased).
-3. Download + cache posters/backdrops to `POSTER_CACHE_DIR` volume.
+- `FilmFavourite`, `ShowFavourite`, `TrackFavourite`, `AlbumFavourite`,
+  `ArtistFavourite`.
+- `Playlist` and `PlaylistItem`; a playlist may carry a `sourceAlbumId` or
+  `sourceArtistId` when it was auto-created by favouriting.
+- `WatchProgress`: resume position, completion and play count for a film
+  `Version` or an `EpisodeFile` (exactly one of the two set per row).
 
-## UI (dark, poster-forward, "good looking" is a requirement)
+## Pipelines
 
-> **Navigation (2026-09):** the top bar described implicitly below was
-> replaced by the floating, collapsible left sidebar shared with Jingle
-> Jotter and TrainTracker (mobile: top bar + bottom tabs). See
-> `SIDEBAR_PLAN.md`; the shell lives in `src/components/shell/`.
+All run server-side, one at a time per kind, with progress visible on
+`/admin` and triggered from there or from the owner-only API routes.
 
-- `/` — poster grid of owned films; search; filters (format, resolution,
-  collection, decade); sort (title/year/added).
-- `/film/[id]` — backdrop hero, poster, overview; versions table (DVD/BluRay
-  badges, resolution, size, codec); soundtracks per version.
-- `/collections` — cards with poster collage + completion ("7/9 · 2 missing").
-- `/collections/[id]` — timeline in release order; owned films full colour,
-  missing films greyed out with a "missing" treatment.
-- `/report` — the collecting dashboard: per-collection missing films, films
-  owned only on DVD (BluRay upgrade candidates), unmatched/unparsed files,
-  low-confidence TMDB matches.
-- Scan/enrich buttons with progress, in a small admin strip.
+- **Scan** (`src/lib/scanner.ts`): walks the movie, TV and music roots,
+  parses the tolerant filename grammar (`src/lib/parse*.ts`), probes each
+  new or changed file with ffprobe, and upserts rows. Track ids are stable
+  across rescans, which is what makes favourites and playlists safe.
+- **Enrich film and TV** (`src/lib/tmdb.ts`): match by IMDb or TMDB id,
+  then title and year; pull details, collection membership, BBFC
+  certificates and disc-order episode groups; create missing films and
+  episodes; cache artwork.
+- **Enrich music** (`src/lib/discogs.ts`, `cover-art.ts`,
+  `artist-bio.ts`, `spotify.ts`): match artists and albums on Discogs,
+  create back-catalogue placeholders, fetch pressing tracklists and covers,
+  pick cover art (embedded art first, then iTunes, then a linked Discogs
+  pressing), and fetch artist photos and biographies.
+- **Jellyfin sync** (`src/lib/jellyfin.ts`): matches versions and episode
+  files to Jellyfin items by normalised path; runs after every scan.
+- **Barcode** (`src/lib/scan-resolve.ts`, `barcode-lookup.ts`): resolves a
+  scanned UPC/EAN through Discogs (music) or UPCitemdb plus TMDB (film),
+  reports whether that item is already owned, and adds it as a physical
+  copy or a new physical-only album.
 
-## Deployment (mirrors jobAppTracker exactly)
+## Playback
 
-- Multi-stage `node:22-alpine` Dockerfile (+ `apk add ffmpeg` in runner),
-  `prisma migrate deploy && npm start` at boot.
-- `docker-compose.yml` (base) + `docker-compose.override.yml` (local port
-  3002 — 3000/3001 are taken) + `docker-compose.prod.yml` (joins external
-  `edge` network with alias `mediavault`; shared Caddy on the VM proxies to it).
-- Volumes: `data` (SQLite + poster cache); bind-mount of the SMB share →
-  `/movies:ro` (`MOVIES_HOST_PATH` env: `/Volumes/media/Movies` locally, the
-  VM's mount point in prod).
+### Video: through Jellyfin
 
-## Build order
+Films and episodes play in-app through Jellyfin's transcoder
+(`src/lib/jellyfin-playback.ts`, `jf-routes.ts`, the `/api/video/<id>/jf/*`
+and `/api/tv-video/<id>/jf/*` routes). MediaVault asks Jellyfin for
+PlaybackInfo server-side and proxies the playlist and segments with the API
+key stripped, so the browser never sees it. Jellyfin serves a complete VOD
+playlist and starts ffmpeg at whatever segment is asked for, which gives
+every player a real duration and seeking anywhere. Original quality caps at
+120 Mbit/s (video copied, audio transcoded where needed); Remote caps at
+4 Mbit/s and 1280 pixels wide, and is the default for a viewer arriving
+through the Cloudflare Tunnel. Concurrent sessions are capped by
+`JELLYFIN_MAX_SESSIONS`. The player (`VideoPlayer.tsx`) uses the native
+HLS player on iOS and the tvOS WebView bridge and hls.js elsewhere, offers
+the source's audio tracks, reports progress every 15 seconds and on close,
+and resumes from the saved position.
 
-1. Scaffold (create-next-app), Prisma schema, migration — main session.
-2. Filename parser + unit tests against the real corpus — main session (the
-   fiddly correctness core).
-3. Scanner + ffprobe + TMDB enrichment lib — delegated to a Sonnet agent.
-4. UI pages — delegated to a Sonnet agent (with the design skill).
-5. Dockerfile/compose — delegated to a Haiku agent from the jobAppTracker
-   reference.
-6. Integrate, migrate, full scan of the real share, verify in browser — main
-   session.
+The app's own ffmpeg pipeline (`video-cache.ts`, `video-playback.ts`, the
+HLS routes) is parked behind `IN_APP_PLAYBACK=1`, still unit-tested and
+still exercised by `scripts/e2e-playback.ts`. `PLAYBACK_PLAN.md` records
+the design and why production moved to Jellyfin.
 
-## Playback (decided 2026-08 — built, with one reversal)
+### Music: app-wide gapless engine
 
-- **Music, gapless, in-browser — built** as planned (`src/lib/player-engine.ts`
-  behind `PlayerProvider` in the app shell, `/api/audio/[trackId]`, `src/lib/audio-stream.ts`):
-  Web Audio API with sample-accurate scheduling. Playback persists while you navigate,
-  and a right-hand rail holds the Now Playing card and a cross-album queue (Play next /
-  Add to queue). Since 2026-09-10 the server decodes every track to a raw PCM stream at
-  the browser's own sample rate (`?rate=`), and the engine schedules each half-second
-  chunk as it arrives, so a track starts ~100 ms after the click on the LAN instead of
-  after a whole-file download — the earlier design (original bytes / ALAC→FLAC remux /
-  WAV fallback for Safari, all through `decodeAudioData`) could not play a byte until
-  the last one had landed. Still lossless: 16- or 24-bit to match the source, and the
-  only resample is ffmpeg's, when the device's context rate differs from the file's.
-  Shuffle and repeat-album exist; listening history doesn't yet (see Roadmap and
-  `PLAYLISTS_PLAN.md`).
-- **Video — the "stays external" decision was reversed.** In-browser film
-  playback shipped (`VideoPlayer.tsx`, `/api/video/[versionId]/*`,
-  `src/lib/video-cache.ts`): a file that's already browser-playable is served
-  as-is with byte-range support; anything else is remuxed or transcoded by
-  ffmpeg into a cached fragmented MP4 and **streamed while it's still being
-  written** (`tailing-stream.ts`), so there's no encode-then-wait step. The
-  original objection (this library never transcodes) was traded for
-  convenience: DTS/TrueHD/PCM audio is transcoded to AAC only when no
-  AAC/AC-3/E-AC-3 track exists, and video is re-encoded only for MPEG-2/VC-1
-  DVD-era sources. Apple TV keeps the Infuse-via-Jellyfin direct-play path.
-  The same pipeline plays Adult scenes. **TV episodes never got a player** —
-  they still only deep-link to Jellyfin (see Roadmap, first item). The "Open
-  in IINA/VLC" desktop links were never built either.
+`src/lib/player-engine.ts` is a framework-free engine behind
+`PlayerProvider` in the app shell, so playback survives navigation. The
+server (`src/lib/audio-stream.ts`, `/api/audio/<trackId>?rate=`) decodes
+every track with ffmpeg to raw PCM at the browser's own sample rate, 16- or
+24-bit to match the source, and streams it as it is produced; the engine
+schedules each half-second chunk with the Web Audio clock as it arrives,
+so a track starts on its first chunk and joins between tracks are
+sample-accurate. Only the current and next track are ever buffered. A
+counting semaphore caps concurrent ffmpeg decodes. The engine supports a
+queue with play-next and add-to-queue, shuffle, repeat, seek and volume,
+and drives the media-session controls.
 
-## Households, per-user watch history & stats — shipped (see HOUSEHOLDS_PLAN.md)
+## UI shell
 
-All nine phases of `HOUSEHOLDS_PLAN.md` are live, plus the post-deploy
-additions (app-owner role, unified `/account`, `/admin`, Jellyfin SSO) and
-`PASSKEYS_PLAN.md`'s passkey sign-in. The one schema addition tracked here
-alongside the rest of the data model is `WatchProgress`, for per-user resume
-position and stats. `Film`/`Version` and TV `Episode`/`EpisodeFile` don't
-share an id space, so exactly one of `versionId`/`episodeFileId` is set per
-row (app-level invariant, same as SQLite's general lack of CHECK-constraint
-support elsewhere in this schema). Only the `versionId` half is wired today —
-`episodeFileId` waits on TV playback:
+A floating, collapsible left sidebar shared with the owner's other apps
+(`src/components/shell/`): Movies, Shows, Music, Collections, Stats for
+every member; Scan, Report, Admin for the app owner; the avatar links to
+Account. Mobile gets a top bar and bottom tabs with a More sheet. A
+matching right rail carries the music player and playlists and expands
+only from the `xl` breakpoint; below `md`, or on any touch device, a
+player strip sits above the tabs. Both rails persist their collapsed state
+per user. Sign-in, sign-up, invite, onboarding and consent pages render
+without chrome.
 
-```prisma
-model WatchProgress {
-  id            Int       @id @default(autoincrement())
-  userId        String    // BetterAuth User.id
-  versionId     Int?
-  version       Version?     @relation(fields: [versionId], references: [id], onDelete: Cascade)
-  episodeFileId Int?
-  episodeFile   EpisodeFile? @relation(fields: [episodeFileId], references: [id], onDelete: Cascade)
-  positionSecs  Float
-  completed     Boolean   @default(false)
-  playCount     Int       @default(0)
-  updatedAt     DateTime  @updatedAt
+## Access model
 
-  @@unique([userId, versionId])
-  @@unique([userId, episodeFileId])
-  @@index([userId])
-}
-```
+- **Web of trust**: a session is created only for an address vouched for
+  by `ALLOWED_EMAILS`, an existing `Member` row, a pending `Invitation`,
+  or a live `AccessCode`. The check runs before an OTP is sent and again in
+  a session-create hook, so it applies to passkey and SSO sign-ins too.
+- **Two ways in**: a new household needs an owner-minted access code on
+  `/signup`; an invitee follows a bearer-token link from `/invite/<token>`.
+- **Roles**: `User.isAppOwner` gates scanning, enrichment, the report, the
+  scan page and `/admin`. `Member.role` (`owner` or `member`) gates
+  household management on `/account`. The two are deliberately separate.
+- **Proxy gate**: every request outside the sign-in pages and
+  `/api/auth/*` needs a session cookie whose HMAC verifies against
+  `BETTER_AUTH_SECRET`; the real session and membership check happens in
+  each page and route (`src/lib/require-member.ts`). A `route-guards` test
+  asserts every page and route calls its guard.
+- **Security posture**: BetterAuth's organization HTTP endpoints are denied
+  (all household mutations go through server actions); rate limiting is
+  keyed on `cf-connecting-ip` behind Cloudflare and on the single-valued
+  `x-forwarded-for` on the LAN; strict security headers and a report-only
+  CSP; the Jellyfin proxy pins its upstream; ffmpeg work is capped by
+  semaphores; the container runs as a non-root user on a read-only
+  filesystem. `/admin` and `/scan` are blocked at the Cloudflare edge, so
+  they are LAN-only.
 
-## Roadmap (2026-09)
+## Operations
 
-From a review of the codebase against the plan documents (what's built, what
-the schema and enrichment already carry but nothing renders, what the plans
-themselves deferred). Effort is rough, in focused days, at the pace the
-households and passkeys rollouts actually went. Grouped by how much of the
-work already exists.
+See `DEPLOYMENT.md`: a single container on the home VM behind the shared
+Caddy edge, the NAS share mounted as a CIFS named volume, internet
+exposure through the shared Cloudflare Tunnel, encrypted backups of the
+data volume, and the owner-run scripts.
 
-**Recommended order: TV playback → global search → scan log on `/report`.**
-They're independent, each is under a week, and together they close the three
-gaps a household member hits first.
+## Roadmap
 
-### Finish what's half-built
+Reviewed against the code on 10 September 2026. Estimates are rough, in
+focused days.
 
-| Item | Why now | Already exists | Est. |
+### Worth doing next
+
+| Item | Why | What exists | Est. |
 |---|---|---|---|
-| **TV episode playback + progress** | Shows are the only media type with no in-app play; episodes only deep-link to Jellyfin | The remux/transcode + tailing-stream pipeline, `VideoPlayer`, and `WatchProgress.episodeFileId` (unwired). Needs an `/api/episode/[fileId]/*` twin of the film routes, a Play button on `EpisodeRow`, and "Continue watching" for shows | 2–3 |
-| **Scan log + unmatched files on `/report`** | `ScanRun.log`/`filesSeen` record every unparseable filename and probe failure and *nothing renders them* — the report can't see the files that never became rows, which PLAN.md promised it would | The data, `GET /api/runs`; `ScanControls`' `RunInfo` just omits the fields | 1 |
-| **Film "fix this match" form** | Albums have one; films flagged LOW/UNMATCHED on `/report` can only be corrected by rescanning | `FixAlbumMatchForm` as the pattern, `search-movie` route | 1 |
-| **Blu-ray → 4K upgrade candidates** | The upgrade list only covers DVD → Blu-ray though UHD is a first-class format everywhere else | `getReportData`'s upgrade query, one more predicate | 0.25 |
-| **Music listening history** | `/stats` is films-only; no playback tracking yet | The `WatchProgress` pattern and the throttled reporting in `VideoPlayer` port directly | 1.5 |
-| **Render what enrichment already stores** | Scene backdrops, performer images, episode overviews + air dates, album release dates are fetched and never shown | All in the schema and selected in queries; `Performer.imagePath` is even passed to the page | 1 |
-| **Invitation emails** | Household invites are still copy-a-link | Resend is wired for OTP and access codes; `sendInvitationEmail` is the one plugin hook not configured | 0.5 |
+| **Global search** | Only Movies has search, client-side over one list. One box across films, shows, artists, albums and collections is the most-used feature the app lacks. The expanded sidebar has room for it. | Per-model queries | 2 |
+| **Scan log and unmatched files on the report** | `ScanRun.log` records every unparseable filename and probe failure and nothing renders it. | The data and `GET /api/runs`; the admin run panel omits the field | 1 |
+| **Film "fix this match" form** | Albums have one; a film flagged low-confidence or unmatched can only be corrected by rescanning. | `FixAlbumMatchForm` as the pattern, the `search-movie` route | 1 |
+| **Blu-ray to 4K upgrade candidates** | The upgrade list only covers DVD to Blu-ray. | One more predicate in the report query | 0.25 |
+| **Music listening history** | Stats cover films and episodes; nothing records what was listened to. | `WatchProgress` and the video player's throttled reporting | 1.5 |
+| **Invitation emails** | Invites are still copy-a-link. | Resend is wired for codes; the plugin's `sendInvitationEmail` hook is unset | 0.5 |
 
-### New for the household
+### Larger
 
-| Item | Why | Already exists | Est. |
+| Item | Why | What exists | Est. |
 |---|---|---|---|
-| **Global search** | Only Movies has search, client-side over one list. One box across films, shows, artists, albums, collections is the most-used feature the app doesn't have | Per-model queries; needs a server-side search query + `/search` page + nav box | 2 |
-| **A personal layer: watchlist, favourites, rating** | Households exist, but the only per-person state is watch history and the adult opt-in | `WatchProgress`'s per-user shape; `Film.rating` is TMDB's, read-only; Film/show favourites shipped; music favourites + playlists are designed in `PLAYLISTS_PLAN.md` | 3 |
-| **A real wantlist** | "Missing" is machine-derived from TMDB/Discogs; no way to add an arbitrary title or mark one ordered / won't-own, so `/report` never stops listing it | The `owned=false` rows; needs a state column and an add-by-search form | 2 |
-| **Physical-media logistics** | Location/shelf, lent-to, purchase date + price. Pressing tracking is thorough but can't answer "where is it" or "who has it" | `PhysicalCopy` / `FilmPhysicalCopy` + their edit forms | 1.5 |
-| **Jellyfin watch-state sync** | The two watch histories are entirely separate; "Continue watching" is wrong for people who watch on the TV | `User.jellyfinUserId`, `Version.jellyfinId`, the Jellyfin client in `src/lib/jellyfin.ts` | 2 |
-| **"Open in IINA/VLC" links** | Direct play on desktop with no transcode; in the original plan, never built | `/api/video/[versionId]/stream` already serves byte ranges for direct-play files | 0.5 |
+| **Wantlist** | "Missing" is machine-derived; there is no way to add an arbitrary title or mark one ordered or won't-own, so the report never stops listing it. | The `owned=false` rows | 2 |
+| **Physical-media logistics** | Shelf location, lent-to, purchase date and price. | `PhysicalCopy` / `FilmPhysicalCopy` and their forms | 1.5 |
+| **Jellyfin watch-state sync** | The app's history and Jellyfin's are separate, so continue-watching is wrong for anyone who watches on the TV. | `User.jellyfinUserId`, item ids on every version and episode file | 2 |
+| **Native-client API** | The tvOS shell can only read `/api/films` and has no sign-in of its own. BetterAuth's device-authorization plugin is the realistic route. | The film routes as the shape to copy | 3–4 |
+| **Scheduled scans and a digest email** | Scans are manual; the app sends no email beyond sign-in. | The run guard, Resend, the recently-added query | 2 |
+| **Audit log search, paging and retention** | One consumer reads the last 100 rows and nothing prunes. | `AuditLog` and `/admin` | 1 |
+| **Jellyfin SSO via passkey** | The SSO sign-in path is deliberately code-only until the passkey endpoint is confirmed to carry the OAuth query. | `PASSKEYS_PLAN.md` phase 5 | 0.5 |
 
-### Platform and operations
+### Housekeeping
 
-| Item | Why | Already exists | Est. |
-|---|---|---|---|
-| **Native-client API** | MediaVaultTV can only read `/api/films` and has no auth path but a scraped browser cookie. PASSKEYS_PLAN.md defers tvOS passkeys, so this is the realistic route | BetterAuth ships a device-authorization plugin; the film routes are the shape to copy for shows, episodes, and music | 3–4 |
-| **Scheduled scans + weekly digest** | Scans are manual; the app sends no email beyond auth | `ScanRun`/`runs.ts` guard, Resend, `getLibraryFilms`' "recently added" | 2 |
-| **Audit log search, paging, retention** | One consumer reads the last 100 rows with no filter, and nothing prunes | `AuditLog` + `/admin` | 1 |
-
-### Housekeeping (fold into whichever lands first, ~0.5 day)
-
-- `src/lib/email.ts` header still says it's "not yet wired into anything".
-- Five files cite `ADULT_PLAN.md`, which is local-only and not in the repo.
-- README says TheAudioDB/Fanart.tv work; `.env.example` and `DEPLOYMENT.md`
-  say unused; the code path is unreachable since the Discogs cutover
-  (`fetchArtistEnrichment` is always called with `mbid: null`). Pick one.
-- `prisma/schema.prisma`'s `ScanRun.kind` comment lists four kinds; the
-  source of truth it points at (`src/lib/runs.ts`) has eight.
-- `AuditLog` has no pruning job.
-
-**Totals:** finish-half-built ≈ 7–8 days · new-for-the-household ≈ 11 days ·
-platform ≈ 6–7 days. The recommended first three ≈ 5–6 days.
+- `AUDIODB_API_KEY` and `FANART_API_KEY` are accepted but do nothing since
+  the Discogs cutover removed the MusicBrainz id they keyed on. Either
+  re-key TheAudioDB and Fanart.tv on artist name or drop them.
+- The CSP ships as report-only; enforce it once a few days pass without
+  violations.
+- The Cloudflare WAF managed ruleset and rate-limit rules in
+  `DEPLOYMENT.md` are still to be switched on.
+- A real-device passkey pass (iPhone plus Safari on the Mac, iCloud Keychain
+  sync) has not been done since deploy.

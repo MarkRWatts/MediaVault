@@ -1,95 +1,82 @@
 # MediaVault — Deployment
 
-This documents how to run MediaVault locally and deploy it to the production VM — an Ubuntu Server on TrueNAS, the same host that runs jobAppTracker. The setup mirrors jobAppTracker's pattern exactly, adapted for SQLite (no separate database container) and the movie share volume.
+How to run MediaVault locally in Docker and how it is deployed on the
+production VM: an Ubuntu Server guest on TrueNAS that also runs the
+household's other apps. One container, SQLite in a named volume, the NAS
+share mounted as a CIFS volume, a shared Caddy in front on the LAN, and a
+shared Cloudflare Tunnel for the internet.
 
 ## Local development
 
-On the Mac, with the SMB share mounted at `/Volumes/media/Movies`:
+Day to day, use `npm run dev` (see README). To run the production image
+locally with the SMB share mounted at `/Volumes/media/Movies`:
 
 ```bash
-cd ~/claude-code/filmDB
+cd ~/claude-code/MediaVault
 docker compose up -d --build
-# Then browse to http://localhost:3002
+# http://localhost:3002
 ```
 
-The base `docker-compose.yml` and `docker-compose.override.yml` are auto-loaded (no `-f` flags needed). The override publishes port 3002 locally (3000 and 3001 are taken by re:Fresh and jobAppTracker). Logs:
+`docker-compose.yml` and `docker-compose.override.yml` load automatically.
+The override publishes port 3002 (3000 and 3001 belong to other local
+apps). Logs and teardown:
 
 ```bash
 docker compose logs -f app
-```
-
-Tear down:
-
-```bash
 docker compose down
 ```
 
 ## VM deployment
 
-On the production VM (see [Shared reverse proxy](#shared-reverse-proxy-edge) below to set up the shared Caddy stack once):
+The shared Caddy stack must exist first (see [Shared reverse
+proxy](#shared-reverse-proxy-edge)).
 
-### 1. Get the code
+1. **Get the code.**
+   ```bash
+   git clone https://github.com/MarkRWatts/MediaVault.git ~/MediaVault
+   ```
+2. **Create `.env.docker`** on the server from `.env.docker.example`. Never
+   commit it. It holds the SMB credentials, `TMDB_API_KEY`, the Jellyfin
+   settings, the BetterAuth secret and URL, the Resend key and
+   `ALLOWED_EMAILS`.
+3. **Media share.** No host mount and no sudo: `docker-compose.prod.yml`
+   declares the share as a CIFS named volume, so the Docker daemon mounts
+   `//$MOVIES_SMB_HOST/$MOVIES_SMB_SHARE` read-only with a dedicated
+   read-only SMB account, and the container sees it at `/media-share`.
+   `MOVIES_PATH`, `TVSHOWS_PATH` and `MUSIC_PATH` point inside it. The base
+   compose's `/movies` bind is satisfied by an empty placeholder directory
+   (`MOVIES_HOST_PATH`).
 
-```bash
-git clone https://github.com/MarkRWatts/MediaVault.git ~/MediaVault
-```
+   Networking gotcha: a VM attached via macvtap to the same physical NIC as
+   the TrueNAS host's IP cannot reach the host at all, and the mount fails
+   with "no route to host". Give the VM a different physical NIC (verify by
+   MAC, not interface name) or use a proper bridge.
+4. **Bring the stack up.**
+   ```bash
+   docker network create edge   # once
+   cd ~/MediaVault
+   docker compose --env-file .env.docker -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+   cd ~/edge && docker compose up -d --build
+   ```
+   The container's boot runs `prisma migrate deploy`, creating
+   `mediavault.db` on an empty volume.
+5. **Verify.**
+   ```bash
+   curl -sS -o /dev/null -w "%{http_code}\n" https://mediavault.markrwatts.com/   # 200
+   docker compose --env-file .env.docker -f docker-compose.yml -f docker-compose.prod.yml logs app   # "No pending migrations to apply"
+   ```
+6. **First sign-in and owner role.** Sign in with an address from
+   `ALLOWED_EMAILS`, then grant the app-owner role (Scan, Report and Admin
+   stay hidden until this runs):
+   ```bash
+   docker compose --env-file .env.docker -f docker-compose.yml -f docker-compose.prod.yml \
+     exec app node_modules/.bin/tsx scripts/grant-app-owner.ts you@example.com
+   ```
+   Then scan and enrich from `/admin`.
+7. **Jellyfin SSO** (optional, one-time) needs the app reachable on its real
+   HTTPS URL, because OIDC discovery requires it. See README → Jellyfin.
 
-Future deploys are just `git pull` + rebuild (see [Updating](#updating-the-deployment) below).
-
-### 2. `.env.docker`
-
-Create `.env.docker` directly on the server (never committed — copy
-`.env.docker.example` for the full variable list): SMB credentials for the
-share, `TMDB_API_KEY`, and the Jellyfin settings.
-
-### 3. Movie share
-
-No host mount and **no sudo needed**: `docker-compose.prod.yml` declares the
-share as a CIFS **named volume**, so the Docker daemon itself mounts
-`//$MOVIES_SMB_HOST/$MOVIES_SMB_SHARE` (read-only, credentials from
-`.env.docker` — use a dedicated read-only SMB account) and the container sees
-it at `/media-share`, with `MOVIES_PATH=/media-share/Movies`. The base
-compose's `/movies` bind is satisfied by an empty placeholder dir
-(`MOVIES_HOST_PATH=/home/deploy/MediaVault-empty`).
-
-**Networking gotcha (learned the hard way)**: if the VM runs *on* the same
-box that serves the SMB share (TrueNAS), a VM attached via macvtap to the
-same physical NIC as the host's IP **cannot reach the host at all** — mount
-attempts fail with "no route to host". Give the VM a different physical NIC
-than the one carrying the host's IP (verify by MAC, not interface name), or
-use a proper bridge interface.
-
-### 4. Bring up the stack
-
-The shared Caddy stack must exist first (see [Shared reverse proxy](#shared-reverse-proxy-edge) below). Then:
-
-```bash
-docker network create edge   # once — skip if it already exists
-cd ~/MediaVault
-docker compose --env-file .env.docker -f docker-compose.yml -f docker-compose.prod.yml up -d --build
-cd ~/edge && docker compose up -d --build   # brings up the shared Caddy
-```
-
-`app`'s boot-time `prisma migrate deploy` runs the schema initialization (the first time the volume is empty, creating `mediavault.db`).
-
-### 5. Verify
-
-```bash
-curl -sS -o /dev/null -w "%{http_code}\n" https://mediavault.markrwatts.com/   # 200
-docker compose --env-file .env.docker -f docker-compose.yml -f docker-compose.prod.yml logs app   # "No pending migrations to apply"
-```
-
-Then scan the movie share and enrich with TMDB data from a browser on a LAN device (the `/report` page shows progress).
-
-### 6. Jellyfin SSO (optional, one-time)
-
-Only possible once the app is up and reachable over its real HTTPS URL —
-OIDC discovery requires that. See README.md "Jellyfin SSO (optional)" for
-the setup steps (a form on `/admin`, run once per Jellyfin instance).
-
-## Updating the deployment
-
-On the VM:
+### Updating
 
 ```bash
 ssh deploy@192.168.1.77
@@ -98,36 +85,45 @@ git pull
 docker compose --env-file .env.docker -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```
 
-## Shared reverse proxy (`~/edge`)
+Migrations apply on boot. Backfill scripts that a release needs are noted
+in its commit message and run the same way as `grant-app-owner.ts` above.
 
-A single Caddy instance on the VM fronts **every** app — currently jobAppTracker and MediaVault (and more). It lives at `~/edge` on the server directly, not in either app's git repo, since it isn't owned by any one app. See jobAppTracker's `DEPLOYMENT.md` for the full setup and the `Caddyfile` structure.
+### Running as non-root
 
-**One-time setup** (if you haven't set up the edge stack for jobAppTracker yet):
+The image runs the server as the unprivileged `node` user (uid/gid 1000)
+with a read-only root filesystem, no capabilities and `no-new-privileges`;
+`/tmp` and Next's cache are tmpfs mounts with mode 1777. Two consequences:
 
-1. Create the external Docker network:
+1. **The data volume must be owned by 1000:1000.** Once, before the first
+   non-root deploy on a volume created by an older root-running container:
    ```bash
-   docker network create edge
+   docker run --rm -v mediavault_data:/data alpine chown -R 1000:1000 /data
+   ```
+2. **Owner-run scripts call `tsx` directly**, not through `npx`, which wants
+   a writable cache under `$HOME`:
+   ```bash
+   docker compose --env-file .env.docker -f docker-compose.yml -f docker-compose.prod.yml \
+     exec app node_modules/.bin/tsx scripts/gen-access-code.ts --email someone@example.com
    ```
 
-2. Set up the edge stack at `~/edge` (see jobAppTracker's `DEPLOYMENT.md` for details).
+The CIFS volume options include `uid=1000,gid=1000` for the same reason.
 
-3. For MediaVault, register it with acme-dns (one-time per app):
+## Shared reverse proxy (`~/edge`)
+
+A single Caddy instance on the VM fronts every app there. It lives at
+`~/edge` on the server, outside any app's repository. One-time setup for
+MediaVault:
+
+1. Create the external network: `docker network create edge`.
+2. Register the hostname with acme-dns:
    ```bash
    curl -X POST https://auth.acme-dns.io/register
    ```
-
-   Returns `username`, `password`, `subdomain`, `fulldomain`. Save these to `~/edge/.env` as:
-   ```
-   MEDIAVAULT_ACMEDNS_USERNAME=...
-   MEDIAVAULT_ACMEDNS_PASSWORD=...
-   MEDIAVAULT_ACMEDNS_SUBDOMAIN=...
-   ```
-
-4. Add DNS records at your domain registrar:
-   - CNAME: `_acme-challenge.mediavault` → the `MEDIAVAULT_ACMEDNS_SUBDOMAIN` returned above
-   - A: `mediavault` → your VM's static IP (e.g., `192.168.1.77`)
-
-5. Add a site block to the shared Caddyfile (at `~/edge/Caddyfile`):
+   Save the returned `username`, `password` and `subdomain` in `~/edge/.env`
+   as `MEDIAVAULT_ACMEDNS_USERNAME`, `MEDIAVAULT_ACMEDNS_PASSWORD` and
+   `MEDIAVAULT_ACMEDNS_SUBDOMAIN`.
+3. DNS: a CNAME from `_acme-challenge.mediavault` to that subdomain.
+4. Add the site block to `~/edge/Caddyfile`:
    ```
    mediavault.markrwatts.com {
        tls {
@@ -141,256 +137,89 @@ A single Caddy instance on the VM fronts **every** app — currently jobAppTrack
        reverse_proxy mediavault:3000
    }
    ```
+   `mediavault` is the alias `app` carries on the `edge` network.
+5. Reload: `cd ~/edge && docker compose up -d --build`.
 
-6. Reload Caddy:
+Caddy rewrites `X-Forwarded-For` to the client's LAN IP as a single value,
+which the app accepts as the rate-limit key when `cf-connecting-ip` is
+absent.
+
+## Internet exposure (Cloudflare Tunnel)
+
+Live since 10 September 2026. Internet traffic arrives through
+`home-edge`, a Cloudflare Tunnel connector already running on the VM and
+shared by every app there; there is no per-app `cloudflared` and no tunnel
+token in this repository.
+
+1. **Published application route.** Cloudflare → Zero Trust → Networks →
+   Tunnels → `home-edge` → Published application routes: add
+   `mediavault.markrwatts.com` → `http://mediavault:3000`. Cloudflare creates
+   a proxied CNAME; delete any plain `A` record for the name first.
+   `BETTER_AUTH_URL` stays `https://mediavault.markrwatts.com`; the app
+   derives `__Secure-` cookies, the passkey origin and trusted origins from
+   it.
+2. **Block admin and scan from the internet.** Security → WAF → Custom
+   rules: block
+   `(http.host eq "mediavault.markrwatts.com") and (starts_with(http.request.uri.path, "/admin") or starts_with(http.request.uri.path, "/scan"))`.
+   The LAN path below never touches Cloudflare, so these pages are
+   LAN-only, including for the owner away from home.
+3. **WAF and rate limiting** (still outstanding as of 10 September 2026):
+   turn on the Cloudflare Managed Ruleset; rate-limit `/api/auth/*` to
+   10 requests a minute per IP with a 10-minute block and `/api/*` to 300 a
+   minute per IP; bypass the cache for `/api/video/*`, `/api/tv-video/*`,
+   `/api/audio/*` and `/api/auth/*`.
+4. **The LAN path.** LAN devices resolve the hostname straight to the VM
+   through a router-level DNS override, bypassing Cloudflare entirely. This
+   keeps in-home streaming off the Cloudflare round trip and is why the
+   admin block above can be unconditional. If Chrome on the LAN shows an
+   SSL protocol error, the resolver is leaking an AAAA record to Cloudflare;
+   add a `local=/mediavault.markrwatts.com/` override.
+5. **Verify** from outside the LAN:
    ```bash
-   cd ~/edge && docker compose up -d --build
+   curl -sSI https://mediavault.markrwatts.com/signin | grep -iE "strict-transport|x-frame|content-security|cf-ray"
+   curl -sS -o /dev/null -w "%{http_code}\n" -H 'Cookie: __Secure-better-auth.session_token=forged' https://mediavault.markrwatts.com/api/films   # 401
+   curl -sS -o /dev/null -w "%{http_code}\n" https://mediavault.markrwatts.com/admin   # 403
    ```
 
-## Running as non-root
-
-The image runs the server as the unprivileged `node` user (uid/gid 1000)
-with a read-only root filesystem, no capabilities and `no-new-privileges`
-(`Dockerfile`, `docker-compose.prod.yml`). Two consequences on an existing
-deployment:
-
-1. **The data volume must be owned by 1000:1000.** It was created by the
-   old root-running container, so do this once before the first
-   non-root deploy (the app can't create `mediavault.db` or write posters
-   otherwise):
-   ```bash
-   docker run --rm -v mediavault_data:/data alpine chown -R 1000:1000 /data
-   ```
-2. **Owner-run scripts call `tsx` directly**, not through `npx` (which
-   wants a writable cache under `$HOME` that the read-only filesystem
-   doesn't give it):
-   ```bash
-   docker compose --env-file .env.docker -f docker-compose.yml -f docker-compose.prod.yml \
-     exec app node_modules/.bin/tsx scripts/gen-access-code.ts --email someone@example.com
-   ```
-
-The CIFS volume options include `uid=1000,gid=1000` for the same reason.
-
-## Exposing to the internet (Cloudflare Tunnel)
-
-Live since 10 Sep 2026. The LAN setup above terminates TLS on the VM's
-Caddy; internet exposure runs through `home-edge`, a Cloudflare Tunnel
-connector **already running on the VM** and shared across every app there
-(reFresh included) — there's no per-app `cloudflared` container or
-`CLOUDFLARE_TUNNEL_TOKEN` to manage. The app-side hardening this depends on
-(real session checks on every route, HMAC-verified session cookie at the
-proxy, `cf-connecting-ip` as the rate-limit key, security headers) is
-already in the code.
-
-### 1. Add a published application route
-
-Cloudflare dashboard → Zero Trust → Networks → Tunnels & Mesh →
-`home-edge` → **Published application routes** → add
-`mediavault.markrwatts.com` → service `http://mediavault:3000` (the
-`mediavault` alias `app` carries on the `edge` network — see
-`docker-compose.prod.yml`). Cloudflare auto-configures DNS as a proxied
-CNAME; delete any existing plain `A` record for the same name first (it'll
-otherwise refuse to save with "A DNS record with this name already
-exists").
-
-`BETTER_AUTH_URL` stays `https://mediavault.markrwatts.com`; the app derives
-`__Secure-` cookies, the passkey origin and `trustedOrigins` from it.
-
-### 2. Block admin/scan from the internet entirely
-
-Rather than gating `/admin*` and `/scan*` with Cloudflare Access (which
-would still show an OTP prompt to the internet), they're outright blocked
-for any request that arrives via the tunnel — the LAN bypass (below) never
-touches Cloudflare, so anything reaching Cloudflare for these paths is by
-definition not-LAN. Security → WAF → Custom rules:
-
-- **Name**: "Block mediavault admin/scan from internet"
-- **Expression**: `(http.host eq "mediavault.markrwatts.com") and (starts_with(http.request.uri.path, "/admin") or starts_with(http.request.uri.path, "/scan"))`
-- **Action**: Block
-
-This means `/admin` and `/scan` are LAN-only, full stop — including for the
-app owner away from home. Revisit if remote admin access is ever needed
-(e.g. a Cloudflare Access policy on a separate private hostname reached
-over WARP, rather than the public one).
-
-### 3. WAF and rate limiting
-
-Security → WAF (still outstanding as of 10 Sep 2026):
-
-- **Managed rules**: turn on the Cloudflare Managed Ruleset (free tier
-  includes the essentials).
-- **Rate limiting rules** (the app's own limits cover sign-in only, and
-  Next.js has none built in):
-  - `/api/auth/*` — 10 requests / minute / IP, block for 10 minutes.
-  - `/api/*` — 300 requests / minute / IP (HLS segments are small and
-    frequent; a player fetches one every ~6 s per stream).
-- **Cache Rules**: bypass cache for `/api/video/*`, `/api/tv-video/*`,
-  `/api/audio/*` and `/api/auth/*`. Video through the proxy is a lot of
-  bytes; check your plan's limits on non-HTML traffic and the 100 s
-  origin-response timeout (the HLS playlist route waits up to 30 s for a
-  first segment, which is inside it).
-
-### 4. The LAN path
-
-LAN devices resolve `mediavault.markrwatts.com` straight to the VM's
-private IP via a router-level DNS override, bypassing Cloudflare (WAF,
-the admin/scan block, everything) entirely — same pattern as
-`staging.jinglejotter.com`'s LAN bypass. This is deliberate: it keeps
-in-home 4K streaming off the Cloudflare round-trip, and it's why the
-admin/scan WAF block above is safe to be unconditional rather than
-IP-scoped.
-
-Caddy still fronts the app on the LAN and rewrites `X-Forwarded-For` to
-the client's LAN IP (single value), which the app accepts as a fallback
-when `cf-connecting-ip` is absent — so rate limiting keys correctly on
-both paths.
-
-### 5. Verify
-
-From outside the LAN (phone on mobile data):
-
-```bash
-curl -sSI https://mediavault.markrwatts.com/signin | grep -iE "strict-transport|x-frame|content-security|cf-ray"
-curl -sS -o /dev/null -w "%{http_code}\n" -H 'Cookie: __Secure-better-auth.session_token=forged' https://mediavault.markrwatts.com/api/films   # 401
-curl -sS -o /dev/null -w "%{http_code}\n" https://mediavault.markrwatts.com/admin   # 403 (WAF block)
-```
-
-## Renaming an existing filmDB deployment to MediaVault (one-time)
-
-This app was previously deployed as **filmDB**. The rename touches the repo,
-the directory, the Docker volume, the network alias, and the Caddy site
-block — do these together on the VM, in this order, so there's no window
-where the container looks like a fresh install with an empty database.
-
-DNS and the acme-dns CNAME for `mediavault.markrwatts.com` have already been
-added (reusing the existing filmDB acme-dns registration/credentials — no
-new external registration needed, since it's the same app under a new
-name). `filmdb.markrwatts.com` and its `_acme-challenge` CNAME are still live
-and untouched; remove them only after step 8 below confirms the new hostname
-works.
-
-1. **Stop the old stack** (don't remove the volume):
-   ```bash
-   cd ~/filmDB
-   docker compose --env-file .env.docker -f docker-compose.yml -f docker-compose.prod.yml down
-   ```
-
-2. **Migrate the data volume.** The compose file previously let Docker derive
-   the volume name from the project directory (`filmdb_data`); it's now
-   pinned explicitly to `mediavault_data` (see `docker-compose.yml`) so this
-   never happens silently again. Copy the data across, **then rename the
-   database file inside the new volume** to match the new `DATABASE_URL`
-   (`mediavault.db`) — skipping this step leaves the real data at
-   `mediavault_data/filmdb.db`, unused, while `prisma migrate deploy` quietly
-   creates a fresh *empty* `mediavault.db` next to it, which looks like a
-   successful boot with a silently empty library:
-   ```bash
-   docker volume create mediavault_data
-   docker run --rm -v filmdb_data:/from -v mediavault_data:/to alpine \
-     sh -c "cp -a /from/. /to/"
-   docker run --rm -v mediavault_data:/v alpine mv /v/filmdb.db /v/mediavault.db
-   ```
-   Leave `filmdb_data` in place as a rollback copy until the new deployment
-   is verified (step 8), then remove it.
-
-3. **Rename the directory and re-point the remote:**
-   ```bash
-   mv ~/filmDB ~/MediaVault
-   cd ~/MediaVault
-   git remote set-url origin https://github.com/MarkRWatts/MediaVault.git
-   git pull
-   ```
-
-4. **Rename the placeholder bind-mount dir** referenced by
-   `MOVIES_HOST_PATH` in `.env.docker`:
-   ```bash
-   mv /home/deploy/filmDB-empty /home/deploy/MediaVault-empty
-   ```
-   and update `MOVIES_HOST_PATH` in `.env.docker` to match.
-
-5. **Add the new acme-dns env vars to `~/edge/.env`**, reusing the existing
-   filmDB credential values under the new names:
-   ```
-   MEDIAVAULT_ACMEDNS_USERNAME=<same value as FILMDB_ACMEDNS_USERNAME>
-   MEDIAVAULT_ACMEDNS_PASSWORD=<same value as FILMDB_ACMEDNS_PASSWORD>
-   MEDIAVAULT_ACMEDNS_SUBDOMAIN=<same value as FILMDB_ACMEDNS_SUBDOMAIN>
-   ```
-   (The old `FILMDB_ACMEDNS_*` vars can stay until step 9's cleanup.)
-
-6. **Add the new Caddy site block** (the one in [Shared reverse
-   proxy](#shared-reverse-proxy-edge) above) to `~/edge/Caddyfile`, alongside
-   — not replacing — the existing `filmdb.markrwatts.com` block for now.
-
-7. **Bring the renamed stack up and reload Caddy:**
-   ```bash
-   cd ~/MediaVault
-   docker compose --env-file .env.docker -f docker-compose.yml -f docker-compose.prod.yml up -d --build
-   cd ~/edge && docker compose up -d --build
-   ```
-
-8. **Verify** — the container should come up against the *migrated* data,
-   not a fresh empty database:
-   ```bash
-   curl -sS -o /dev/null -w "%{http_code}\n" https://mediavault.markrwatts.com/   # 200
-   docker compose --env-file .env.docker -f docker-compose.yml -f docker-compose.prod.yml logs app   # "No pending migrations to apply"
-   ```
-   Then open it in a browser and confirm the library/shows/music counts match
-   what filmDB had before the rename (no "0 films" / empty-library state).
-
-9. **Clean up** once the above checks out:
-   - Remove the old `filmdb.markrwatts.com` Caddy block from `~/edge/Caddyfile` and reload Caddy.
-   - Remove `FILMDB_ACMEDNS_*` from `~/edge/.env`.
-   - Delete the DNS records for `filmdb.markrwatts.com` and `_acme-challenge.filmdb.markrwatts.com` in Cloudflare.
-   - `docker volume rm filmdb_data` (only once you're confident `mediavault_data` has everything).
-   - `rm -rf /home/deploy/filmDB-empty` if step 4's `mv` didn't already relocate it.
+Viewers arriving through the tunnel default to Remote video quality and do
+not see the LAN-only "Play in Jellyfin" links.
 
 ## Environment variables
 
-### Local dev (Mac, in `.env`)
+The two templates are the reference: [.env.example](.env.example) for
+local dev and [.env.docker.example](.env.docker.example) for the VM, both
+commented per variable. Points specific to the VM:
 
-- `DATABASE_URL`: Usually `file:./data/mediavault.db` (file path or SQLite connection string).
-- `MOVIES_PATH`: `/Volumes/media/Movies` (or wherever the SMB share is mounted).
-- `POSTER_CACHE_DIR`: `./data/posters` (where downloaded TMDB posters are cached).
-- `FFPROBE_DOCKER_IMAGE`: `mwader/static-ffmpeg:latest` (fallback if ffprobe isn't on PATH; leave unset when the Docker image installs ffmpeg).
-- `TMDB_API_KEY`: Free key from https://www.themoviedb.org/settings/api (optional; leave blank for scan-only).
+- `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL` are required; the prod overlay
+  refuses to start without them.
+- `DATABASE_URL`, `POSTER_CACHE_DIR` and `VIDEO_CACHE_DIR` are fixed inside
+  the data volume by the base compose file.
+- `MOVIES_PATH`, `TVSHOWS_PATH` and `MUSIC_PATH` are overridden by the prod
+  overlay to paths inside the CIFS volume.
+- `MOVIES_SMB_HOST`, `MOVIES_SMB_SHARE`, `MOVIES_SMB_USERNAME` and
+  `MOVIES_SMB_PASSWORD` feed the CIFS volume; `MOVIES_HOST_PATH` is the
+  empty placeholder for the base bind mount.
+- `JELLYFIN_MAX_SESSIONS`, `PREPARE_CONCURRENCY`, `PREPARE_QUEUE` and
+  `AUDIO_CONCURRENCY` cap concurrent transcodes and decodes; the defaults
+  suit a 4-core VM.
+- No `FFPROBE_DOCKER_IMAGE`: the image installs ffmpeg.
+- `AUDIODB_API_KEY` and `FANART_API_KEY` currently do nothing (see
+  `PLAN.md` → Housekeeping).
 
-### VM deployment (in `.env.docker`)
+## Data persistence and backups
 
-- `BETTER_AUTH_SECRET` / `BETTER_AUTH_URL`: required — the prod overlay refuses to start without them.
-- `DATABASE_URL`: `file:/app/data/mediavault.db` (set in the base `docker-compose.yml`).
-- `MOVIES_PATH`: `/media-share/Movies` on the VM (the CIFS named volume; the base compose default `/movies` applies only to local dev).
-- `POSTER_CACHE_DIR`: `/app/data/posters` (set in the base `docker-compose.yml`).
-- `MOVIES_SMB_HOST/SHARE/USERNAME/PASSWORD`: the CIFS named-volume credentials (see `.env.docker.example`); `MOVIES_HOST_PATH` points at an empty placeholder dir.
-- `TMDB_API_KEY`: Free key (optional; leave blank for scan-only).
-- `DISCOGS_TOKEN`: Optional — Discogs is the sole music metadata source (see
-  `src/lib/discogs.ts`); no key is required for read-only lookups at this
-  app's scale, but setting one is strongly recommended before a
-  full-catalogue Enrich Music pass (25/min unauthenticated vs 60/min with a
-  token set).
-- `AUDIODB_API_KEY` / `FANART_API_KEY`: Currently unused — TheAudioDB/
-  Fanart.tv artist bio/photo/backdrop enrichment (see `src/lib/artist-bio.ts`)
-  was keyed by a MusicBrainz artist id, which no longer exists post-Discogs-
-  cutover; only the Wikipedia-by-name bio/photo tier still runs. Left in
-  place for a future revisit, not currently worth setting.
+The SQLite database, cached artwork and the parked pipeline's video cache
+live in the `mediavault_data` named volume (pinned by name in
+`docker-compose.yml` so a project rename cannot orphan it), mounted at
+`/app/data`. It survives restarts and redeploys unless the volume is
+removed.
 
-No `FFPROBE_DOCKER_IMAGE` needed — the runner image installs ffmpeg.
-
-## Data persistence
-
-The SQLite database (`mediavault.db`) and cached TMDB posters live in the `mediavault_data` named Docker volume (pinned explicitly in `docker-compose.yml` — see the [rename migration](#renaming-an-existing-filmdb-deployment-to-mediavault-one-time) note above for why), mounted at `/app/data` inside the container. On the VM, this volume is stored on the host filesystem (usually `/var/lib/docker/volumes/mediavault_data/_data`), so it persists across container restarts and redeploys (as long as you don't `docker volume rm`).
-
-The same volume also holds `video-cache/` — the on-demand ffmpeg
-remux/transcode output (up to `VIDEO_CACHE_MAX_BYTES`, 10 GiB by default,
-plus any in-flight file). That's a pure derivative of the media share and
-must **not** be backed up: a backup that includes it is 10+ GB every time,
-and a daily one fills an 80 GB VM disk in about a week. Exclude it, and
-rotate old archives:
-
-The database inside that archive is sensitive: live session tokens, the
-JWKS private key that signs Jellyfin's OIDC tokens, the OAuth client
-secret, hashed sign-in codes. Keep the archives owner-only and, ideally,
-encrypted at rest — [`age`](https://github.com/FiloSottile/age) with a
-passphrase is the least ceremony (`apt install age`):
+`video-cache/` is a pure derivative of the media share and must not be
+backed up. The database is sensitive: live session tokens, the JWKS
+private key that signs Jellyfin's OIDC tokens, the OAuth client secret and
+hashed sign-in codes. Keep archives owner-only and encrypted at rest;
+[`age`](https://github.com/FiloSottile/age) with a passphrase is the least
+ceremony (`apt install age`):
 
 ```bash
 umask 077
@@ -400,41 +229,24 @@ docker run --rm -v mediavault_data:/data alpine \
 find "$HOME" -maxdepth 1 -name 'mediavault-data-*.tar.gz*' -mtime +14 -delete
 ```
 
-(Without `age`, drop the pipe and write the `.tar.gz` directly — the
-`umask 077` alone already stops other accounts on the VM reading it.)
+Restore, then chown the volume again (see [Running as non-root](#running-as-non-root)):
 
-The cache layout changed with HLS playback (`PLAYBACK_PLAN.md`): entries are
-now directories (`film-42/`, `film-42-remote/`), and the app sweeps
-anything else in the cache dir — including the old single-file `*.mp4`
-output — on its first playback call after a deploy. So the first play of
-each film after that deploy prepares again; nothing to do by hand.
+```bash
+age -d "$HOME/mediavault-data-YYYY-MM-DD.tar.gz.age" \
+  | docker run --rm -i -v mediavault_data:/data alpine tar xz -C /data
+```
 
-If the disk has already filled, the cache is safe to empty outright while
-the app is running — anything mid-play is re-prepared on the next Play:
+If the disk fills, the video cache is safe to empty while the app runs:
 
 ```bash
 docker run --rm -v mediavault_data:/data alpine sh -c 'rm -rf /data/video-cache/*'
 ```
 
-To restore from a backup (then `chown -R 1000:1000` the volume again — see
-[Running as non-root](#running-as-non-root)):
-
-```bash
-age -d "$HOME/mediavault-data-YYYY-MM-DD.tar.gz.age" \
-  | docker run --rm -i -v mediavault_data:/data alpine tar xz -C /data
-# or, for an unencrypted archive:
-docker run --rm -v mediavault_data:/data -v "$HOME":/backup alpine tar xzf /backup/mediavault-data-YYYY-MM-DD.tar.gz -C /data
-```
-
 ### Docker build cache
 
-Every `up -d --build` in [Updating the deployment](#updating-the-deployment)
-leaves its layer cache behind, and on an 80 GB VM this grows much faster
-than `video-cache/` ever does — `docker system df` has shown 20+ GB of
-build cache (mostly reclaimable) versus a few GB of actual video cache.
-It's unrelated to the app's own housekeeping (E of `docs/TEST_PLAN_2026-09.md`
-only covers `video-cache/`), so prune it by hand occasionally, especially
-if a prepare is refused for lack of disk space:
+Every `up -d --build` leaves its layer cache behind, and on an 80 GB VM
+this grows faster than anything the app writes. Prune it now and then,
+especially if a deploy or transcode complains about disk space:
 
 ```bash
 docker builder prune -f

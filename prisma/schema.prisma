@@ -227,7 +227,7 @@ model EpisodeFile {
 
 model ScanRun {
   id         Int       @id @default(autoincrement())
-  kind       String // SCAN | ENRICH | JELLYFIN | ENRICH_MUSIC
+  kind       String // RunKind in src/lib/runs.ts: SCAN_* | ENRICH_* | JELLYFIN
   status     String    @default("RUNNING")
   startedAt  DateTime  @default(now())
   finishedAt DateTime?
