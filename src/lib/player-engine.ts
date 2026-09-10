@@ -52,6 +52,7 @@ import {
   DEFAULT_VOLUME,
   EMPTY_SNAPSHOT,
   type PlaybackContext,
+  type PlayerLoadError,
   type PlayerSnapshot,
   type PlayerStatus,
   type QueueEntry,
@@ -161,6 +162,7 @@ export class PlayerEngine {
   private repeat = false;
   private volume = DEFAULT_VOLUME;
   private context: PlaybackContext | null = null;
+  private lastError: PlayerLoadError | null = null;
 
   private readonly listeners = new Set<() => void>();
   private snapshot: PlayerSnapshot = EMPTY_SNAPSHOT;
@@ -199,9 +201,18 @@ export class PlayerEngine {
       repeat: this.repeat,
       volume: this.volume,
       context: this.context,
+      lastError: this.lastError,
     };
     for (const listener of this.listeners) listener();
   }
+
+  /** Dismiss the current load-error banner. Does nothing once a later
+   *  successful schedule has already cleared it. */
+  dismissError = () => {
+    if (!this.lastError) return;
+    this.lastError = null;
+    this.emit();
+  };
 
   // ---------------------------------------------------------------------
   // Queue helpers
@@ -304,6 +315,9 @@ export class PlayerEngine {
       // A pause that landed while this entry was still loading suspended
       // the context; leave the status alone so play() is what resumes it.
       if (this.status !== "paused") this.status = "playing";
+      // A real track is now audibly scheduled — any earlier load-failure
+      // banner (this one or an already-skipped one) no longer applies.
+      this.lastError = null;
       this.emit();
     }
 
@@ -337,6 +351,13 @@ export class PlayerEngine {
         this.pending.delete(key);
         console.warn(`[player] skipping "${entry.title}" — failed to load:`, err);
         if (session !== this.session || !this.wanted(key)) return;
+        // Visible, not just console.warn'd — a fetch/decode failure here
+        // otherwise looks identical to normal playback (status stays
+        // whatever it was, the chain just silently skips ahead), which is
+        // exactly what made an off-LAN network failure indistinguishable
+        // from "plays but no sound" without a laptop tethered to inspect
+        // the console.
+        this.lastError = { title: entry.title, message: err instanceof Error ? err.message : String(err) };
         // Leave a zero-duration passthrough anchor so the chain can still
         // advance past this broken entry instead of stalling forever.
         const prevKey = this.prevKey(key) ?? NO_PREDECESSOR;
@@ -351,6 +372,7 @@ export class PlayerEngine {
           this.advanceFrom(key, session);
           return;
         }
+        this.emit();
         this.prefetch(this.nextKey(key), session);
       });
   }
@@ -390,14 +412,29 @@ export class PlayerEngine {
     const entry = this.entry(next);
     this.currentKey = next;
     this.releaseBuffersExcept(next);
-    // Playback reached `next` (already scheduled & decoded) — now, and only
-    // now, pull in the entry after it.
+    // The normal case (a real onended) always finds `next` already
+    // fetched — scheduleAt's own prefetch-the-successor call saw to that
+    // — so this is a no-op there. But advanceFrom is also called directly
+    // from a failed *current* track's load (see prefetch()'s catch),
+    // where `next` was never requested by anyone: without this, currentKey
+    // moves on but nothing ever fetches its buffer, leaving status stuck
+    // at "loading" — which the player bars render identically to
+    // "playing" — forever silent.
+    this.prefetch(next, session);
+    // Playback reached `next` (already scheduled & decoded, in the normal
+    // case) — now, and only now, pull in the entry after it.
     this.prefetch(this.nextKey(next), session);
 
     const info = this.schedule.get(next);
     if (info) {
       this.duration = info.duration;
       this.status = "playing";
+      // Only a *real* scheduled source (this.sources.has) means `next`
+      // actually decoded and is audibly playing — a zero-duration
+      // passthrough anchor (see prefetch()'s catch) also leaves `info` set
+      // but for a track that itself failed, so it must not clear the
+      // banner that failure just raised.
+      if (this.sources.has(next)) this.lastError = null;
     } else {
       // Prefetch for `next` hasn't resolved yet — scheduleAt will flip this
       // back to "playing" (and set the real duration) once it does.

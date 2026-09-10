@@ -268,13 +268,54 @@ describe("PlayerEngine", () => {
     const t2 = makeTrack();
     engine.playTracks([t1, t2]);
 
-    loader.reject(t1.trackId);
+    loader.reject(t1.trackId, new Error("HTTP 504"));
     await flush();
 
     const snap = engine.getSnapshot();
     expect(snap.current?.trackId).toBe(t2.trackId);
     expect(snap.status).toBe("loading");
     expect(fake.sources).toHaveLength(0); // t1 never got a source
+    // A failed load is visible in the snapshot, not just console.warn'd —
+    // this is what makes an off-LAN network failure distinguishable from
+    // "plays but no sound" without a laptop tethered to the console.
+    expect(snap.lastError).toEqual({ title: t1.title, message: "HTTP 504" });
+    // The whole point of advancing off a failed current track: the new
+    // current entry must actually be requested, not just pointed at —
+    // otherwise status stays "loading" (which the player bars render
+    // identically to "playing") forever, with nothing ever fetched.
+    expect(loader.countFor(t2.trackId)).toBe(1);
+  });
+
+  it("clears lastError once playback reaches a real (successfully decoded) track", async () => {
+    const t1 = makeTrack();
+    const t2 = makeTrack();
+    engine.playTracks([t1, t2]);
+
+    loader.reject(t1.trackId);
+    await flush();
+    expect(engine.getSnapshot().lastError).not.toBeNull();
+
+    loader.resolve(t2.trackId, 42);
+    await flush();
+
+    const snap = engine.getSnapshot();
+    expect(snap.status).toBe("playing");
+    expect(snap.lastError).toBeNull();
+  });
+
+  it("dismissError clears lastError and is a no-op once already clear", async () => {
+    const t1 = makeTrack();
+    engine.playTracks([t1]);
+    loader.reject(t1.trackId);
+    await flush();
+    expect(engine.getSnapshot().lastError).not.toBeNull();
+
+    engine.dismissError();
+    expect(engine.getSnapshot().lastError).toBeNull();
+
+    // Second call: nothing to clear, must not throw or emit a bogus change.
+    engine.dismissError();
+    expect(engine.getSnapshot().lastError).toBeNull();
   });
 
   // -----------------------------------------------------------------------

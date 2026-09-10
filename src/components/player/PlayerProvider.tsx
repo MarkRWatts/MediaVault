@@ -77,7 +77,30 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       snapshot.status === "playing" || snapshot.status === "loading" ? "playing" : snapshot.status === "paused" ? "paused" : "none";
   }, [snapshot.status]);
 
-  return <PlayerContext.Provider value={{ snapshot, engine: engine() }}>{children}</PlayerContext.Provider>;
+  return (
+    <PlayerContext.Provider value={{ snapshot, engine: engine() }}>
+      {children}
+      {snapshot.lastError && (
+        <div
+          role="alert"
+          className="fixed inset-x-3 top-[calc(env(safe-area-inset-top)+0.75rem)] z-50 mx-auto flex max-w-md items-start gap-3 rounded-2xl border border-danger/40 bg-bg-elevated/95 px-4 py-3 text-sm shadow-lg shadow-black/40 backdrop-blur-md"
+        >
+          <div className="min-w-0 flex-1">
+            <p className="font-medium text-text">Couldn&apos;t play &ldquo;{snapshot.lastError.title}&rdquo;</p>
+            <p className="truncate text-text-muted">{snapshot.lastError.message}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => engine().dismissError()}
+            aria-label="Dismiss"
+            className="shrink-0 text-text-muted hover:text-text"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+    </PlayerContext.Provider>
+  );
 }
 
 /** The engine and its live snapshot. Throws outside PlayerProvider, which

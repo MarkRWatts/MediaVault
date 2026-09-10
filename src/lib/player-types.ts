@@ -39,6 +39,17 @@ export type PlaybackContext =
   | { kind: "favourites" }
   | { kind: "queue" };
 
+/** A track that failed to fetch/decode — set when prefetch()'s load rejects,
+ *  cleared the next time any entry schedules successfully. Surfaced as a
+ *  dismissable banner (see PlayerProvider) since the engine otherwise only
+ *  console.warn's and silently skips ahead, which looks like normal
+ *  playback with no sound on a network that's dropping/timing out the
+ *  fetch — see the off-LAN iPhone report this was added for. */
+export interface PlayerLoadError {
+  title: string;
+  message: string;
+}
+
 export interface PlayerSnapshot {
   status: PlayerStatus;
   /** Every entry in insertion order — the natural order shuffle restores. */
@@ -53,6 +64,7 @@ export interface PlayerSnapshot {
   repeat: boolean;
   volume: number;
   context: PlaybackContext | null;
+  lastError: PlayerLoadError | null;
 }
 
 export const DEFAULT_VOLUME = 0.85;
@@ -71,4 +83,5 @@ export const EMPTY_SNAPSHOT: PlayerSnapshot = Object.freeze({
   repeat: false,
   volume: DEFAULT_VOLUME,
   context: null,
+  lastError: null,
 }) as PlayerSnapshot;
