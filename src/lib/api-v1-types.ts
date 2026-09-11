@@ -158,3 +158,50 @@ export interface PlaylistsResponse {
 /** GET /api/v1/music/playlists/:id — the playlist as a ready queue, same
  *  shape the web's playlist page fetches. */
 export type PlaylistDetailResponse = PlaylistDetail;
+
+// ---------------------------------------------------------------------------
+// Mutations (IOS_PLAN.md "A versioned native API", "To share code rather
+// than copy" — the request/response shapes for the routes that wrap
+// music-user-state.ts / film-user-state.ts).
+// ---------------------------------------------------------------------------
+
+/** PUT/DELETE .../favourite — the shared shape for every favourite toggle
+ *  in the app: films, shows, and each of the three music kinds. PUT sets
+ *  it on, DELETE sets it off; both are idempotent, so the response is
+ *  always the state the caller asked for, not whether anything changed. */
+export interface FavouriteResponse {
+  favourite: boolean;
+}
+
+/** POST /api/v1/music/playlists body. */
+export interface CreatePlaylistBody {
+  name: string;
+}
+
+/** PATCH /api/v1/music/playlists/:id body. */
+export interface RenamePlaylistBody {
+  name: string;
+}
+
+/** PATCH /api/v1/music/playlists/:id response. */
+export interface RenamePlaylistResponse {
+  id: number;
+  name: string;
+}
+
+/** DELETE /api/v1/music/playlists/:id response. */
+export interface DeletePlaylistResponse {
+  ok: true;
+}
+
+/** POST .../music/playlists/:id/items body — tracks to append, in order. */
+export interface AddPlaylistItemsBody {
+  trackIds: number[];
+}
+
+/** PUT .../music/playlists/:id/items body — the complete new order of this
+ *  playlist's PlaylistItem ids, exactly as PlaylistView's drag-and-drop
+ *  reorder sends it on the web. */
+export interface ReorderPlaylistItemsBody {
+  itemIds: number[];
+}

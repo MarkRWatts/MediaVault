@@ -1,6 +1,18 @@
-// Per-viewer state the film page's action row shows: whether this person
-// has favourited the film, and whether they have any watch record for it
-// (in progress or completed) that the "reset viewed" button could clear.
+// Per-viewer state and mutations for the film/show pages: whether this
+// person has favourited the film/show (in progress or completed) that the
+// "reset viewed" button could clear, and the favourite toggle itself.
+//
+// The favourite toggles used to live entirely in app/actions/film-state.ts.
+// They moved here (IOS_PLAN.md "A versioned native API", "To share code
+// rather than copy") so both the web's server action and /api/v1's
+// favourite route call exactly the same validated logic; each caller
+// resolves its own userId and does its own revalidatePath calls afterwards
+// (a Next.js page-cache concern that belongs at the call site).
+//
+// Each favourite comes in a "set" and a "toggle" form, same split as
+// music-user-state.ts: setXFavourite is the idempotent primitive the API's
+// PUT/DELETE routes want; toggleXFavourite, what the web's heart button
+// wants, reads the current state and calls set with the opposite.
 
 import { prisma } from "@/lib/db";
 
@@ -28,6 +40,52 @@ export async function getShowUserState(userId: string, showId: number): Promise<
     }),
   ]);
   return { favourite: favourite !== null, watched: progress !== null };
+}
+
+// ---------------------------------------------------------------------------
+// Favourite toggles
+// ---------------------------------------------------------------------------
+
+/** Set (idempotently) whether filmId is favourited for this person. */
+export async function setFilmFavourite(userId: string, filmId: number, favourite: boolean): Promise<{ favourite: boolean }> {
+  if (!Number.isInteger(filmId)) throw new Error("invalid film id");
+  const existing = await prisma.filmFavourite.findUnique({ where: { userId_filmId: { userId, filmId } } });
+  if (favourite && !existing) {
+    await prisma.filmFavourite.create({ data: { userId, filmId } });
+  } else if (!favourite && existing) {
+    await prisma.filmFavourite.delete({ where: { userId_filmId: { userId, filmId } } });
+  }
+  return { favourite };
+}
+
+export async function toggleFilmFavourite(userId: string, filmId: number): Promise<{ favourite: boolean }> {
+  if (!Number.isInteger(filmId)) throw new Error("invalid film id");
+  const existing = await prisma.filmFavourite.findUnique({
+    where: { userId_filmId: { userId, filmId } },
+    select: { userId: true },
+  });
+  return setFilmFavourite(userId, filmId, existing === null);
+}
+
+/** Set (idempotently) whether showId is favourited for this person. */
+export async function setShowFavourite(userId: string, showId: number, favourite: boolean): Promise<{ favourite: boolean }> {
+  if (!Number.isInteger(showId)) throw new Error("invalid show id");
+  const existing = await prisma.showFavourite.findUnique({ where: { userId_showId: { userId, showId } } });
+  if (favourite && !existing) {
+    await prisma.showFavourite.create({ data: { userId, showId } });
+  } else if (!favourite && existing) {
+    await prisma.showFavourite.delete({ where: { userId_showId: { userId, showId } } });
+  }
+  return { favourite };
+}
+
+export async function toggleShowFavourite(userId: string, showId: number): Promise<{ favourite: boolean }> {
+  if (!Number.isInteger(showId)) throw new Error("invalid show id");
+  const existing = await prisma.showFavourite.findUnique({
+    where: { userId_showId: { userId, showId } },
+    select: { userId: true },
+  });
+  return setShowFavourite(userId, showId, existing === null);
 }
 
 /** For the Shows page's card overlays. */

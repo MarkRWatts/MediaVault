@@ -730,6 +730,10 @@ describe("playlists", () => {
     });
 
     it("throws for more than 500 ids", async () => {
+      // The cap is checked before the playlist is even looked up (see
+      // music-user-state.ts's addTracksToPlaylist), so a signed-in member
+      // still hits it regardless of whether playlist 1 is theirs.
+      await seedSignedInMember("pl-add-toomany");
       const tooMany = Array.from({ length: 501 }, (_, i) => i + 1);
       await expect(addTracksToPlaylist(1, tooMany)).rejects.toThrow("at most 500 tracks");
     });
