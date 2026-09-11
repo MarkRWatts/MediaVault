@@ -483,3 +483,24 @@ it a thing the household can rely on.
   Tunnel without a session (phase 6).
 - `docs/TEST_PLAN_2026-09.md`-style manual pass for the background
   checklist, on a real iPhone, over cellular.
+
+## Status (11 Sep 2026)
+
+- **Server (this repo): phases 0, 1 and the server half of 3 are in.**
+  Bearer sessions (`bearer()` in `src/lib/auth.ts`, the header accepted in
+  `src/proxy.ts`, `src/proxy.test.ts`); `GET /api/audio/:id/file`; the
+  `/api/v1` reads and mutations under `src/app/api/v1/` typed in
+  `src/lib/api-v1-types.ts`, with the favourite and playlist logic moved
+  into `src/lib/music-user-state.ts` and `film-user-state.ts` so the
+  server actions and the routes share it. Phase 6 (passkeys) is not
+  started.
+- **App: `MarkRWatts/MediaVaultiOS`** holds `MediaVaultKit` (API client,
+  DTOs, Keychain token store, sign-in flow, `QueueModel` with tests) and
+  the phase-2 app target (sign-in, music screens, `AVQueuePlayer` engine,
+  audio session, Now Playing, remote commands, persisted queue). Movies
+  and Shows are title lists only; phase 3's hearts and playlist editing
+  in the app, and phase 4's video, are next.
+- **Nothing in the app has been compiled yet**: it was written without a
+  Swift toolchain to hand. The repo's README carries a first-build
+  checklist of the spots most likely to need a fix. Build it on a Mac
+  before writing more Swift on top.
