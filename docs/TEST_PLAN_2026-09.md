@@ -1,5 +1,11 @@
 # MediaVault — Manual test plan, September 2026
 
+> **Status (10 Sep 2026):** historical. Sections A, E and F describe the
+> app's own ffmpeg/HLS pipeline, which was parked behind `IN_APP_PLAYBACK=1`
+> on 5 Sep 2026 when in-app video playback moved to Jellyfin's transcoder
+> (see `PLAYBACK_PLAN.md` → Status). Section B's real-device passkey pass is
+> still outstanding. Kept as the record of what was checked and how.
+
 Covers everything merged or opened since **31 August 2026**:
 
 | # | Change | PR | Status |
@@ -182,7 +188,6 @@ own; after three stalls in a minute a hint appears.
 | F1.8 | **Direct-play file** (MP4) in Safari and Chrome. | Uses `/stream` with 206s, no `/hls/`. Quality → Remote on it still works (it prepares a 720p rendition). |
 | F1.9 | **DVD source (MPEG-2)**. | Prepares with a video transcode; expect ~1–2× realtime on the VM, so a 90-minute DVD is watchable from the start but seeking far ahead waits. Plays on Original. |
 | F1.10 | **TrueHD / DTS-HD source**. | Audio is transcoded to AAC in Original; check lip-sync and that surround → stereo/5.1 downmix sounds right. |
-| F1.11 | **Adult scene** playback (same routes under `/api/adult-video/`). | Works exactly as films; signed out of adult access → the HLS routes 403, not a blank player. |
 
 ### F2. Remote, over Tailscale (the case that started this)
 

@@ -2,214 +2,203 @@
   <img src="docs/logo.png" alt="MediaVault" width="320" />
 </p>
 
-A household index of a DVD/Blu-ray film and TV collection stored on a NAS
-SMB share (also served by Jellyfin), plus a Discogs-backed music library with
-physical CD/vinyl pressing tracking. It scans the share, probes every file
-with ffprobe for real resolution and soundtracks, enriches from TMDB/Discogs,
-and presents a poster-forward library with collection timelines,
-season-by-season show pages, in-browser playback, and a "what's missing"
-collector's report — shared across a household, each member with their own
-sign-in and watch history.
+MediaVault is a household media library for a film, TV and music collection
+kept on a NAS share and served by Jellyfin. It scans the share, probes every
+file with ffprobe for its real resolution and soundtracks, enriches the
+result from TMDB, Discogs and Spotify, and presents a poster-forward library
+that the whole household signs into: each member has their own sign-in,
+favourites, playlists and watch history, while the catalogue itself is
+shared.
 
-- **Library** — every owned film, searchable/filterable, with format
-  (4K/Blu-ray/DVD) and resolution badges. A film can be tagged as owned on a
-  physical medium independent of whether it's been ripped, and a barcode
-  scanner page (camera or a USB scanner gun) looks up a physical item against
-  the library while you're stood in front of the shelf.
-- **Film detail** — editions (theatrical vs director's cut), resolutions,
-  soundtracks (Dolby/DTS profile badges, HDR labels), file details,
-  in-browser playback (on-demand ffmpeg remux/transcode served as HLS while
-  it's still being prepared — no separate encode-then-wait step, seeking
-  works from the first segment, and a "Remote" 720p quality is there for
-  connections that can't carry a Blu-ray bitrate), and per-version "Play in
-  Jellyfin" links.
-- **Shows** — TV series with per-season episode lists, missing episodes
-  greyed out, in-browser playback, and per-episode play links. Episode
-  numbering follows disc order (TMDB DVD episode groups), because this is a
-  disc library.
-- **Music** — artists with studio back-catalogues from Discogs, owned vs
-  missing albums shown by colour, lossless/codec + quality badges
-  (`ALAC · 16/44.1`). An album page switches between the Digital copy and
-  any physical CD/vinyl pressings you own — each pressing can be linked to
-  its own Discogs release for its own tracklist, catalogue number, and cover
-  art (falling back to the digital files' own embedded artwork) — alongside
-  **gapless in-browser music playback** — app-wide persistent player with queue
-  that keeps playing while you browse, lossless end-to-end (every track streams as raw PCM at the device's sample rate,
-  sample-accurate Web Audio track joins, no transcoding of lossy files).
-- **Collections** — film series (James Bond, Alien, …) in release-order
-  timelines with missing films greyed out.
-- **Report** — missing films per collection, missing seasons/episodes per
-  show, Blu-ray upgrade candidates, and files needing metadata attention.
-- **Stats** — per-member watch history and viewing stats.
-- **Households** — email one-time-code sign-in (no passwords), invite-based
-  membership so the library is shared with family without a separate account
-  per service, and an owner-only admin area for managing members and
-  integrations.
+It is a collector's tool as much as a player. Films can be marked as owned
+on DVD, Blu-ray or Ultra HD Blu-ray independently of whether they have been
+ripped; albums track the CD and vinyl pressings on the shelf, each linked to
+its own Discogs release; a barcode scanner adds new discs from the camera or
+a USB scanner gun; and a report page lists what is missing from every
+collection, show and back catalogue.
+
+## What it does
+
+- **Movies** — every owned film, searchable and filterable by video and
+  audio codec, with disc-format marks (DVD, Blu-ray, Ultra HD Blu-ray),
+  resolution and HDR badges, and BBFC certificates. Films in the same
+  collection stack into one card. Shelves for continue watching, favourites,
+  new releases and recently added, each collapsible.
+- **Film detail** — every version on disk (theatrical vs director's cut,
+  DVD vs Blu-ray) with its resolution, codec, size and soundtrack list
+  (Dolby, DTS-HD MA, TrueHD, channel layout, language), a Play button, a
+  favourite heart and a reset-viewed control.
+- **Shows** — TV series with season-by-season episode lists, missing
+  episodes greyed out, per-episode Play buttons, a continue-watching row,
+  and favourites. Episode numbering follows disc order (TMDB DVD episode
+  groups), because this is a disc library.
+- **Playback** — films and episodes play in the app through Jellyfin's
+  transcoder, brokered by MediaVault so the Jellyfin API key never reaches
+  the browser. Two qualities: Original (video copied, audio transcoded only
+  where needed) and Remote (720p, about 4 Mbit/s), with Remote the default
+  when a viewer arrives from the internet. Resume position, completion and
+  play counts are recorded per member.
+- **Music** — artists with their Discogs studio back catalogue, owned
+  albums shown against the gaps, artist photos from Spotify or Discogs and
+  biographies from Discogs or Wikipedia. The index and each artist page are
+  grouped by the format you own: Digital & CD, and Vinyl. An album page
+  switches between the digital copy and each physical pressing, with the
+  pressing's own tracklist, catalogue number and cover art.
+- **Music player** — gapless, lossless, app-wide. Every track streams as raw
+  PCM at the device's own sample rate and starts on the first half-second
+  chunk, so playback begins about 100 ms after the click on the LAN.
+  Playback survives navigation. A right-hand rail holds the Now Playing
+  card, a cross-album queue (play next, add to queue, reorder) and the
+  playlists list; on a phone it is a strip above the tab bar that opens a
+  full-screen sheet.
+- **Favourites and playlists** — per member: favourite films, shows,
+  tracks, albums and artists. Favouriting an album or artist creates a
+  linked playlist of its playable tracks, and un-favouriting removes it.
+  Playlists can be renamed, reordered by drag with multi-select, and
+  played or shuffled from the rail.
+- **Collections** — film series in release-order timelines with missing
+  films greyed out and a completion bar.
+- **Report** (app owner) — missing films per collection, missing episodes
+  per show, missing albums per artist, Blu-ray upgrade candidates, films
+  that need a metadata look, and a codec breakdown of every disc.
+- **Stats** — each member's own watch time, most-watched titles and genres,
+  and recent history across films and episodes.
+- **Scan** (app owner) — barcode lookup against Discogs, TMDB and a UPC
+  database, with a persistent cross-device scan queue for a batch session
+  at the shelf.
+- **Households** — email one-time-code sign-in with no passwords, optional
+  passkeys per device (Face ID, Touch ID, Windows Hello, security keys),
+  invite-based membership, an access-code web of trust for new households,
+  and an owner-only admin area for access codes, the audit log, scan and
+  enrich runs and integrations. Members can also sign into Jellyfin itself
+  with their MediaVault account.
 
 ## Screenshots
 
-| Library | Film detail |
+| Movies | Film detail |
 | --- | --- |
-| ![Library grid](docs/screenshots/library.png) | ![Film detail with versions and soundtracks](docs/screenshots/film-detail.png) |
+| ![Movies grid with the sidebar, format marks and player rail](docs/screenshots/library.png) | ![Film detail with versions, soundtracks and the Play button](docs/screenshots/film-detail.png) |
+
+| Shows | Show detail |
+| --- | --- |
+| ![Shows grid with completion bars](docs/screenshots/shows.png) | ![Season-by-season episode lists with per-episode Play](docs/screenshots/show-detail.png) |
 
 | Collections | Collection timeline |
 | --- | --- |
-| ![Collections grid](docs/screenshots/collections.png) | ![Release-order timeline with missing films greyed](docs/screenshots/collection-timeline.png) |
+| ![Collections grid with completion](docs/screenshots/collections.png) | ![Release-order timeline](docs/screenshots/collection-timeline.png) |
 
-| Show detail | Report |
+| Music | Artist |
 | --- | --- |
-| ![Season-by-season episode lists](docs/screenshots/show-detail.png) | ![Collector's report with collapsible sections](docs/screenshots/report.png) |
+| ![Music index with favourites and the Digital & CD shelf](docs/screenshots/music-library.png) | ![Artist page grouped by owned format, with the Discogs gap count](docs/screenshots/music-artist.png) |
 
-| Music library | Artist back catalogue |
+| Album, playing | Playlist |
 | --- | --- |
-| ![Artist grid with embedded cover art and owned/total counts](docs/screenshots/music-library.png) | ![Decade-grouped studio albums, owned vs missing](docs/screenshots/music-artist.png) |
+| ![Album page with the Now Playing rail and queue](docs/screenshots/music-album.png) | ![Playlist page with drag reorder, player still running](docs/screenshots/music-playlist.png) |
 
-<p align="center">
-  <img src="docs/screenshots/music-album.png" alt="Album detail with per-disc track list, quality badges, and the gapless player" width="900" />
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/report-expanded.png" alt="Missing-from-collections section expanded, showing gap posters per collection" width="900" />
-</p>
+| Report | Report, expanded |
+| --- | --- |
+| ![Collector's report with collapsible sections](docs/screenshots/report.png) | ![Missing-from-collections section expanded](docs/screenshots/report-expanded.png) |
 
 ## Stack
 
-Next.js 16 (App Router) · Prisma 7 + SQLite · Tailwind v4 · BetterAuth ·
-ffprobe/ffmpeg · TMDB API · Discogs API · Jellyfin API. See
-[PLAN.md](PLAN.md) for design decisions,
-[HOUSEHOLDS_PLAN.md](HOUSEHOLDS_PLAN.md) for the auth/households design, and
-[DEPLOYMENT.md](DEPLOYMENT.md) for Docker/VM deployment (shared-Caddy `edge`
-network pattern).
+Next.js 16 (App Router, React 19) · Prisma 7 + SQLite · Tailwind 4 ·
+BetterAuth (email OTP, passkeys, households, OIDC provider) · hls.js ·
+Web Audio · ffprobe/ffmpeg · TMDB · Discogs · Spotify · Wikipedia ·
+Jellyfin · Resend.
+
+Documentation:
+
+| File | What it covers |
+| --- | --- |
+| [PLAN.md](PLAN.md) | Architecture, data model, pipelines, playback design, access model, and the current roadmap. |
+| [DEPLOYMENT.md](DEPLOYMENT.md) | Docker and VM deployment, the shared Caddy edge, Cloudflare Tunnel exposure, backups, owner-run scripts. |
+| [HOUSEHOLDS_PLAN.md](HOUSEHOLDS_PLAN.md) | Design record: accounts, the web of trust, roles, watch history, Jellyfin SSO. |
+| [PASSKEYS_PLAN.md](PASSKEYS_PLAN.md) | Design record: passkey sign-in. |
+| [PLAYBACK_PLAN.md](PLAYBACK_PLAN.md) | Design record: in-app video playback, and why it moved to Jellyfin. |
+| [PLAYLISTS_PLAN.md](PLAYLISTS_PLAN.md) | Design record: the app-wide music engine, right rail, favourites and playlists. |
+| [SIDEBAR_PLAN.md](SIDEBAR_PLAN.md) | Design record: the shared left-sidebar shell. |
+| [docs/TEST_PLAN_2026-09.md](docs/TEST_PLAN_2026-09.md) | Manual test plan from the September 2026 playback and passkey rollout. |
 
 ## Configuration
 
-Everything external is an environment variable — no hostnames or paths are
-hardcoded. Local dev reads `.env` (template: [.env.example](.env.example));
-the Docker deployment reads `.env.docker` on the server (template:
-[.env.docker.example](.env.docker.example)).
+Everything external is an environment variable. Local dev reads `.env`
+(template: [.env.example](.env.example)); the Docker deployment reads
+`.env.docker` on the server (template:
+[.env.docker.example](.env.docker.example)). The templates carry the full
+list with comments; the tables below cover what matters most.
 
 ### Media paths
 
 | Variable | Meaning |
 | --- | --- |
-| `MOVIES_PATH` | Folder of movie files the scanner walks (e.g. `/Volumes/media/Movies` locally, `/media-share/Movies` in the container). |
-| `TVSHOWS_PATH` | Folder of TV shows (`Show (Year)/Season NN/Show SxxEyy.ext`). Optional — unset skips all TV features. |
-| `MUSIC_PATH` | Folder of a music library in iTunes layout (`Artist/Album/NN Track.m4a`). Optional — unset skips all music features. |
-| `POSTER_CACHE_DIR` | Where downloaded TMDB/Discogs artwork is cached. |
-| `VIDEO_CACHE_DIR` | Where on-demand ffmpeg output is cached: one directory per file and quality (`film-42/`, `film-42-remote/`) holding an HLS playlist and its segments — a prepared file is served straight from here on every subsequent play. See [PLAYBACK_PLAN.md](PLAYBACK_PLAN.md). |
-| `VIDEO_CACHE_MAX_BYTES` | Cap on that cache's retained size; before each prepare, least-recently-played files are evicted to make room for the incoming one (in-flight files count). A single output bigger than the cap is still produced and kept until the next prepare needs its space. Independently of the cap, a prepare is refused if it would leave the volume with under 1 GB free. Defaults to 10 GiB if unset. |
+| `MOVIES_PATH` | Folder of movie files the scanner walks. |
+| `TVSHOWS_PATH` | Folder of TV shows (`Show (Year)/Season NN/Show SxxEyy.ext`). Optional; unset skips every TV feature. |
+| `MUSIC_PATH` | Folder of a music library in iTunes layout (`Artist/Album/NN Track.m4a`). Optional; unset skips every music feature. |
+| `POSTER_CACHE_DIR` | Where downloaded artwork is cached (posters, backdrops, covers, artist photos). |
 | `DATABASE_URL` | SQLite location, e.g. `file:./data/mediavault.db`. |
-| `FFPROBE_DOCKER_IMAGE` | Dev-only fallback: run ffprobe via `docker run` when it isn't on PATH (the deploy image installs ffmpeg). |
+| `FFPROBE_DOCKER_IMAGE` | Dev-only fallback: run ffprobe and ffmpeg through `docker run` when they are not on PATH. The deploy image installs ffmpeg. |
 
 ### Authentication (required)
 
-Every route requires a signed-in household member — there is no
-unauthenticated mode. Sign-in is email one-time-code via
-[BetterAuth](https://www.better-auth.com/), so email-sending is a hard
-prerequisite, not optional config. See
-[HOUSEHOLDS_PLAN.md](HOUSEHOLDS_PLAN.md) for the full design. Once signed
-in, each member can add a passkey per device from `/account` (Face ID,
-Touch ID, Windows Hello, a security key) and skip the email code on that
-device from then on — an optional extra, never a replacement; the email
-code always still works. Passkeys need HTTPS (or `localhost`), so a
-plain-http LAN address won't offer them. See
-[PASSKEYS_PLAN.md](PASSKEYS_PLAN.md).
+Every route requires a signed-in household member. Sign-in is an emailed
+one-time code, so email sending is a prerequisite. Passkeys are an optional
+extra per device and need HTTPS or `localhost`.
 
 | Variable | Meaning |
 | --- | --- |
-| `BETTER_AUTH_SECRET` | Session/cookie signing key. Generate with `npx @better-auth/cli secret`. |
-| `BETTER_AUTH_URL` | The app's own public base URL, for building callback/redirect links. Must be a real HTTPS URL in production (also required for Jellyfin SSO discovery, below). |
-| `RESEND_API_KEY` | [Resend](https://resend.com) API key — sends the sign-in one-time-code emails. |
-| `ALLOWED_EMAILS` | Comma-separated email address(es), case-insensitive — the web of trust's root anchor (the app owner's own address(es)). This is the one access grant no database state can lock out. |
+| `BETTER_AUTH_SECRET` | Session and cookie signing key. Generate with `npx @better-auth/cli secret`. |
+| `BETTER_AUTH_URL` | The app's own public base URL. Must be a real HTTPS URL in production; it also sets the passkey origin and the OIDC issuer. |
+| `RESEND_API_KEY` | [Resend](https://resend.com) API key for the sign-in code emails. |
+| `ALLOWED_EMAILS` | Comma-separated addresses that can always sign in: the app owner's. Everyone else gets in through household membership, a pending invitation or a minted access code. |
 
-### SMB share (Docker deployment only)
-
-The production compose mounts the NAS share as a CIFS named volume — the
-Docker daemon performs the mount, so no host mount or sudo is needed. Use a
-dedicated read-only SMB account.
+### Metadata sources
 
 | Variable | Meaning |
 | --- | --- |
-| `MOVIES_SMB_HOST` | NAS hostname or IP. |
-| `MOVIES_SMB_SHARE` | Share name holding the Movies / TV Shows folders. |
-| `MOVIES_SMB_USERNAME` / `MOVIES_SMB_PASSWORD` | Read-only SMB credentials. |
-| `MOVIES_HOST_PATH` | Local-dev bind source; on the server, an empty placeholder dir. |
+| `TMDB_API_KEY` | Free key from themoviedb.org. Optional; without it films and shows are scan-only (no posters, collections, certificates or missing-content detection). |
+| `DISCOGS_TOKEN` | Personal access token. Optional; unauthenticated lookups work, but a token raises the rate limit from 25 to 60 calls a minute, worth having before a full Enrich Music pass. |
+| `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` | A free Spotify developer app. Optional; when set, Spotify is the primary artist-photo source, with Discogs as the fallback. |
+| `AUDIODB_API_KEY` / `FANART_API_KEY` | Currently unused. Those sources were keyed by a MusicBrainz id the app no longer has since the Discogs cutover. Left in place for a future revisit. |
 
-### TMDB
-
-| Variable | Meaning |
-| --- | --- |
-| `TMDB_API_KEY` | Free key or v4 read token from themoviedb.org → Settings → API. Optional — without it the app is scan-only (no posters, metadata, collections, or missing-content detection). |
-
-### Discogs (optional)
-
-Discogs is the sole music metadata source (albums, tracklists, physical
-pressing details/cover art).
-
-| Variable | Meaning |
-| --- | --- |
-| `DISCOGS_TOKEN` | Personal access token from discogs.com → Settings → Developers. Optional — unauthenticated lookups work at this app's scale, but a token raises the rate limit from 25/min to 60/min, worth it before a full-catalogue Enrich Music pass. |
-
-### Artist enrichment (optional)
-
-Biography text, portrait photo, and backdrop image for each artist —
-multi-source with graceful fallback; a missing/failed source just leaves
-that field unset.
-
-| Variable | Meaning |
-| --- | --- |
-| `AUDIODB_API_KEY` | [TheAudioDB](https://www.theaudiodb.com) key. Optional — the shared public test key works fine at this app's scale. |
-| `FANART_API_KEY` | [Fanart.tv](https://fanart.tv) key, for higher-quality backdrop art specifically. No shared key exists — this source is skipped entirely unless set. |
-
-### Jellyfin (optional)
+### Jellyfin
 
 | Variable | Meaning |
 | --- | --- |
 | `JELLYFIN_URL` | Jellyfin base URL, e.g. `http://<nas>:8096`. |
-| `JELLYFIN_API_KEY` | Token from Dashboard → API Keys. Unset disables the integration gracefully. |
-| `JELLYFIN_MOVIES_PREFIX` | Path prefix Jellyfin's movie items carry before the relative file path (default `/media/Movies/`). |
-| `JELLYFIN_TV_PREFIX` | Same for TV episodes (default `/media/TV Shows/`). |
+| `JELLYFIN_API_KEY` | Token from Dashboard → API Keys. Unset disables in-app video playback and the sync. |
+| `JELLYFIN_MOVIES_PREFIX` / `JELLYFIN_TV_PREFIX` | Path prefixes Jellyfin's items carry before the relative file path (defaults `/media/Movies/` and `/media/TV Shows/`). |
+| `JELLYFIN_MAX_SESSIONS` | How many members may stream through Jellyfin at once. Default 2; each is a transcode on the Jellyfin host. |
 
-A sync job matches Jellyfin items to files by path (Unicode-normalized, so
-macOS-scanned NFD paths match Linux NFC ones), runs automatically after every
-scan, and powers the per-version/per-episode "Play in Jellyfin" links.
+A sync job matches Jellyfin items to files by path (Unicode-normalised, so
+macOS-scanned paths match Linux ones), runs after every scan, and is what
+makes a version or episode playable in the app.
 
-### Jellyfin SSO (optional)
-
-Lets household members sign into Jellyfin with their MediaVault account
-instead of a separate Jellyfin password, via
-[jellyfin-plugin-sso](https://github.com/9p4/jellyfin-plugin-sso). No new
-env vars — `BETTER_AUTH_URL`/`BETTER_AUTH_SECRET` (below) already cover it.
-
-One-time setup, from `/admin`'s "Integrations" section (app owner only):
-
-1. Install jellyfin-plugin-sso on the Jellyfin server if it isn't already.
-2. In MediaVault's `/admin`, enter Jellyfin's SSO redirect URI — of the form
-   `https://<jellyfin-host>/sso/OID/redirect/<ProviderName>` — and submit.
-   You get back a `client_id`/`client_secret`, shown once.
-3. In jellyfin-plugin-sso's provider config, set the OIDC endpoint to
-   `{BETTER_AUTH_URL}/api/auth` (jellyfin-plugin-sso appends
-   `/.well-known/openid-configuration` itself) and paste in the
-   `client_id`/`client_secret` from step 2. Requires `BETTER_AUTH_URL` to be
-   a real, publicly reachable HTTPS URL — discovery won't work over plain
-   HTTP or `localhost`.
-
-See `HOUSEHOLDS_PLAN.md` "Post-deploy addition: Jellyfin SSO" for the
-implementation notes.
+**Jellyfin SSO** lets members sign into Jellyfin with their MediaVault
+account through [jellyfin-plugin-sso](https://github.com/9p4/jellyfin-plugin-sso).
+It needs no extra variables. From `/admin` → Integrations, paste Jellyfin's
+SSO redirect URI and you get a client id and secret, shown once; in the
+plugin, set the OIDC endpoint to `{BETTER_AUTH_URL}/api/auth`. Discovery
+only works over a real public HTTPS URL.
 
 ## Development
 
 ```bash
-cp .env.example .env       # fill in paths + keys
-npm install
+cp .env.example .env            # fill in paths, keys and ALLOWED_EMAILS
+npm ci --legacy-peer-deps
 npx prisma migrate dev
-npm run dev                # http://localhost:3000
+npx prisma generate
+npm run dev                      # http://localhost:3000
 ```
 
-Trigger scans from the UI, or hit the API routes directly — each requires an
-authenticated owner session (e.g. pass the browser's session cookie along
-with `curl`, or just use the UI's "Scan"/"Enrich" buttons, which is simpler
-for one-off runs):
+Sign in with an address listed in `ALLOWED_EMAILS`, then grant yourself the
+app-owner role so Scan, Report and Admin appear:
+
+```bash
+npx tsx scripts/grant-app-owner.ts you@example.com
+```
+
+Scans and enrichment run from Admin, or by POSTing to the owner-only API
+routes with the browser's session cookie:
 
 ```bash
 curl -X POST localhost:3000/api/scan/film     # add ?force=1 to re-probe everything
@@ -221,46 +210,44 @@ curl -X POST localhost:3000/api/enrich-music
 curl -X POST localhost:3000/api/jellyfin-sync
 ```
 
+### Owner-run scripts
+
+All run with `npx tsx scripts/<name>.ts` against whatever `DATABASE_URL`
+points at. On the server, run them inside the container (see
+[DEPLOYMENT.md](DEPLOYMENT.md)).
+
+| Script | Purpose |
+| --- | --- |
+| `gen-access-code.ts` | Mint an access code for a new household. |
+| `grant-app-owner.ts` | Give an existing user the app-owner role. |
+| `backfill-certifications.ts` | Fetch BBFC certificates for films and shows enriched before certificates existed. |
+| `reprobe-audio-tracks.ts` | Refresh audio-track dispositions so the main soundtrack, not an audio-description track, is picked. |
+| `attach-cd-discogs-releases.ts`, `backfill-album-discogs-url.ts`, `backfill-digital-cover-from-cd.ts` | One-off music backfills from the Discogs cutover. |
+| `export-discogs-snapshot.ts`, `apply-discogs-snapshot.ts` | Copy a verified set of Discogs matches from one database to another. |
+
 ## Tests
 
 ```bash
-npx vitest run
+npm run lint && npm run typecheck && npm test
 ```
 
-The filename parsers are tested against the real quirks of a lived-in library:
-missing years, `[imdbid-…]`/`[tmdbid-…]` tags, edition brackets, underscores,
-glued tags, typo'd extensions, unpadded season folders, flat show layouts, and
-multi-episode files.
+CI runs the same three plus `npm audit` on production dependencies. The
+unit suite covers the filename parsers against a lived-in library's quirks,
+the access model (web of trust, access codes, route guards, session
+cookies), the player engine against a fake audio context, playlist
+mutations, the Jellyfin playback broker, and the parked ffmpeg pipeline,
+including a real-ffmpeg HLS integration test.
 
-### Passkeys end to end
-
-A WebAuthn ceremony needs an authenticator, so the passkey flows have their
-own browser-driven check (see [PASSKEYS_PLAN.md](PASSKEYS_PLAN.md)). It
-starts its own throwaway `next dev` on a scratch SQLite database and drives
-Chromium with a virtual authenticator — nothing touches your real
-`.env`, database, or email. Once per machine:
-
-```bash
-npx playwright install chromium
-```
-
-then:
-
-```bash
-npx tsx scripts/e2e-passkey.ts
-```
-
-Takes about a minute. `E2E_PORT` picks the throwaway server's port
-(default 3007); `E2E_CHROMIUM` points at a specific Chromium binary.
-
-In-browser playback (HLS via hls.js, quality switching, direct-play byte
-ranges) has a sibling harness that seeds two synthetic films and plays
-them. Playwright's own Chromium has no H.264/AAC decoder, so point it at a
-real Chrome (see [PLAYBACK_PLAN.md](PLAYBACK_PLAN.md)):
+Two browser-driven harnesses cover what unit tests cannot. Both start their
+own throwaway `next dev` on a scratch database and touch nothing real. Point
+them at Google Chrome; Playwright's own Chromium lacks the codecs and its
+download is unreliable here.
 
 ```bash
 E2E_CHROMIUM="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  npx tsx scripts/e2e-playback.ts
+  npx tsx scripts/e2e-passkey.ts      # WebAuthn ceremonies via a virtual authenticator, ~1 min
+E2E_CHROMIUM="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  npx tsx scripts/e2e-playback.ts     # the parked local HLS pipeline, ~3 min, needs ffmpeg on PATH
 ```
 
-Takes two to three minutes; `E2E_PORT` defaults to 3008.
+`E2E_PORT` picks the throwaway server's port (3007 and 3008 by default).
