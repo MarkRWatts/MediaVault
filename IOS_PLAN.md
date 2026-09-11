@@ -104,6 +104,16 @@ cookie.
   `/api/video/*`, `/api/tv-video/*` — works for the app with no
   per-route edits. `route-guards.test.ts` and `session-cookie.test.ts`
   gain the bearer cases.
+- Requests `AVFoundation` makes on its own — a track's bytes, an HLS
+  playlist and its segments — can't carry the header, because
+  `AVURLAsset` has no public option for request headers. The app gives
+  them the session as a cookie instead, through `AVURLAssetHTTPCookiesKey`
+  (`APIClient.sessionCookies()` in the app). The value is the same
+  signed token, percent-encoded the way the server writes the cookie.
+  Nothing changes server-side: the proxy and `getSession()` already read
+  the cookie. The app sends it as both `__Secure-better-auth.session_token`
+  and `better-auth.session_token`, because which name BetterAuth reads
+  depends on whether `BETTER_AUTH_URL` is https; the other is ignored.
 - Sign-in flow the app drives (all existing BetterAuth JSON endpoints under
   `/api/auth/`, already public in the proxy):
   1. `POST /email-otp/send-verification-otp` `{ email, type: "sign-in" }`
@@ -192,8 +202,9 @@ than the site.
 The Jellyfin path is already a plain JSON + HLS API and already what
 AVPlayer wants (PLAYBACK_PLAN.md "Status"): `POST /api/video/:versionId/jf/session?variant=&audio=` returns
 `playlistUrl`, `playSessionId`, `durationSecs`, `audioTracks`; the app
-plays `playlistUrl` (with the bearer on every playlist/segment request,
-via `AVURLAsset`'s `AVURLAssetHTTPHeaderFieldsKey`); `POST …/jf/stop` on
+plays `playlistUrl` (with the session cookie on every playlist/segment
+request, via `AVURLAsset`'s `AVURLAssetHTTPCookiesKey`, as music does —
+see "Bearer sessions"); `POST …/jf/stop` on
 close; `GET/POST …/progress` for resume and history. Episodes are the
 `/api/tv-video/:episodeFileId/…` twins. The concurrent-stream cap and
 "is Jellyfin configured" 503s come back as JSON `error` strings the app
@@ -371,10 +382,10 @@ on dismiss or when the queue moves on. Two cases the web never meets:
 Subtitles are off, matching the server (no subtitle profile in
 `deviceProfile()`). AirPlay works through the standard route picker;
 note that AirPlaying a Jellyfin HLS stream to an Apple TV means the
-Apple TV fetches segments itself with no bearer — so AirPlay for video is
-audio-only (mirroring) until the segment routes accept a short-lived
-signed URL. Music AirPlay is unaffected (the phone decodes and sends
-audio).
+Apple TV fetches segments itself with no session cookie — so AirPlay
+for video is audio-only (mirroring) until the segment routes accept a
+short-lived signed URL. Music AirPlay is unaffected (the phone decodes
+and sends audio).
 
 ### Screens
 
@@ -446,8 +457,14 @@ it a thing the household can rely on.
 - **The 4-core VM.** Music now costs no ffmpeg, so a phone listening
   while someone watches a transcode is strictly better than the web
   doing the same.
-- **AirPlay video to an Apple TV** fetches segments without our bearer —
+- **AirPlay video to an Apple TV** fetches segments without our session —
   documented above as mirroring-only until signed segment URLs exist.
+- **HLS segments and the session cookie.** Music is one progressive file
+  per asset; for video, AVFoundation also has to send the
+  `AVURLAssetHTTPCookiesKey` cookies on every variant playlist and
+  segment request. Caught in phase 4's first play: a 401 partway into a
+  film means it doesn't. The fallback is the signed segment URLs that
+  AirPlay needs anyway.
 - **Proxy change surface.** Accepting `Authorization` in `src/proxy.ts`
   is the one security-relevant edit; it must verify the HMAC exactly as
   for the cookie and must not bypass the `DENIED_AUTH_PREFIXES` 404s.
@@ -500,7 +517,8 @@ it a thing the household can rely on.
   audio session, Now Playing, remote commands, persisted queue). Movies
   and Shows are title lists only; phase 3's hearts and playlist editing
   in the app, and phase 4's video, are next.
-- **Nothing in the app has been compiled yet**: it was written without a
-  Swift toolchain to hand. The repo's README carries a first-build
-  checklist of the spots most likely to need a fix. Build it on a Mac
-  before writing more Swift on top.
+- **The app builds and launches** (MediaVaultiOS PR #1): warning-free
+  in Xcode, to sign-in in the simulator, `MediaVaultKit` tests passing.
+  The first compile is what moved `AVFoundation` onto the session cookie
+  (see "Bearer sessions"). It has not yet run against a live server or
+  on a device; that needs this branch deployed.
