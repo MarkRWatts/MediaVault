@@ -51,6 +51,20 @@ export function splitSignedCookie(raw: string): { value: string; signature: stri
   return { value, signature };
 }
 
+/** Pull the token out of an `Authorization: Bearer <token>` header, or null
+ *  if there isn't one — used by src/proxy.ts to accept a native client's
+ *  bearer session alongside the cookie (IOS_PLAN.md). Case-insensitive on
+ *  the scheme (per RFC 9110) and trims incidental whitespace; does no
+ *  signature verification itself — the caller runs the result through
+ *  verifySessionCookie exactly as it does the cookie value. */
+export function bearerTokenFromHeader(authorization: string | null | undefined): string | null {
+  if (!authorization) return null;
+  const trimmed = authorization.trim();
+  if (trimmed.slice(0, 7).toLowerCase() !== "bearer ") return null;
+  const token = trimmed.slice(7).trim();
+  return token.length > 0 ? token : null;
+}
+
 /** True iff `raw` is a session cookie value signed with `secret`. Any
  *  missing/malformed input, or a missing secret, is simply "no". */
 export async function verifySessionCookie(raw: string | null | undefined, secret: string | undefined): Promise<boolean> {

@@ -7,7 +7,7 @@ import { notFound } from "next/navigation";
 import AlbumFormatTabs from "@/components/AlbumFormatTabs";
 import DeleteAlbumButton from "@/components/DeleteAlbumButton";
 import AlbumActions from "@/components/music/AlbumActions";
-import { getAlbumDetail } from "@/lib/queries-music";
+import { getAlbumDetail, albumTrackToQueueTrack } from "@/lib/queries-music";
 import { getAlbumUserState } from "@/lib/music-user-state";
 import { requireMemberOrRedirect } from "@/lib/require-member";
 import type { AlbumTrackView } from "@/lib/queries-music";
@@ -87,19 +87,7 @@ export default async function AlbumPage({
   // into engine-ready QueueTrack entries with DRM (.m4p — FairPlay,
   // unplayable in-browser) filtered out.
   const queueTracks: QueueTrack[] = album.discs.flatMap((d) =>
-    d.tracks
-      .filter((t) => t.codec !== "drm")
-      .map((t) => ({
-        trackId: t.id,
-        title: t.title,
-        artist: album.artist.name,
-        albumId: album.id,
-        albumTitle: displayTitle,
-        hasCover: album.hasCover,
-        coverVersion: album.coverVersion,
-        durationSecs: t.durationSecs,
-        codec: t.codec,
-      })),
+    d.tracks.filter((t) => t.codec !== "drm").map((t) => albumTrackToQueueTrack(album, displayTitle, t)),
   );
   const canPlay = album.owned && queueTracks.length > 0;
   const drmOnly = album.owned && allTracks.length > 0 && queueTracks.length === 0;

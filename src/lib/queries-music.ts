@@ -470,6 +470,26 @@ export async function getAlbumDetail(id: number): Promise<AlbumDetail | null> {
   };
 }
 
+/** Turn one of an album's tracks into the wire shape the player queue
+ *  expects — the mapping the album page builds its `queueTracks` prop
+ *  with, factored out so /api/v1/music/albums/:id builds the identical
+ *  QueueTrack from the identical AlbumDetail rather than drifting into a
+ *  second copy. `displayTitle` is passed in rather than read off `album`
+ *  since the page titles it through titleCase() first. */
+export function albumTrackToQueueTrack(album: AlbumDetail, displayTitle: string, track: AlbumTrackView): QueueTrack {
+  return {
+    trackId: track.id,
+    title: track.title,
+    artist: album.artist.name,
+    albumId: album.id,
+    albumTitle: displayTitle,
+    hasCover: album.hasCover,
+    coverVersion: album.coverVersion,
+    durationSecs: track.durationSecs,
+    codec: track.codec,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Favourites ("/music" shelves, "/music/favourites", the rail's pinned row)
 // ---------------------------------------------------------------------------

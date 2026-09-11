@@ -29,6 +29,14 @@
 // Mirrors ffprobe.ts / cover-art.ts's local-ffmpeg-vs-docker fallback.
 // DRM (.m4p, codec "drm"), unrecognised codecs, and any track whose file
 // can't be resolved all return null — the route turns that into a 404.
+//
+// This module also resolves a track to its OWN file (resolveTrackFile,
+// below), for /api/audio/:id/file — a native client's AVFoundation player
+// decodes AAC/ALAC/MP3/FLAC directly from a byte-range HTTP source, so it
+// needs none of the above; see IOS_PLAN.md "Audio: the original file, with
+// ranges". The two paths share their lookup and safety checks
+// (resolveTrackPath) but stay separate functions since only the PCM path
+// touches ffmpeg or the semaphore.
 
 import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -159,27 +167,38 @@ async function pcmStream(
   );
 }
 
+// The Track fields both getTrackAudio (ffmpeg's PCM path) and
+// resolveTrackFile (AVFoundation's original-bytes path, below) need to
+// decide playability and find the file on disk.
+type TrackForResolve = {
+  id: number;
+  filePath: string;
+  codec: string | null;
+  sampleRate: number | null;
+  bitDepth: number | null;
+  durationSecs: number | null;
+};
+
 /**
- * Resolve one Track to a PCM stream. Looks up the Track joined with its
- * Album (both so a dangling/orphaned track can't be served, and so an
- * album that's been flipped to owned=false — no files on disk — is refused
- * even if a stale Track row somehow remained). Returns null for: unknown
- * track id, unowned album, unset MUSIC_PATH, a codec that isn't playable
- * (resolvePcmFormat), a file that's missing on disk, or no local ffmpeg and
- * no FFPROBE_DOCKER_IMAGE fallback configured.
+ * The lookup and safety checks shared by every route that serves a track's
+ * bytes, whichever form they end up in: the Track joined with its Album
+ * (both so a dangling/orphaned track can't be served, and so an album
+ * that's been flipped to owned=false — no files on disk — is refused even
+ * if a stale Track row somehow remained), MUSIC_PATH set, and the resolved
+ * path still inside the music root. Returns null for: unknown track id,
+ * unowned album, unset MUSIC_PATH, a path-traversal attempt, or a file
+ * missing on disk. Does NOT check codec playability — callers want that
+ * decision themselves (getTrackAudio needs the format for ffmpeg's output
+ * args; resolveTrackFile just needs a yes/no).
  */
-export async function getTrackAudio(
+async function resolveTrackPath(
   trackId: number,
-  opts?: { sampleRate?: number | null },
-): Promise<TrackAudio | null | typeof AUDIO_BUSY> {
+): Promise<{ track: TrackForResolve; absPath: string; musicRoot: string } | null> {
   const track = await prisma.track.findUnique({
     where: { id: trackId },
     include: { album: { select: { owned: true } } },
   });
   if (!track || !track.album?.owned) return null;
-
-  const format = resolvePcmFormat(track.codec, track, opts?.sampleRate);
-  if (!format) return null;
 
   const musicPath = process.env.MUSIC_PATH;
   if (!musicPath) return null;
@@ -197,6 +216,26 @@ export async function getTrackAudio(
     return null;
   }
 
+  return { track, absPath, musicRoot };
+}
+
+/**
+ * Resolve one Track to a PCM stream. Returns null for everything
+ * resolveTrackPath refuses, plus: a codec that isn't playable
+ * (resolvePcmFormat), or no local ffmpeg and no FFPROBE_DOCKER_IMAGE
+ * fallback configured.
+ */
+export async function getTrackAudio(
+  trackId: number,
+  opts?: { sampleRate?: number | null },
+): Promise<TrackAudio | null | typeof AUDIO_BUSY> {
+  const resolved = await resolveTrackPath(trackId);
+  if (!resolved) return null;
+  const { track, absPath, musicRoot } = resolved;
+
+  const format = resolvePcmFormat(track.codec, track, opts?.sampleRate);
+  if (!format) return null;
+
   // One ffmpeg per stream, none queued. A slot is held until the child
   // exits — on the LAN that's about a second per track (the decode runs
   // far faster than real time and the client drains it as fast as the
@@ -211,4 +250,44 @@ export async function getTrackAudio(
     return null;
   }
   return { stream, format, estimatedBytes: estimatePcmBytes(track.durationSecs, format) };
+}
+
+/**
+ * Content-Type for a track's OWN bytes (no ffmpeg involved) — the codec
+ * decides the container AVFoundation should expect. Pure and exported so
+ * it's testable without a database: alac/aac are handed out from an .m4a
+ * container (audio/mp4), mp3 and flac keep their native types. Null for
+ * anything resolvePcmFormat wouldn't play either (drm, unknown, unset),
+ * which the /file route turns into a 404 rather than guessing a type.
+ */
+export function trackFileContentType(codec: string | null | undefined): string | null {
+  switch ((codec ?? "").toLowerCase()) {
+    case "alac":
+    case "aac":
+      return "audio/mp4";
+    case "mp3":
+      return "audio/mpeg";
+    case "flac":
+      return "audio/flac";
+    default:
+      return null;
+  }
+}
+
+/**
+ * Resolve one Track to its own file on disk for GET /api/audio/:id/file —
+ * AVFoundation decodes AAC/ALAC/MP3/FLAC natively from a byte-range HTTP
+ * source, so this needs no ffmpeg and no audioSemaphore slot, unlike
+ * getTrackAudio above. Shares its lookup and safety checks via
+ * resolveTrackPath; trackFileContentType's null covers exactly the same
+ * codecs resolvePcmFormat refuses (DRM, unrecognised, or unprobed).
+ */
+export async function resolveTrackFile(trackId: number): Promise<{ absPath: string; contentType: string } | null> {
+  const resolved = await resolveTrackPath(trackId);
+  if (!resolved) return null;
+
+  const contentType = trackFileContentType(resolved.track.codec);
+  if (!contentType) return null;
+
+  return { absPath: resolved.absPath, contentType };
 }

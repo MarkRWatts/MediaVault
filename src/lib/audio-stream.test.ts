@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { estimatePcmBytes, resolvePcmFormat } from "./audio-stream";
+import { estimatePcmBytes, resolvePcmFormat, trackFileContentType } from "./audio-stream";
 
 const cd = { sampleRate: 44100, bitDepth: 16 };
 const hiRes = { sampleRate: 48000, bitDepth: 24 };
@@ -45,5 +45,28 @@ describe("estimatePcmBytes", () => {
   it("is null without a usable duration", () => {
     expect(estimatePcmBytes(null, { sampleRate: 44100, channels: 2, bits: 16 })).toBeNull();
     expect(estimatePcmBytes(0, { sampleRate: 44100, channels: 2, bits: 16 })).toBeNull();
+  });
+});
+
+describe("trackFileContentType", () => {
+  it("maps alac/aac to the mp4 container they're actually wrapped in", () => {
+    expect(trackFileContentType("alac")).toBe("audio/mp4");
+    expect(trackFileContentType("aac")).toBe("audio/mp4");
+  });
+
+  it("maps mp3 and flac to their own types", () => {
+    expect(trackFileContentType("mp3")).toBe("audio/mpeg");
+    expect(trackFileContentType("flac")).toBe("audio/flac");
+  });
+
+  it("is case-insensitive", () => {
+    expect(trackFileContentType("FLAC")).toBe("audio/flac");
+  });
+
+  it("rejects drm, unknown, and missing codecs, same set as resolvePcmFormat", () => {
+    expect(trackFileContentType("drm")).toBeNull();
+    expect(trackFileContentType("unknown")).toBeNull();
+    expect(trackFileContentType(null)).toBeNull();
+    expect(trackFileContentType(undefined)).toBeNull();
   });
 });

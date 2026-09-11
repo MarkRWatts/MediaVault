@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { getSessionCookie } from "better-auth/cookies";
 import { PUBLIC_PATHS, PUBLIC_PATH_PREFIXES as PAGE_PUBLIC_PATH_PREFIXES } from "@/lib/public-paths";
-import { verifySessionCookie } from "@/lib/session-cookie";
+import { bearerTokenFromHeader, verifySessionCookie } from "@/lib/session-cookie";
 
 // Ported from jinglejotter.com's proxy.ts (this Next.js version renamed
 // middleware.ts -> proxy.ts, exporting `proxy` instead of `middleware` — see
@@ -42,12 +42,19 @@ const DENIED_AUTH_PREFIXES = ["/api/auth/organization/"];
 // as "signed in", which any request could satisfy by sending a made-up
 // cookie of that name.
 //
-// This is still not authorization: a revoked or expired session carries a
-// valid signature. Real authorization happens via auth.api.getSession() in
-// every page and route handler (src/lib/require-member.ts — enforced by
-// src/lib/route-guards.test.ts), which checks the session against the
-// database. This layer just means a forged cookie gets nobody past the
-// front door, and unauthenticated traffic never reaches a handler.
+// A native client (IOS_PLAN.md) has no cookie jar, so it presents the same
+// signed session value as `Authorization: Bearer <token>` instead; that
+// header goes through the identical HMAC check
+// (bearerTokenFromHeader + verifySessionCookie), only tried once the cookie
+// check has already failed, since that's the common case for a browser.
+//
+// This is still not authorization, for either form: a revoked or expired
+// session carries a valid signature. Real authorization happens via
+// auth.api.getSession() in every page and route handler
+// (src/lib/require-member.ts — enforced by src/lib/route-guards.test.ts),
+// which checks the session against the database. This layer just means a
+// forged cookie or bearer header gets nobody past the front door, and
+// unauthenticated traffic never reaches a handler.
 //
 // /api/* is deliberately IN scope here — video/audio/films are meant to
 // require a signed-in household member, not be reachable by anyone who has
@@ -59,7 +66,10 @@ export async function proxy(request: NextRequest) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
 
-  const authenticated = await verifySessionCookie(getSessionCookie(request), process.env.BETTER_AUTH_SECRET);
+  const secret = process.env.BETTER_AUTH_SECRET;
+  const authenticated =
+    (await verifySessionCookie(getSessionCookie(request), secret)) ||
+    (await verifySessionCookie(bearerTokenFromHeader(request.headers.get("authorization")), secret));
   const isPublic =
     PUBLIC_PATHS.includes(pathname) ||
     PUBLIC_PATH_PREFIXES.some((prefix) => pathname.startsWith(prefix));

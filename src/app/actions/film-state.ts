@@ -4,11 +4,23 @@
 // and "reset viewed" (drop their WatchProgress rows for every version of
 // the film, which also takes it out of Continue watching). Both re-render
 // the film page and the home page's rows.
+//
+// The favourite toggles' logic now lives in src/lib/film-user-state.ts
+// (IOS_PLAN.md "A versioned native API", "To share code rather than
+// copy") so /api/v1's favourite routes call exactly the same code the app
+// runs; that also moves their auth check onto requireMember() (real
+// household membership, not just a session) to match every other server
+// action — the film/show pages that render these buttons already gate on
+// requireMemberOrRedirect, so nobody signed-in-but-membership-less could
+// reach them anyway. "Reset viewed" stays on the session-only check below;
+// it isn't part of the native app's surface yet.
 
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { requireMember } from "@/lib/require-member";
+import * as filmUserState from "@/lib/film-user-state";
 
 async function currentUserId(): Promise<string> {
   const session = await auth.api.getSession({ headers: await headers() });
@@ -18,17 +30,11 @@ async function currentUserId(): Promise<string> {
 }
 
 export async function toggleFilmFavourite(filmId: number): Promise<{ favourite: boolean }> {
-  if (!Number.isInteger(filmId)) throw new Error("invalid film id");
-  const userId = await currentUserId();
-  const existing = await prisma.filmFavourite.findUnique({ where: { userId_filmId: { userId, filmId } } });
-  if (existing) {
-    await prisma.filmFavourite.delete({ where: { userId_filmId: { userId, filmId } } });
-  } else {
-    await prisma.filmFavourite.create({ data: { userId, filmId } });
-  }
+  const { userId } = await requireMember();
+  const result = await filmUserState.toggleFilmFavourite(userId, filmId);
   revalidatePath(`/film/${filmId}`);
   revalidatePath("/");
-  return { favourite: !existing };
+  return result;
 }
 
 export async function resetFilmWatched(filmId: number): Promise<{ cleared: number }> {
@@ -41,17 +47,11 @@ export async function resetFilmWatched(filmId: number): Promise<{ cleared: numbe
 }
 
 export async function toggleShowFavourite(showId: number): Promise<{ favourite: boolean }> {
-  if (!Number.isInteger(showId)) throw new Error("invalid show id");
-  const userId = await currentUserId();
-  const existing = await prisma.showFavourite.findUnique({ where: { userId_showId: { userId, showId } } });
-  if (existing) {
-    await prisma.showFavourite.delete({ where: { userId_showId: { userId, showId } } });
-  } else {
-    await prisma.showFavourite.create({ data: { userId, showId } });
-  }
+  const { userId } = await requireMember();
+  const result = await filmUserState.toggleShowFavourite(userId, showId);
   revalidatePath(`/shows/${showId}`);
   revalidatePath("/shows");
-  return { favourite: !existing };
+  return result;
 }
 
 /** Drop the person's WatchProgress rows for every episode file of the show. */
