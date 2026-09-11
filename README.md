@@ -116,6 +116,7 @@ Documentation:
 | [PASSKEYS_PLAN.md](PASSKEYS_PLAN.md) | Design record: passkey sign-in. |
 | [PLAYBACK_PLAN.md](PLAYBACK_PLAN.md) | Design record: in-app video playback, and why it moved to Jellyfin. |
 | [PLAYLISTS_PLAN.md](PLAYLISTS_PLAN.md) | Design record: the app-wide music engine, right rail, favourites and playlists. |
+| [IOS_PLAN.md](IOS_PLAN.md) | Plan: the native iOS companion app — background music and video playback, bearer sessions and the `/api/v1` native API. |
 | [SIDEBAR_PLAN.md](SIDEBAR_PLAN.md) | Design record: the shared left-sidebar shell. |
 | [docs/TEST_PLAN_2026-09.md](docs/TEST_PLAN_2026-09.md) | Manual test plan from the September 2026 playback and passkey rollout. |
 
