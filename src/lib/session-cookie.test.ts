@@ -4,7 +4,7 @@
 // everyone out at the proxy.
 import { describe, expect, it } from "vitest";
 import { serializeSignedCookie } from "better-call";
-import { splitSignedCookie, verifySessionCookie } from "./session-cookie";
+import { bearerTokenFromHeader, splitSignedCookie, verifySessionCookie } from "./session-cookie";
 
 const SECRET = "test-secret-please-ignore-0123456789";
 
@@ -50,5 +50,39 @@ describe("verifySessionCookie", () => {
     expect(await verifySessionCookie("", SECRET)).toBe(false);
     expect(await verifySessionCookie(signed, undefined)).toBe(false);
     expect(await verifySessionCookie(signed, "")).toBe(false);
+  });
+});
+
+describe("bearerTokenFromHeader", () => {
+  it("is a plain no for missing or empty input", () => {
+    expect(bearerTokenFromHeader(null)).toBeNull();
+    expect(bearerTokenFromHeader(undefined)).toBeNull();
+    expect(bearerTokenFromHeader("")).toBeNull();
+  });
+
+  it("rejects the wrong scheme", () => {
+    expect(bearerTokenFromHeader("Basic dGVzdDp0ZXN0")).toBeNull();
+    expect(bearerTokenFromHeader("token.notasignature")).toBeNull();
+  });
+
+  it("accepts a lowercase scheme and is case-insensitive generally", () => {
+    expect(bearerTokenFromHeader("bearer abc123")).toBe("abc123");
+    expect(bearerTokenFromHeader("BEARER abc123")).toBe("abc123");
+  });
+
+  it("trims surrounding whitespace around the header and the token", () => {
+    expect(bearerTokenFromHeader("  Bearer   abc123  ")).toBe("abc123");
+  });
+
+  it("is a plain no for a bare scheme with no token", () => {
+    expect(bearerTokenFromHeader("Bearer")).toBeNull();
+    expect(bearerTokenFromHeader("Bearer ")).toBeNull();
+    expect(bearerTokenFromHeader("Bearer   ")).toBeNull();
+  });
+
+  it("passes a better-call-signed value through to verifySessionCookie", async () => {
+    const signed = await signCookieValue("sessiontoken_abc123", SECRET);
+    const header = `Bearer ${signed}`;
+    expect(await verifySessionCookie(bearerTokenFromHeader(header), SECRET)).toBe(true);
   });
 });

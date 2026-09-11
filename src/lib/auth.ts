@@ -6,7 +6,7 @@
 // code. See HOUSEHOLDS_PLAN.md "Access codes & the web of trust" for the
 // full design — ported from jinglejotter.com's auth.ts.
 import { betterAuth } from "better-auth";
-import { emailOTP, jwt, organization } from "better-auth/plugins";
+import { bearer, emailOTP, jwt, organization } from "better-auth/plugins";
 import { nextCookies } from "better-auth/next-js";
 import { oauthProvider } from "@better-auth/oauth-provider";
 import { passkey } from "@better-auth/passkey";
@@ -182,6 +182,17 @@ export const auth = betterAuth({
         },
       },
     }),
+    // Native clients (IOS_PLAN.md) have no cookie jar of their own, so this
+    // hands the sign-in response a `set-auth-token` header carrying the
+    // session token, and later requests present it back as
+    // `Authorization: Bearer <token>`. requireSignature keeps that header
+    // token in exactly the signed shape — `<token>.<base64 HMAC>` — that
+    // src/lib/session-cookie.ts already verifies at the proxy, rather than
+    // accepting a bare token the plugin would sign for itself. The
+    // databaseHooks.session.create.before web-of-trust hook above is
+    // unaffected: bearer sessions are created via the same sign-in path
+    // (internalAdapter.createSession), not a separate one.
+    bearer({ requireSignature: true }),
     // Required for the server-action sign-in/sign-out pattern Phase 4's
     // pages will use — without this, Set-Cookie headers from actions
     // invoked via `auth.api.*` inside a "use server" action don't reach the
