@@ -33,7 +33,7 @@ docker compose down
 | VM | `mediavault-vm`, VMID 653 on the Proxmox host proxmox01 |
 | Address | 192.168.6.53, VLAN 6 (internet-facing apps, isolated from the main LAN) |
 | Size | 4 GB RAM, CPU type `host` |
-| Managed by | The Ansible project at `~/claude-code/ansible-homelab` (not a git repo); house guide `~/claude-code/DOCKER-DEPLOY-PLAYBOOK.md` |
+| Managed by | The Ansible repo [ansible-proxmox01](https://github.com/MarkRWatts/ansible-proxmox01), checked out at `~/claude-code/ansible-homelab`; house guide `~/claude-code/DOCKER-DEPLOY-PLAYBOOK.md` |
 | Checkout | `~/MediaVault` (`/home/deploy/MediaVault`), `main` |
 | Compose | `docker-compose.yml` + `docker-compose.prod.yml`, project `mediavault` |
 
@@ -176,7 +176,7 @@ The VM runs its own Caddy (Ansible role `edge`), which serves two sites:
 Both certificates are issued by DNS-01 through their existing acme-dns
 accounts, so both `_acme-challenge` CNAMEs (`_acme-challenge.mediavault`
 and `_acme-challenge.jellyfin`) must stay in DNS. The site list is
-`edge_sites` in ansible-homelab `host_vars/mediavault-vm/vars.yml`; the
+`edge_sites` in ansible-proxmox01 `host_vars/mediavault-vm/vars.yml`; the
 acme-dns credentials are in the same directory's `vault.yml`. Change
 either, then run the playbook.
 
