@@ -111,7 +111,7 @@ Documentation:
 | File | What it covers |
 | --- | --- |
 | [PLAN.md](PLAN.md) | Architecture, data model, pipelines, playback design, access model, and the current roadmap. |
-| [DEPLOYMENT.md](DEPLOYMENT.md) | Docker and VM deployment, the shared Caddy edge, Cloudflare Tunnel exposure, backups, owner-run scripts. |
+| [DEPLOYMENT.md](DEPLOYMENT.md) | Local Docker, the Ansible-managed Proxmox VM and its Caddy, Cloudflare Tunnel exposure, backups and restore, owner-run scripts. |
 | [HOUSEHOLDS_PLAN.md](HOUSEHOLDS_PLAN.md) | Design record: accounts, the web of trust, roles, watch history, Jellyfin SSO. |
 | [PASSKEYS_PLAN.md](PASSKEYS_PLAN.md) | Design record: passkey sign-in. |
 | [PLAYBACK_PLAN.md](PLAYBACK_PLAN.md) | Design record: in-app video playback, and why it moved to Jellyfin. |
@@ -123,9 +123,10 @@ Documentation:
 ## Configuration
 
 Everything external is an environment variable. Local dev reads `.env`
-(template: [.env.example](.env.example)); the Docker deployment reads
-`.env.docker` on the server (template:
-[.env.docker.example](.env.docker.example)). The templates carry the full
+(template: [.env.example](.env.example)); the VM deployment reads
+`.env.docker`, which Ansible writes from its vault (template:
+[.env.docker.example](.env.docker.example); see
+[DEPLOYMENT.md](DEPLOYMENT.md)). The templates carry the full
 list with comments; the tables below cover what matters most.
 
 ### Media paths
@@ -179,7 +180,9 @@ account through [jellyfin-plugin-sso](https://github.com/9p4/jellyfin-plugin-sso
 It needs no extra variables. From `/admin` → Integrations, paste Jellyfin's
 SSO redirect URI and you get a client id and secret, shown once; in the
 plugin, set the OIDC endpoint to `{BETTER_AUTH_URL}/api/auth`. Discovery
-only works over a real public HTTPS URL.
+only works over a real public HTTPS URL. In production Jellyfin's own
+HTTPS name on the LAN, `jellyfin.markrwatts.com`, is served by the
+MediaVault VM's Caddy (see [DEPLOYMENT.md](DEPLOYMENT.md)).
 
 ## Development
 
