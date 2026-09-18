@@ -167,7 +167,7 @@ export default async function AccountPage() {
       {isOwner && (
         <section className="flex flex-col gap-4">
           <h2 className="font-display text-xl tracking-wide text-text">Invite someone</h2>
-          <InviteForm />
+          <InviteForm canInviteToApp={user.isAppOwner} />
 
           {household.invitations.length > 0 && (
             <div className="flex flex-col gap-3 rounded-lg border border-border bg-bg-elevated p-4">
