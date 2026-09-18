@@ -233,6 +233,81 @@ describe("PlayerEngine", () => {
   // 1-2: playTracks + gapless chaining
   // -----------------------------------------------------------------------
 
+  it("reports a play once per fresh queue — not for next, jumpTo, or the gapless advance", async () => {
+    let plays = 0;
+    engine = new PlayerEngine({
+      createContext: () => fake.ctx,
+      loadTrack: loader.loadTrack,
+      keepWarm: () => {},
+      reportPlay: () => plays++,
+    });
+    engine.playTracks([makeTrack(), makeTrack()]);
+    expect(plays).toBe(1);
+    engine.next();
+    engine.previous();
+    expect(plays).toBe(1);
+    engine.playTracks([makeTrack()]);
+    expect(plays).toBe(2);
+  });
+
+  it("reports each track once as it audibly starts — auto-advance included, prefetch/seek/pause excluded", async () => {
+    const started: number[] = [];
+    engine = new PlayerEngine({
+      createContext: () => fake.ctx,
+      loadTrack: loader.loadTrack,
+      keepWarm: () => {},
+      reportPlay: () => {},
+      reportTrackStart: (id) => started.push(id),
+    });
+    const t1 = makeTrack();
+    const t2 = makeTrack();
+    engine.playTracks([t1, t2]);
+    expect(started).toEqual([]); // still loading — nothing heard yet
+    loader.resolve(t1.trackId, 100);
+    await flush();
+    loader.resolve(t2.trackId, 80); // prefetched successor, not playing
+    await flush();
+    expect(started).toEqual([t1.trackId]);
+
+    engine.seek(30);
+    engine.pause();
+    engine.play();
+    await flush();
+    expect(started).toEqual([t1.trackId]);
+
+    engine.next();
+    await flush();
+    expect(started).toEqual([t1.trackId, t2.trackId]);
+
+    engine.previous(); // going back is another play — once its audio is back
+    await flush();
+    loader.resolve(t1.trackId, 100, 1); // t1's audio was released; this is its re-fetch
+    await flush();
+    expect(started).toEqual([t1.trackId, t2.trackId, t1.trackId]);
+  });
+
+  it("reports the successor when the gapless chain reaches it", async () => {
+    const started: number[] = [];
+    engine = new PlayerEngine({
+      createContext: () => fake.ctx,
+      loadTrack: loader.loadTrack,
+      keepWarm: () => {},
+      reportPlay: () => {},
+      reportTrackStart: (id) => started.push(id),
+    });
+    const t1 = makeTrack();
+    const t2 = makeTrack();
+    engine.playTracks([t1, t2]);
+    loader.resolve(t1.trackId, 100);
+    await flush();
+    loader.resolve(t2.trackId, 80);
+    await flush();
+    expect(started).toEqual([t1.trackId]); // chained, but not heard yet
+    fake.advanceTo(101); // t1 plays out; t2 is topped up into the live window and takes over
+    await flush();
+    expect(started).toEqual([t1.trackId, t2.trackId]);
+  });
+
   it("playTracks goes to loading with the first track, then to playing once its buffer resolves, requesting only the next track", async () => {
     const t1 = makeTrack();
     const t2 = makeTrack();

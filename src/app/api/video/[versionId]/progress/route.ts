@@ -22,6 +22,8 @@ import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { WATCH_COMPLETED_RATIO } from "@/lib/constants";
+import { logPlaybackStart } from "@/lib/audit";
+import { logPlay } from "@/lib/play-log";
 
 async function currentUserId(): Promise<string | null> {
   const session = await auth.api.getSession({ headers: await headers() });
@@ -119,6 +121,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ versionId: str
       ...(isNewPlay ? { playCount: { increment: 1 }, completed: false } : {}),
     },
   });
+  if (isNewPlay) {
+    await logPlaybackStart(userId, "video.playback");
+    await logPlay("film", versionId);
+  }
 
   return NextResponse.json({
     positionSecs: row.positionSecs,

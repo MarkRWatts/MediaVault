@@ -119,6 +119,13 @@ export interface EngineDeps {
    *  default hits /api/audio/<id> for raw PCM at ctx's sample rate. The
    *  signal fires when the engine no longer wants the track. */
   loadTrack: (ctx: AudioContext, trackId: number, handlers: TrackStreamHandlers, signal: AbortSignal) => Promise<void>;
+  /** Tell the server a listener started a fresh queue (the usage audit's
+   *  "audio.playback" — see /api/audio/playback). Fire-and-forget. */
+  reportPlay: () => void;
+  /** Tell the server a track audibly started — every track, auto-advance
+   *  included — for the anonymous play log (/api/audio/<id>/played).
+   *  Fire-and-forget. */
+  reportTrackStart: (trackId: number) => void;
 }
 
 interface ScheduleInfo {
@@ -338,6 +345,18 @@ function defaultCreateAnchor(): NowPlayingAnchor | null {
   };
 }
 
+// Best-effort, like VideoPlayer's reportProgress: a dropped beacon only
+// costs one audit row, never playback.
+function defaultReportPlay() {
+  if (typeof window === "undefined") return;
+  fetch("/api/audio/playback", { method: "POST", keepalive: true }).catch(() => {});
+}
+
+function defaultReportTrackStart(trackId: number) {
+  if (typeof window === "undefined") return;
+  fetch(`/api/audio/${trackId}/played`, { method: "POST", keepalive: true }).catch(() => {});
+}
+
 function defaultCreateContext(): AudioContext {
   const Ctor =
     window.AudioContext ||
@@ -383,6 +402,10 @@ export class PlayerEngine {
   private notBefore = 0;
   /** Set by the first cold start; the next anchor fades its first chunk in. */
   private fadeInNext = false;
+  // The entry whose start was last sent to reportTrackStart: a seek or a
+  // resume re-anchors the same entry and must not count as another play.
+  // startFrom clears it, so a restart (Previous, repeat) does count.
+  private reportedKey: number | null = null;
   /** Playback position frozen at the moment of pause() — the context clock
    *  keeps running (it is never suspended, see pause), so getPosition must
    *  report this rather than a value that would creep forward while paused. */
@@ -410,6 +433,8 @@ export class PlayerEngine {
       createAnchor: deps.createAnchor ?? defaultCreateAnchor,
       keepWarm: deps.keepWarm ?? defaultKeepWarm,
       loadTrack: deps.loadTrack ?? streamTrack,
+      reportPlay: deps.reportPlay ?? defaultReportPlay,
+      reportTrackStart: deps.reportTrackStart ?? defaultReportTrackStart,
     };
   }
 
@@ -696,6 +721,14 @@ export class PlayerEngine {
     setTimeout(ready, CLOCK_READY_TIMEOUT_MS);
   }
 
+  private noteTrackStarted(key: number) {
+    if (key === this.reportedKey) return;
+    const entry = this.entry(key);
+    if (!entry) return;
+    this.reportedKey = key;
+    this.deps.reportTrackStart(entry.trackId);
+  }
+
   // Lay down `key`'s anchor at `startAt` and schedule every chunk received
   // so far; later chunks schedule themselves as they land (onChunk).
   private anchor(key: number, startAt: number, session: number) {
@@ -724,6 +757,7 @@ export class PlayerEngine {
       // A pause may have landed while this entry was still loading; leave
       // the status alone so play() is what resumes it.
       if (this.status !== "paused") this.status = "playing";
+      if (load.chunks.length > 0) this.noteTrackStarted(key);
       // A real track is now audibly scheduled — any earlier load-failure
       // banner (this one or an already-skipped one) no longer applies, and
       // its own download indicator is done with.
@@ -948,6 +982,7 @@ export class PlayerEngine {
       // (see maybeChain) also leaves `info` set, and must not clear a
       // load-failure banner that is still the latest news.
       if (this.hasLiveSource(next)) {
+        this.noteTrackStarted(next);
         this.lastError = null;
         this.loadProgress = null;
       }
@@ -999,6 +1034,7 @@ export class PlayerEngine {
     // Its successor's load (Previous back onto a track whose follower is
     // what was just playing) is kept for the same reason.
     this.currentKey = key;
+    this.reportedKey = null;
     this.dropUnwantedLoads();
 
     this.status = "loading";
@@ -1077,6 +1113,7 @@ export class PlayerEngine {
       this.order = keys;
     }
     this.context = opts.context ?? { kind: "queue" };
+    this.deps.reportPlay();
     this.startFrom(opts.startIndex == null && this.shuffle ? this.order[0] : startKey);
   }
 

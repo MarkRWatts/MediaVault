@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { recentPlays } from "@/lib/play-log";
 import { requireOwnerOrRedirect } from "@/lib/require-member";
 import { formatCode } from "@/lib/access";
 import { MintCodeForm } from "@/components/admin/MintCodeForm";
@@ -149,9 +150,10 @@ function apiStatusRows(): ApiStatusRow[] {
 export default async function AdminPage() {
   await requireOwnerOrRedirect();
 
-  const [codes, audit] = await Promise.all([
+  const [codes, audit, plays] = await Promise.all([
     prisma.accessCode.findMany({ orderBy: { createdAt: "desc" } }),
     prisma.auditLog.findMany({ orderBy: { createdAt: "desc" }, take: 100 }),
+    recentPlays(),
   ]);
 
   // AuditLog has no FK relations on purpose (rows outlive their user/
@@ -340,6 +342,49 @@ export default async function AdminPage() {
                       {entry.action}
                     </span>
                   </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="flex flex-col gap-4">
+        <h2 className="font-display text-xl tracking-wide text-text">Plays</h2>
+        <p className="text-sm text-text-muted">
+          What was played, by day — never by whom, and never the time of day, so it can&apos;t be matched against
+          the activity above. The most recent 200 entries.
+        </p>
+        <div className="overflow-x-auto rounded-lg border border-border bg-bg-elevated">
+          <table className="w-full min-w-[560px] text-left text-sm">
+            <thead>
+              <tr className="border-b border-border text-xs uppercase tracking-widest text-text-faint">
+                <th className="px-4 py-3 font-medium">Day</th>
+                <th className="px-4 py-3 font-medium">Type</th>
+                <th className="px-4 py-3 font-medium">Title</th>
+                <th className="px-4 py-3 font-medium">File</th>
+                <th className="px-4 py-3 text-right font-medium">Plays</th>
+              </tr>
+            </thead>
+            <tbody>
+              {plays.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-4 py-6 text-center text-text-faint">
+                    Nothing played yet.
+                  </td>
+                </tr>
+              )}
+              {plays.map((play) => (
+                <tr key={`${play.day}:${play.kind}:${play.itemId}`} className="border-b border-border/60 last:border-0">
+                  <td className="px-4 py-3 whitespace-nowrap text-text-faint">{play.day}</td>
+                  <td className="px-4 py-3">
+                    <span className="rounded-full border border-accent-border bg-accent-dim px-2.5 py-0.5 text-xs font-medium text-accent">
+                      {play.kind}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-text">{play.title ?? "(removed)"}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-text-muted">{play.fileName ?? "—"}</td>
+                  <td className="px-4 py-3 text-right text-text">{play.plays}</td>
                 </tr>
               ))}
             </tbody>

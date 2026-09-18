@@ -42,3 +42,12 @@ export async function logAudit(entry: {
     // Swallowed deliberately — see above.
   }
 }
+
+/** A user pressing Play: "video.playback" (film or episode) or
+ *  "audio.playback" (a fresh music queue). One row per start, not per
+ *  progress tick or per track, and deliberately no entityId — the id would
+ *  say what was played, which is content. */
+export async function logPlaybackStart(userId: string, action: "video.playback" | "audio.playback"): Promise<void> {
+  const member = await prisma.member.findFirst({ where: { userId }, select: { householdId: true } }).catch(() => null);
+  await logAudit({ userId, householdId: member?.householdId, action });
+}

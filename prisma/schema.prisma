@@ -677,6 +677,21 @@ model AuditLog {
   @@index([createdAt])
 }
 
+// Anonymous play log: WHAT was played and on which DAY — never who, and
+// never the time of day. AuditLog's "video.playback"/"audio.playback" rows
+// carry the who and the exact time, so anything finer than a day here (a
+// timestamp, or even one row per play, whose insertion order would line up
+// with AuditLog's) could be joined back to a person. Hence one counted row
+// per (day, kind, item) and no id or createdAt. See src/lib/play-log.ts.
+model PlayLog {
+  day    String // "YYYY-MM-DD", server-local
+  kind   String // "film" | "episode" | "track"
+  itemId Int // Version.id | EpisodeFile.id | Track.id — no FK: a since-deleted item just shows as removed
+  plays  Int    @default(1)
+
+  @@id([day, kind, itemId])
+}
+
 // Per-user resume position + basic play stats (HOUSEHOLDS_PLAN.md's "Watch
 // history & stats", Phase 7). Films and TV episodes don't share an id space
 // (Version vs EpisodeFile are separate tables), so exactly one of
