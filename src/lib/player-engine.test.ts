@@ -17,6 +17,8 @@ class FakeSourceNode {
   stopped = false;
   disconnected = false;
   started = false;
+  /** Set by advanceTo once the fake clock passes this source's end. */
+  ended = false;
 
   connect() {
     // no-op — nothing in these tests inspects the graph wiring itself.
@@ -81,7 +83,28 @@ function createFakeAudioContext() {
       return s;
     },
   };
-  return { ctx: ctx as unknown as AudioContext, sources, gains };
+  /** Play the fake clock forward to `secs`, firing onended for every
+   *  started source whose audio runs out on the way, in the order they end
+   *  and with currentTime sitting at each one's end as it fires — the way a
+   *  real audio thread delivers them. Sources a callback creates (the
+   *  engine topping up its look-ahead window) join the same pass. */
+  const endsAt = (s: FakeSourceNode) => s.startedAt! + (s.buffer?.duration ?? 0) - (s.startedOffset ?? 0);
+  const advanceTo = (secs: number) => {
+    for (;;) {
+      let next: FakeSourceNode | null = null;
+      for (const s of sources) {
+        if (!s.started || s.stopped || s.ended || s.startedAt == null) continue;
+        if (endsAt(s) > secs + 1e-9) continue;
+        if (!next || endsAt(s) < endsAt(next)) next = s;
+      }
+      if (!next) break;
+      ctx.currentTime = Math.max(ctx.currentTime, endsAt(next));
+      next.ended = true;
+      next.onended?.();
+    }
+    ctx.currentTime = secs;
+  };
+  return { ctx: ctx as unknown as AudioContext, sources, gains, advanceTo };
 }
 
 interface Deferred<T> {
@@ -142,13 +165,19 @@ function createFakeLoader() {
     chunk(trackId, durationSecs, n);
     complete(trackId, n);
   };
+  /** A whole track as a run of `chunkSecs`-long chunks, then done — the
+   *  shape a real stream has, for tests that play through a track. */
+  const stream = (trackId: number, totalSecs: number, chunkSecs: number, n = 0) => {
+    for (let at = 0; at < totalSecs - 1e-9; at += chunkSecs) chunk(trackId, Math.min(chunkSecs, totalSecs - at), n);
+    complete(trackId, n);
+  };
   const reject = (trackId: number, err: unknown = new Error("load failed"), n = 0) =>
     nthFor(trackId, n).deferred.reject(err);
   const progress = (trackId: number, loaded: number, total: number | null, n = 0) =>
     nthFor(trackId, n).handlers.onProgress?.({ loaded, total });
   const aborted = (trackId: number, n = 0) => nthFor(trackId, n).signal.aborted;
 
-  return { loadTrack, calls, countFor, chunk, complete, resolve, reject, progress, aborted };
+  return { loadTrack, calls, countFor, chunk, complete, resolve, stream, reject, progress, aborted };
 }
 
 /** Flush every pending microtask (a real macrotask tick guarantees every
@@ -156,6 +185,16 @@ function createFakeLoader() {
 function flush(): Promise<void> {
   return new Promise((r) => setTimeout(r, 0));
 }
+
+// Source nodes are only created for chunks due within the engine's
+// look-ahead window (SCHEDULE_AHEAD_SECS, 10 s), and the window is refilled
+// at each chunk boundary. So a test that wants a successor's node to exist
+// streams its predecessor as a run of chunks shorter than the window
+// (loader.stream) and advances the fake clock to within the window of its
+// end — the point at which a real player has just brought the successor's
+// first chunks on. A single 100 s chunk would never get there: nothing
+// after it can be topped up before it ends.
+const WINDOW_SECS = 10;
 
 let trackIdCounter = 0;
 
@@ -223,13 +262,79 @@ describe("PlayerEngine", () => {
     const t1 = makeTrack();
     const t2 = makeTrack();
     engine.playTracks([t1, t2]);
-    loader.resolve(t1.trackId, 100);
+    loader.stream(t1.trackId, 100, 5);
     await flush();
     loader.resolve(t2.trackId, 42);
     await flush();
 
+    // t2 is anchored at t1's end (100.25) but that is beyond the look-ahead
+    // window from t=0, so it has no node yet — only t1's first two chunks
+    // (0.25 and 5.25) do.
     expect(fake.sources).toHaveLength(2);
-    expect(fake.sources[1]!.startedAt).toBeCloseTo(0.25 + 100, 5);
+
+    // Five seconds from t1's end, the boundary top-up finds t2 due.
+    fake.advanceTo(0.25 + 95);
+    expect(fake.sources).toHaveLength(21);
+    expect(fake.sources.at(-1)!.startedAt).toBeCloseTo(0.25 + 100, 5);
+  });
+
+  it("creates nodes only for chunks due within the look-ahead window, topping up as earlier chunks end", async () => {
+    const t1 = makeTrack();
+    engine.playTracks([t1]);
+    for (let i = 0; i < 30; i++) loader.chunk(t1.trackId, 1);
+    loader.complete(t1.trackId);
+    await flush();
+
+    // Anchored at 0.25: chunks starting before 0 + WINDOW_SECS are live —
+    // 0.25, 1.25 … 9.25 — and the other 20 wait in the load.
+    expect(fake.sources).toHaveLength(WINDOW_SECS);
+    fake.sources.forEach((s, i) => expect(s.startedAt).toBeCloseTo(0.25 + i, 5));
+
+    // Chunk 0 ends: exactly the one chunk now inside the window comes on.
+    fake.advanceTo(1.25);
+    expect(fake.sources).toHaveLength(WINDOW_SECS + 1);
+    expect(fake.sources[WINDOW_SECS]!.startedAt).toBeCloseTo(0.25 + WINDOW_SECS, 5);
+
+    // Four more boundaries pass: four more chunks, still contiguous.
+    fake.advanceTo(5.25);
+    expect(fake.sources).toHaveLength(WINDOW_SECS + 5);
+    fake.sources.forEach((s, i) => expect(s.startedAt).toBeCloseTo(0.25 + i, 5));
+    expect(fake.sources.filter((s) => !s.ended)).toHaveLength(WINDOW_SECS);
+
+    // Play through to the end: every chunk was given a node exactly once,
+    // and the queue finishes normally.
+    fake.advanceTo(30.25);
+    await flush();
+    expect(fake.sources).toHaveLength(30);
+    expect(engine.getSnapshot().status).toBe("idle");
+  });
+
+  it("has the successor's first chunks live before the predecessor's last chunk ends", async () => {
+    const t1 = makeTrack();
+    const t2 = makeTrack();
+    engine.playTracks([t1, t2]);
+    for (let i = 0; i < 20; i++) loader.chunk(t1.trackId, 1);
+    loader.complete(t1.trackId);
+    await flush();
+    for (let i = 0; i < 20; i++) loader.chunk(t2.trackId, 1);
+    loader.complete(t2.trackId);
+    await flush();
+
+    // 19 of t1's chunks have ended; t1's final chunk (19.25–20.25) is
+    // still playing and t2's first chunks (from 20.25) came on within the
+    // window over the last few boundaries.
+    fake.advanceTo(19.25);
+    await flush();
+    const t2Sources = fake.sources.filter((s) => s.startedAt != null && s.startedAt >= 20.25 - 1e-9);
+    expect(t2Sources.length).toBeGreaterThan(0);
+    expect(t2Sources[0]!.startedAt).toBeCloseTo(20.25, 5);
+    expect(engine.getSnapshot().current?.trackId).toBe(t1.trackId);
+
+    fake.advanceTo(20.25);
+    await flush();
+    const snap = engine.getSnapshot();
+    expect(snap.current?.trackId).toBe(t2.trackId);
+    expect(snap.status).toBe("playing");
   });
 
   // -----------------------------------------------------------------------
@@ -271,7 +376,7 @@ describe("PlayerEngine", () => {
     const t2 = makeTrack();
     const t3 = makeTrack();
     engine.playTracks([t1, t2, t3]);
-    loader.resolve(t1.trackId, 100);
+    loader.stream(t1.trackId, 100, 5);
     await flush();
 
     loader.reject(t2.trackId);
@@ -281,7 +386,7 @@ describe("PlayerEngine", () => {
 
     // Playback passes track2's slot with nothing of track3 here yet: it
     // goes straight to track3 — never landing on the failed entry.
-    fake.sources[0]!.onended?.();
+    fake.advanceTo(0.25 + 100);
     await flush();
     let snap = engine.getSnapshot();
     expect(snap.current?.trackId).toBe(t3.trackId);
@@ -294,11 +399,14 @@ describe("PlayerEngine", () => {
     loader.resolve(t3.trackId, 55);
     await flush();
 
+    // t3 chains onto t1's end — the slot t2 would have used (100.25). Its
+    // audio landed only once playback was already there, so it starts as
+    // soon as it can after that.
     snap = engine.getSnapshot();
     expect(snap.status).toBe("playing");
     expect(snap.lastError).toBeNull();
-    expect(fake.sources).toHaveLength(2); // one for t1, one for t3 — none for t2
-    expect(fake.sources[1]!.startedAt).toBeCloseTo(0.25 + 100, 5); // same slot t2 would have used
+    expect(fake.sources).toHaveLength(21); // twenty for t1, one for t3 — none for t2
+    expect(fake.sources.at(-1)!.startedAt).toBeCloseTo(0.25 + 100 + 0.1, 5);
   });
 
   it("keeps the chunks of the track after a failed next one that arrive while the first is still playing, chained at the failed slot", async () => {
@@ -307,7 +415,7 @@ describe("PlayerEngine", () => {
     const t3 = makeTrack();
     const t4 = makeTrack();
     engine.playTracks([t1, t2, t3, t4]);
-    loader.resolve(t1.trackId, 100);
+    loader.stream(t1.trackId, 100, 5);
     await flush();
 
     loader.reject(t2.trackId);
@@ -315,33 +423,38 @@ describe("PlayerEngine", () => {
     expect(loader.countFor(t3.trackId)).toBe(1);
 
     // track3 streams in while track1 is still the current entry: kept (not
-    // aborted as "not current-or-next"), and laid gaplessly onto track1's
-    // end — the slot the failed track2 would have had.
-    loader.chunk(t3.trackId, 30);
-    loader.chunk(t3.trackId, 25);
-    expect(loader.aborted(t3.trackId)).toBe(false);
-    expect(fake.sources).toHaveLength(3);
-    expect(fake.sources[1]!.startedAt).toBeCloseTo(0.25 + 100, 5);
-    expect(fake.sources[2]!.startedAt).toBeCloseTo(0.25 + 100 + 30, 5);
+    // aborted as "not current-or-next"), waiting decoded until its slot
+    // comes inside the look-ahead window.
+    loader.chunk(t3.trackId, 4);
+    loader.chunk(t3.trackId, 4);
     loader.complete(t3.trackId);
     await flush();
+    expect(loader.aborted(t3.trackId)).toBe(false);
     expect(engine.getSnapshot().current?.trackId).toBe(t1.trackId);
     expect(loader.countFor(t4.trackId)).toBe(0); // pacing: not until playback reaches t3
 
+    // Near track1's end, track3 is laid gaplessly onto it — the slot the
+    // failed track2 would have had.
+    fake.advanceTo(96);
+    const t3Sources = fake.sources.filter((s) => s.buffer?.duration === 4);
+    expect(t3Sources).toHaveLength(2);
+    expect(t3Sources[0]!.startedAt).toBeCloseTo(0.25 + 100, 5);
+    expect(t3Sources[1]!.startedAt).toBeCloseTo(0.25 + 100 + 4, 5);
+
     // track1 ends: straight onto track3, already playing — no stop on the
     // failed entry, no second request for it, nothing re-fetched.
-    fake.sources[0]!.onended?.();
+    fake.advanceTo(0.25 + 100 + 1);
     await flush();
 
     const snap = engine.getSnapshot();
     expect(snap.current?.trackId).toBe(t3.trackId);
     expect(snap.status).toBe("playing");
-    expect(snap.duration).toBe(55);
+    expect(snap.duration).toBe(8);
     expect(snap.lastError).toBeNull();
     expect(loader.countFor(t2.trackId)).toBe(1);
     expect(loader.countFor(t3.trackId)).toBe(1);
-    expect(fake.sources).toHaveLength(3);
     expect(loader.countFor(t4.trackId)).toBe(1);
+    expect(fake.sources.filter((s) => s.buffer?.duration === 4)).toHaveLength(2); // nothing re-laid
   });
 
   it("looks through several failed tracks in a row, and retries one the user jumps onto", async () => {
@@ -350,7 +463,7 @@ describe("PlayerEngine", () => {
     const t3 = makeTrack();
     const t4 = makeTrack();
     engine.playTracks([t1, t2, t3, t4]);
-    loader.resolve(t1.trackId, 100);
+    loader.stream(t1.trackId, 100, 5);
     await flush();
     loader.reject(t2.trackId);
     await flush();
@@ -359,7 +472,9 @@ describe("PlayerEngine", () => {
 
     loader.resolve(t4.trackId, 40);
     await flush();
-    expect(fake.sources[1]!.startedAt).toBeCloseTo(0.25 + 100, 5);
+    fake.advanceTo(96);
+    const t4Source = fake.sources.find((s) => s.buffer?.duration === 40);
+    expect(t4Source?.startedAt).toBeCloseTo(0.25 + 100, 5);
     expect(loader.countFor(t2.trackId)).toBe(1);
     expect(loader.countFor(t3.trackId)).toBe(1);
 
@@ -466,12 +581,14 @@ describe("PlayerEngine", () => {
     const t2 = makeTrack();
     const t3 = makeTrack();
     engine.playTracks([t1, t2, t3]);
-    loader.resolve(t1.trackId, 100);
+    loader.stream(t1.trackId, 100, 5);
     await flush();
     loader.resolve(t2.trackId, 80);
     await flush();
+    fake.advanceTo(0.25 + 95); // t2's node comes on within the window
 
-    const oldSuccessorSource = fake.sources[1]!;
+    const oldSuccessorSource = fake.sources.at(-1)!;
+    expect(oldSuccessorSource.startedAt).toBeCloseTo(0.25 + 100, 5);
     expect(oldSuccessorSource.stopped).toBe(false);
 
     const tX = makeTrack();
@@ -549,17 +666,18 @@ describe("PlayerEngine", () => {
     const t2 = makeTrack();
     const t3 = makeTrack();
     engine.playTracks([t1, t2, t3]);
-    loader.resolve(t1.trackId, 100);
+    loader.stream(t1.trackId, 100, 5);
     await flush();
     loader.resolve(t2.trackId, 80);
     await flush();
+    fake.advanceTo(0.25 + 95); // t2's node comes on within the window
+    expect(fake.sources).toHaveLength(21);
 
     const t3Key = engine.getSnapshot().queue.find((e) => e.trackId === t3.trackId)!.key;
     const callsBefore = loader.calls.length;
     engine.removeFromQueue(t3Key);
 
-    expect(fake.sources[0]!.stopped).toBe(false);
-    expect(fake.sources[1]!.stopped).toBe(false);
+    expect(fake.sources.some((s) => s.stopped)).toBe(false);
     expect(loader.calls.length).toBe(callsBefore);
     expect(engine.getSnapshot().queue.map((e) => e.trackId)).toEqual([t1.trackId, t2.trackId]);
   });
@@ -573,12 +691,13 @@ describe("PlayerEngine", () => {
     const t2 = makeTrack();
     const t3 = makeTrack();
     engine.playTracks([t1, t2, t3]);
-    loader.resolve(t1.trackId, 100);
+    loader.stream(t1.trackId, 100, 5);
     await flush();
     loader.resolve(t2.trackId, 80);
     await flush();
+    fake.advanceTo(0.25 + 95); // t2's node comes on within the window
 
-    const oldSuccessorSource = fake.sources[1]!;
+    const oldSuccessorSource = fake.sources.at(-1)!;
     const t3Key = engine.getSnapshot().queue.find((e) => e.trackId === t3.trackId)!.key;
     engine.moveInQueue(t3Key, 1); // move t3 to right after current
 
@@ -632,17 +751,17 @@ describe("PlayerEngine", () => {
     const t1 = makeTrack();
     const t2 = makeTrack();
     engine.playTracks([t1, t2]);
-    loader.resolve(t1.trackId, 100);
+    loader.stream(t1.trackId, 100, 5);
     await flush();
     loader.resolve(t2.trackId, 80);
     await flush();
 
-    fake.sources[0]!.onended?.(); // advance to t2 (the last entry)
+    fake.advanceTo(0.25 + 100); // play t1 out — t2 came on within the window of its end
     await flush();
     expect(engine.getSnapshot().current?.trackId).toBe(t2.trackId);
 
     engine.setRepeat(true);
-    fake.sources[1]!.onended?.(); // t2's own source (index 0 is t1's, already fired)
+    fake.advanceTo(0.25 + 180); // t2's own source ends
     await flush();
 
     const snap = engine.getSnapshot();
@@ -655,15 +774,15 @@ describe("PlayerEngine", () => {
     const t1 = makeTrack();
     const t2 = makeTrack();
     engine.playTracks([t1, t2]);
-    loader.resolve(t1.trackId, 100);
+    loader.stream(t1.trackId, 100, 5);
     await flush();
     loader.resolve(t2.trackId, 80);
     await flush();
 
-    fake.sources[0]!.onended?.();
+    fake.advanceTo(0.25 + 100); // play t1 out — t2 came on within the window of its end
     await flush();
 
-    fake.sources[1]!.onended?.(); // t2's own source (index 0 is t1's, already fired)
+    fake.advanceTo(0.25 + 180); // t2's own source ends
     await flush();
 
     const snap = engine.getSnapshot();
@@ -939,15 +1058,21 @@ describe("PlayerEngine", () => {
     const t1 = makeTrack();
     const t2 = makeTrack();
     engine.playTracks([t1, t2]);
-    loader.resolve(t1.trackId, 100);
+    loader.stream(t1.trackId, 100, 5);
     await flush();
 
-    // t2 streams in two chunks; both land while t1 plays.
+    // t2 streams in two chunks; both land while t1 plays, anchored at t1's
+    // end but not yet live — that slot is beyond the look-ahead window.
     loader.chunk(t2.trackId, 0.5);
     loader.chunk(t2.trackId, 0.5);
-    expect(fake.sources).toHaveLength(3);
-    expect(fake.sources[1]!.startedAt).toBeCloseTo(100.25, 5);
-    expect(fake.sources[2]!.startedAt).toBeCloseTo(100.75, 5);
+    expect(fake.sources).toHaveLength(2);
+
+    // Within the window of t1's end, the boundary top-up brings both of
+    // t2's chunks on, each at its exact slot.
+    fake.advanceTo(0.25 + 95);
+    expect(fake.sources).toHaveLength(22);
+    expect(fake.sources[20]!.startedAt).toBeCloseTo(100.25, 5);
+    expect(fake.sources[21]!.startedAt).toBeCloseTo(100.75, 5);
   });
 
   it("a chunk that lands after its slot shifts the anchor forward (a pause, not a skip)", async () => {
@@ -1120,15 +1245,18 @@ describe("PlayerEngine", () => {
     const t1 = makeTrack();
     const t2 = makeTrack();
     engine.playTracks([t1, t2]);
-    loader.resolve(t1.trackId, 100);
+    loader.stream(t1.trackId, 100, 5);
     await flush();
     loader.resolve(t2.trackId, 80);
     await flush();
+    fake.advanceTo(0.25 + 95); // t2's node comes on within the window
 
-    expect(fake.sources).toHaveLength(2);
+    expect(fake.sources).toHaveLength(21);
     engine.clearQueue();
 
-    expect(fake.sources.every((s) => s.stopped)).toBe(true);
+    // Every source still playing or yet to start is stopped (the one that
+    // already ended at the boundary is finished with, not stopped).
+    expect(fake.sources.filter((s) => !s.ended).every((s) => s.stopped)).toBe(true);
     const snap = engine.getSnapshot();
     expect(snap.queue).toEqual([]);
     expect(snap.order).toEqual([]);
