@@ -9,13 +9,18 @@
 // page-local refs/state. One addition the old player never had: the
 // progress bar is now seekable (engine.seek()), not just decorative.
 //
-// The progress bar stays imperative, exactly like the old component: a
-// rAF loop reads engine.getPosition() ~60 times a second and writes
-// width/elapsed text straight into refs rather than through React state,
-// so playback doesn't re-render the rest of the app every frame.
+// The progress bar stays imperative, like the old component: a ticker
+// reads engine.getPosition() and writes width/elapsed text straight into
+// refs rather than through React state, so playback doesn't re-render the
+// rest of the app. It used to be a rAF loop writing every frame; that cost
+// Safari a steady ~15% of a core (2026-09-18) — 120 style/layout
+// invalidations a second on a ProMotion display, inside the rail's
+// backdrop-blurred layer — and kept running while the card was hidden. Now
+// it ticks a few times a second, writes only what changed, and stops
+// entirely while the card is off-screen or display:none.
 
 import Link from "next/link";
-import { useEffect, useRef, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import CoverImage from "@/components/CoverImage";
 import { usePlayer } from "@/components/player/usePlayer";
 import {
@@ -29,6 +34,11 @@ import {
 } from "@/components/player/icons";
 import { formatTime, formatLoadProgress } from "@/lib/format-time";
 import type { PlaybackContext } from "@/lib/player-types";
+
+// How often the progress bar catches up with the engine while playing. At
+// 4 Hz the fill moves well under a pixel per tick on a track of any
+// length, and the elapsed text (whole seconds) still changes on time.
+const PROGRESS_TICK_MS = 250;
 
 function contextLabel(context: PlaybackContext | null): string | null {
   if (!context) return null;
@@ -53,7 +63,22 @@ export function NowPlayingCard() {
   const fillRef = useRef<HTMLDivElement | null>(null);
   const elapsedTextRef = useRef<HTMLSpanElement | null>(null);
 
-  // Whenever the current entry or status changes outside the rAF loop
+  // Whether the progress bar is actually on screen. This card is always
+  // mounted in the desktop rail (hidden below xl and when collapsed) and
+  // in the mobile sheet, so without this the ticker would run for a bar
+  // nobody can see. IntersectionObserver reports display:none as not
+  // intersecting, and costs nothing between changes.
+  const [visible, setVisible] = useState(true);
+  const hasTrack = current != null;
+  useEffect(() => {
+    const el = trackRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(([entry]) => setVisible(entry?.isIntersecting ?? true));
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [hasTrack]);
+
+  // Whenever the current entry or status changes outside the ticker
   // below (a fresh track, a seek while paused, a pause itself), write the
   // position once so the bar doesn't show a stale frame until playback
   // resumes.
@@ -66,27 +91,41 @@ export function NowPlayingCard() {
     if (trackRef.current) trackRef.current.setAttribute("aria-valuenow", String(Math.round(elapsed)));
   }, [snapshot.currentKey, snapshot.status, engine, duration]);
 
-  // Progress bar + elapsed-time text, driven imperatively via rAF so a
-  // ~60fps update doesn't re-render the component every frame. No CSS
-  // transition on the fill width — it's already updated continuously, and
-  // this keeps things quiet under prefers-reduced-motion without a media
-  // query (there's no decorative animation to gate).
+  // Progress bar + elapsed-time text, driven imperatively on a slow tick
+  // so playback never re-renders the component. Each write is skipped
+  // when its value hasn't changed (the text and aria value only move once
+  // a second), so the DOM is touched a handful of times a second at most.
+  // No CSS transition on the fill width — small steps at this rate read as
+  // continuous, and this keeps things quiet under prefers-reduced-motion
+  // without a media query (there's no decorative animation to gate).
   useEffect(() => {
-    if (snapshot.status !== "playing") return;
-    let raf: number;
+    if (snapshot.status !== "playing" || !visible) return;
+    let lastWidth = "";
+    let lastText = "";
+    let lastValue = "";
     const tick = () => {
       const pos = engine.getPosition();
-      if (pos && pos.duration > 0) {
-        const pct = (pos.elapsed / pos.duration) * 100;
-        if (fillRef.current) fillRef.current.style.width = `${pct}%`;
-        if (elapsedTextRef.current) elapsedTextRef.current.textContent = formatTime(pos.elapsed);
-        if (trackRef.current) trackRef.current.setAttribute("aria-valuenow", String(Math.round(pos.elapsed)));
+      if (!pos || pos.duration <= 0) return;
+      const width = `${((pos.elapsed / pos.duration) * 100).toFixed(2)}%`;
+      if (width !== lastWidth && fillRef.current) {
+        fillRef.current.style.width = width;
+        lastWidth = width;
       }
-      raf = requestAnimationFrame(tick);
+      const text = formatTime(pos.elapsed);
+      if (text !== lastText && elapsedTextRef.current) {
+        elapsedTextRef.current.textContent = text;
+        lastText = text;
+      }
+      const value = String(Math.round(pos.elapsed));
+      if (value !== lastValue && trackRef.current) {
+        trackRef.current.setAttribute("aria-valuenow", value);
+        lastValue = value;
+      }
     };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [snapshot.status, engine]);
+    tick();
+    const id = setInterval(tick, PROGRESS_TICK_MS);
+    return () => clearInterval(id);
+  }, [snapshot.status, engine, visible]);
 
   if (!current) {
     return (

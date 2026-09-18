@@ -34,6 +34,11 @@
 // A chunk that arrives after its slot has already passed (a stalled
 // network) shifts the anchor forward by the shortfall — playback resumes
 // where it left off, like a buffering player, rather than skipping audio.
+// Source nodes are only created for chunks due within SCHEDULE_AHEAD_SECS
+// of the playhead (scheduleWindow); the rest wait, decoded, in the load
+// and are brought on as earlier chunks end. Every node still starts at
+// the same anchor-relative time, so the join stays sample-accurate — the
+// window only bounds how many nodes WebKit has to walk per render quantum.
 //
 // Scheduling model: every entry's playback is described by an anchor
 // { startAt, duration, complete } in `schedule`. startAt is an absolute
@@ -105,6 +110,11 @@ interface ScheduleInfo {
   /** Real total once `complete`; the DB estimate (or 0) before that. */
   duration: number;
   complete: boolean;
+  /** Index of the first chunk not yet given a source node. Chunks go on
+   *  the timeline strictly in order, only once they fall inside
+   *  SCHEDULE_AHEAD_SECS of the playhead (see scheduleWindow), so a single
+   *  cursor is all that's needed to know what's still waiting. */
+  nextIndex: number;
 }
 
 /** One track's arrival, from first request to last chunk. */
@@ -149,6 +159,19 @@ const MAX_RETRY_AFTER_MS = 15_000;
 // link — so it bounds the time-to-first-sound without making a 5-minute
 // track into thousands of source nodes.
 const CHUNK_SECS = 0.5;
+
+// How far ahead of the playhead chunks are given source nodes. Every
+// chunk used to be scheduled the moment it arrived, so a five-minute track
+// (600 half-second chunks) plus its chained successor meant WebKit walking
+// over a thousand not-yet-started nodes on every 128-frame render quantum
+// — a steady ~20% of a core in Safari for the whole track, falling as
+// chunks finished and jumping back at the next track (measured
+// 2026-09-18). Now only the chunks due within this window are live; the
+// rest wait in TrackLoad.chunks and are brought on as earlier chunks end
+// (handleChunkEnded → topUp). Must be comfortably longer than CHUNK_SECS:
+// the top-up runs once per chunk boundary, so the window is how much
+// scheduled audio stands between playback and a main thread that stalls.
+const SCHEDULE_AHEAD_SECS = 10;
 
 // How long a cold start waits for AudioContext.resume() before scheduling
 // anyway (see awaitClock).
@@ -467,13 +490,16 @@ export class PlayerEngine {
     return this.loads.get(key) === load;
   }
 
-  // Put chunk `index` of `key` on the timeline at anchor.startAt + its
-  // offset. If that slot has already gone by (the stream fell behind
-  // playback, or this is the current entry's very first chunk landing a
-  // beat after the seed anchor was laid down), the whole anchor shifts
-  // forward by the shortfall so the chunk starts now and everything after
-  // it stays contiguous — the audible result is a pause, not a skip.
-  private scheduleChunk(key: number, index: number, session: number) {
+  // Put every chunk of `key` that is due within SCHEDULE_AHEAD_SECS on the
+  // timeline, in order from the anchor's cursor, each at anchor.startAt +
+  // its offset. If the cursor chunk's slot has already gone by (the stream
+  // fell behind playback, or this is the current entry's very first chunk
+  // landing a beat after the seed anchor was laid down), the whole anchor
+  // shifts forward by the shortfall so the chunk starts now and everything
+  // after it stays contiguous — the audible result is a pause, not a skip.
+  // Chunks beyond the window stay in the load until a later call (a new
+  // chunk landing, a chunk ending) finds them due.
+  private scheduleWindow(key: number, session: number) {
     const ctx = this.ctx;
     const info = this.schedule.get(key);
     const load = this.loads.get(key);
@@ -482,16 +508,28 @@ export class PlayerEngine {
     // chunk that arrives now is kept in the load but not started — play()
     // re-schedules everything from the paused point when it resumes.
     if (this.status === "paused") return;
-    const buffer = load.chunks[index];
-    if (!buffer) return;
 
-    let when = info.startAt + load.offsets[index];
-    const earliest = Math.max(ctx.currentTime + START_EPSILON, this.notBefore);
-    if (when < earliest) {
-      info.startAt += earliest - when;
-      when = earliest;
+    const horizon = ctx.currentTime + SCHEDULE_AHEAD_SECS;
+    while (info.nextIndex < load.chunks.length) {
+      const index = info.nextIndex;
+      let when = info.startAt + load.offsets[index];
+      if (when >= horizon) return;
+      const earliest = Math.max(ctx.currentTime + START_EPSILON, this.notBefore);
+      if (when < earliest) {
+        info.startAt += earliest - when;
+        when = earliest;
+      }
+      this.startChunkSource(key, index, load.chunks[index], when, 0, session);
+      info.nextIndex = index + 1;
     }
-    this.startChunkSource(key, index, buffer, when, 0, session);
+  }
+
+  /** Bring on whatever has come due for every anchored entry — the current
+   *  one and, once chained, its successor. Runs at each chunk boundary, so
+   *  with CHUNK_SECS-long chunks the live window is refilled every half
+   *  second and never runs dry short of a stalled main thread. */
+  private topUp(session: number) {
+    for (const key of this.schedule.keys()) this.scheduleWindow(key, session);
   }
 
   private startChunkSource(key: number, index: number, buffer: AudioBuffer, when: number, offset: number, session: number) {
@@ -554,8 +592,9 @@ export class PlayerEngine {
       startAt,
       duration: load.complete ? load.totalSecs : (entry.durationSecs ?? 0),
       complete: load.complete,
+      nextIndex: 0,
     });
-    for (let i = 0; i < load.chunks.length; i++) this.scheduleChunk(key, i, session);
+    this.scheduleWindow(key, session);
     if (this.fadeInNext && load.chunks.length > 0 && this.gain) {
       this.fadeInNext = false;
       const at = this.schedule.get(key)?.startAt ?? startAt;
@@ -626,11 +665,10 @@ export class PlayerEngine {
       this.loads.delete(key);
       return;
     }
-    const index = load.chunks.length;
     load.chunks.push(buffer);
     load.offsets.push(load.totalSecs);
     load.totalSecs += buffer.duration;
-    if (this.schedule.has(key)) this.scheduleChunk(key, index, this.session);
+    if (this.schedule.has(key)) this.scheduleWindow(key, this.session);
     else this.maybeChain(key, this.session);
   }
 
@@ -700,6 +738,7 @@ export class PlayerEngine {
       startAt: prev && prev.complete ? prev.startAt + prev.duration : ctx.currentTime + START_EPSILON,
       duration: 0,
       complete: true,
+      nextIndex: 0,
     });
     if (key === this.currentKey) {
       // The current entry itself is unplayable: move on immediately
@@ -726,7 +765,7 @@ export class PlayerEngine {
     if (!prev || !prev.complete) return;
     if (load.chunks.length === 0) {
       // Completed with no audio at all — a zero-length pass-through.
-      this.schedule.set(key, { startAt: prev.startAt + prev.duration, duration: 0, complete: true });
+      this.schedule.set(key, { startAt: prev.startAt + prev.duration, duration: 0, complete: true, nextIndex: 0 });
       if (key === this.currentKey) this.advanceFrom(key, session);
       return;
     }
@@ -736,6 +775,11 @@ export class PlayerEngine {
   private handleChunkEnded(key: number, index: number, session: number) {
     if (session !== this.session) return;
     this.sources.get(key)?.delete(index);
+    // A chunk boundary is the beat the live window is refilled on — for
+    // this entry and, near its end, for the successor chained behind it,
+    // whose first chunks must be live before advanceFrom below looks for
+    // them (hasLiveSource).
+    this.topUp(session);
     const load = this.loads.get(key);
     if (!load) return;
     load.lastEndedIndex = Math.max(load.lastEndedIndex, index);
@@ -839,7 +883,7 @@ export class PlayerEngine {
     this.duration = entry.durationSecs ?? null;
 
     const seedKey = this.prevKey(key) ?? NO_PREDECESSOR;
-    this.schedule.set(seedKey, { startAt: ctx.currentTime + START_EPSILON, duration: 0, complete: true });
+    this.schedule.set(seedKey, { startAt: ctx.currentTime + START_EPSILON, duration: 0, complete: true, nextIndex: 0 });
     this.emit();
     if (this.loads.has(key)) this.maybeChain(key, session);
     else this.prefetch(key);
@@ -867,6 +911,7 @@ export class PlayerEngine {
           startAt: this.ctx.currentTime + START_EPSILON,
           duration: 0,
           complete: true,
+          nextIndex: 0,
         });
       }
     }
@@ -1114,13 +1159,19 @@ export class PlayerEngine {
     this.stopSource(key);
     const now = ctx.currentTime + START_EPSILON;
     info.startAt = now - target;
-    for (let i = 0; i < load.chunks.length; i++) {
-      const offset = load.offsets[i];
-      const buffer = load.chunks[i];
-      if (offset + buffer.duration <= target) continue; // already behind the seek point
+    // The chunk straddling the seek point starts now, part-way in; the
+    // cursor then sits after it and scheduleWindow lays the rest on from
+    // there as they come due.
+    let first = 0;
+    while (first < load.chunks.length && load.offsets[first] + load.chunks[first].duration <= target) first++;
+    info.nextIndex = first;
+    if (first < load.chunks.length) {
+      const offset = load.offsets[first];
       const into = Math.max(target - offset, 0);
-      this.startChunkSource(key, i, buffer, Math.max(info.startAt + offset, now), into, session);
+      this.startChunkSource(key, first, load.chunks[first], Math.max(info.startAt + offset, now), into, session);
+      info.nextIndex = first + 1;
     }
+    this.scheduleWindow(key, session);
 
     this.rechainAfterCurrent({ keepLoads: true });
     this.emit();
