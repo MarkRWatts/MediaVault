@@ -48,9 +48,14 @@
 // predecessor's anchor once that anchor is complete — until then the
 // end time isn't known — so a track's chunks can pile up decoded and
 // waiting; the moment the predecessor completes they're scheduled. A
-// track that fails to load leaves a zero-duration passthrough anchor
-// instead of a real one, so the chain still advances past it
-// (console.warn'd) rather than stalling.
+// track that fails to load goes into the `failed` skip set instead: every
+// "what's next / what's before" question the chain asks (nextPlayable,
+// prevPlayable) looks straight through it, so the entry after it is
+// fetched, kept and chained onto the failed entry's slot — the end of the
+// entry before it — while that one is still playing, and playback never
+// lands on the failed entry at all. A hard restart (Play, Next, jumpTo, a
+// repeat wrap) forgets the set, which is what gives a transient failure
+// its retry.
 //
 // Prefetch pacing is driven by PLAYBACK, not by download completion:
 // the current entry's successor is requested once the current entry's
@@ -66,7 +71,7 @@
 // down everything scheduled beyond the current entry and re-pulls the new
 // successor — so the invariant holds however the queue is rearranged
 // mid-play, and a load that is no longer current-or-next is aborted (see
-// wanted()).
+// wanted()). "Next" throughout means the next entry that hasn't failed.
 
 import {
   DEFAULT_VOLUME,
@@ -286,6 +291,9 @@ export class PlayerEngine {
   /** Live source nodes per entry, by chunk index. */
   private readonly sources = new Map<number, Map<number, AudioBufferSourceNode>>();
   private readonly schedule = new Map<number, ScheduleInfo>();
+  /** Entries whose load failed outright (no audio at all) since the last
+   *  hard restart — skipped over by nextPlayable / prevPlayable. */
+  private readonly failed = new Set<number>();
   /** Bumped on every hard restart; a source's onended from an older
    *  session is ignored. Loads are validated by identity instead (see
    *  isLiveLoad) so an in-flight stream survives a restart onto itself. */
@@ -395,11 +403,27 @@ export class PlayerEngine {
     return this.order[pos - 1];
   }
 
+  /** The entry that will actually play after `key`: its successor in play
+   *  order, looking through any that failed to load. */
+  private nextPlayable(key: number | null): number | null {
+    let next = this.nextKey(key);
+    while (next != null && this.failed.has(next)) next = this.nextKey(next);
+    return next;
+  }
+
+  /** The entry `key` chains onto: its predecessor in play order, looking
+   *  through any that failed to load (they occupy no time). */
+  private prevPlayable(key: number): number | null {
+    let prev = this.prevKey(key);
+    while (prev != null && this.failed.has(prev)) prev = this.prevKey(prev);
+    return prev;
+  }
+
   /** Is `key`'s audio still worth holding? Only the current entry and its
-   *  successor ever are — anything else is a load that was overtaken by a
-   *  queue edit. */
+   *  (playable) successor ever are — anything else is a load that was
+   *  overtaken by a queue edit. */
   private wanted(key: number): boolean {
-    return key === this.currentKey || key === this.nextKey(this.currentKey);
+    return key === this.currentKey || key === this.nextPlayable(this.currentKey);
   }
 
   private makeEntries(tracks: QueueTrack[]): QueueEntry[] {
@@ -478,7 +502,7 @@ export class PlayerEngine {
   /** Bring `key`'s successor in: chain it if its audio is already here
    *  (or arriving), request it otherwise. */
   private pullSuccessor(key: number, session: number) {
-    const next = this.nextKey(key);
+    const next = this.nextPlayable(key);
     if (next == null) return;
     if (this.loads.has(next)) this.maybeChain(next, session);
     else this.prefetch(next);
@@ -695,7 +719,7 @@ export class PlayerEngine {
     // stream done, is what pulls the successor in to begin with.
     if (key === this.currentKey) this.pullSuccessor(key, this.session);
     else {
-      const next = this.nextKey(key);
+      const next = this.nextPlayable(key);
       if (next != null && this.loads.has(next)) this.maybeChain(next, this.session);
     }
     // The final chunk may already have finished playing (a stall right at
@@ -713,6 +737,11 @@ export class PlayerEngine {
     const ctx = this.ctx;
     console.warn(`[player] "${entry?.title ?? key}" failed to load:`, err);
     if (!entry || !ctx) return;
+    if (!this.wanted(key)) {
+      // Overtaken by a queue edit before it failed — nothing to skip.
+      this.loads.delete(key);
+      return;
+    }
     // Visible, not just console.warn'd — a fetch/decode failure here
     // otherwise looks identical to normal playback (status stays
     // whatever it was, the chain just silently skips ahead), which is
@@ -729,17 +758,10 @@ export class PlayerEngine {
       return;
     }
 
-    // Leave a zero-duration passthrough anchor so the chain can still
-    // advance past this broken entry instead of stalling forever.
+    // Nothing of it will ever play: mark it skipped, so the chain looks
+    // through it instead of stalling on it forever.
     this.loads.delete(key);
-    const prevKey = this.prevKey(key) ?? NO_PREDECESSOR;
-    const prev = this.schedule.get(prevKey);
-    this.schedule.set(key, {
-      startAt: prev && prev.complete ? prev.startAt + prev.duration : ctx.currentTime + START_EPSILON,
-      duration: 0,
-      complete: true,
-      nextIndex: 0,
-    });
+    this.failed.add(key);
     if (key === this.currentKey) {
       // The current entry itself is unplayable: move on immediately
       // rather than waiting for an onended that will never fire.
@@ -747,11 +769,15 @@ export class PlayerEngine {
       return;
     }
     this.emit();
-    this.prefetch(this.nextKey(key));
+    // The failed entry was the current one's successor; whatever follows it
+    // now is, so bring that in to take its slot — under the usual pacing
+    // (if the current stream is still arriving, its onLoadComplete does it).
+    const current = this.currentKey;
+    if (current != null && this.loads.get(current)?.complete) this.pullSuccessor(current, this.session);
   }
 
-  // Chain `key` onto its predecessor's anchor (per play order), if the
-  // predecessor's end is known, this key hasn't been anchored yet, and at
+  // Chain `key` onto its predecessor's anchor (per play order, looking
+  // through failed entries), if the predecessor's end is known, this key hasn't been anchored yet, and at
   // least one chunk (or the whole, empty, stream) has arrived to anchor.
   // By construction (every anchor / seed writes schedule[prev] before
   // prefetching its successor), the predecessor entry is always present
@@ -760,7 +786,7 @@ export class PlayerEngine {
     if (this.schedule.has(key)) return;
     const load = this.loads.get(key);
     if (!load || (load.chunks.length === 0 && !load.complete)) return;
-    const prevKey = this.prevKey(key) ?? NO_PREDECESSOR;
+    const prevKey = this.prevPlayable(key) ?? NO_PREDECESSOR;
     const prev = this.schedule.get(prevKey);
     if (!prev || !prev.complete) return;
     if (load.chunks.length === 0) {
@@ -790,10 +816,12 @@ export class PlayerEngine {
   }
 
   /** Playback has passed `key`: make its successor current (or wrap /
-   *  finish). Shared by the natural end-of-track path and the failed-load
-   *  path. */
+   *  finish), stepping over any entry that failed to load — its
+   *  replacement is already chained in its slot, and re-requesting it
+   *  would only fail again. Shared by the natural end-of-track path and
+   *  the failed-load path. */
   private advanceFrom(key: number, session: number) {
-    const next = this.nextKey(key);
+    const next = this.nextPlayable(key);
     if (next == null) {
       if (this.repeat && this.order.length > 0) {
         this.startFrom(this.order[0]);
@@ -825,10 +853,9 @@ export class PlayerEngine {
       this.duration = info.complete ? info.duration : (entry?.durationSecs ?? null);
       this.status = "playing";
       // Only a *real* scheduled source (hasLiveSource) means `next`
-      // actually has audio playing — a zero-duration passthrough anchor
-      // (see onLoadFailed) also leaves `info` set but for a track that
-      // itself failed, so it must not clear the banner that failure just
-      // raised.
+      // actually has audio playing — a zero-length pass-through anchor
+      // (see maybeChain) also leaves `info` set, and must not clear a
+      // load-failure banner that is still the latest news.
       if (this.hasLiveSource(next)) {
         this.lastError = null;
         this.loadProgress = null;
@@ -846,6 +873,7 @@ export class PlayerEngine {
     this.session++; // invalidate any straggling source callbacks
     this.stopAllSources();
     this.schedule.clear();
+    this.failed.clear();
     this.dropLoadsExcept(null);
     const restartKey = this.order[0] ?? null;
     this.currentKey = restartKey;
@@ -858,7 +886,7 @@ export class PlayerEngine {
   // Play, for Next/Previous/jumpTo, and for looping back to the top on
   // repeat. Seeds a zero-duration anchor at key's predecessor (per play
   // order) so maybeChain's normal chaining logic can bootstrap a fresh
-  // start exactly like it recovers from a failed entry.
+  // start exactly like it joins one track onto the last.
   private startFrom(key: number) {
     const entry = this.entry(key);
     if (!entry) return;
@@ -868,6 +896,9 @@ export class PlayerEngine {
     this.awaitClock(ctx, session);
     this.stopAllSources();
     this.schedule.clear();
+    // A hard restart is a fresh attempt at everything, failed entries
+    // included — starting *on* one is how the user retries it.
+    this.failed.clear();
     // Keep `key`'s own load if prefetch pacing already started (or
     // finished) it — the common case: Next after its target was pulled in
     // ahead of time while its predecessor played. Its chunks are immutable
@@ -907,7 +938,7 @@ export class PlayerEngine {
       } else if (this.ctx) {
         // Still loading: re-seed under whatever its predecessor is now, so
         // maybeChain can find the anchor when the first chunk lands.
-        this.schedule.set(this.prevKey(current) ?? NO_PREDECESSOR, {
+        this.schedule.set(this.prevPlayable(current) ?? NO_PREDECESSOR, {
           startAt: this.ctx.currentTime + START_EPSILON,
           duration: 0,
           complete: true,
@@ -921,7 +952,7 @@ export class PlayerEngine {
     // Pacing: the successor is only *requested* once the current entry's
     // own stream is complete (onLoadComplete does it otherwise) — but one
     // that is already here can chain straight away.
-    const next = this.nextKey(current);
+    const next = this.nextPlayable(current);
     if (next != null && this.loads.has(next)) this.maybeChain(next, this.session);
     else if (this.loads.get(current)?.complete) this.pullSuccessor(current, this.session);
   }
@@ -996,11 +1027,12 @@ export class PlayerEngine {
   removeFromQueue(key: number) {
     if (!this.entry(key)) return;
     const wasCurrent = key === this.currentKey;
-    const wasNext = key === this.nextKey(this.currentKey);
+    const wasNext = key === this.nextPlayable(this.currentKey);
     const successor = wasCurrent ? this.nextKey(key) : null;
 
     this.queue = this.queue.filter((e) => e.key !== key);
     this.order = this.order.filter((k) => k !== key);
+    this.failed.delete(key);
 
     if (this.queue.length === 0) {
       this.clearQueue();
@@ -1056,6 +1088,7 @@ export class PlayerEngine {
     this.session++;
     this.stopAllSources();
     this.schedule.clear();
+    this.failed.clear();
     this.dropLoadsExcept(null);
     this.queue = [];
     this.order = [];

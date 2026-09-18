@@ -371,7 +371,7 @@ describe("PlayerEngine", () => {
   // 4: failed load of the NEXT track is skipped, chain continues past it
   // -----------------------------------------------------------------------
 
-  it("skips a next track that fails to load, later chaining the one after it onto the same anchor", async () => {
+  it("skips a next track that fails to load, chaining the one after it into the same slot even when its audio arrives late", async () => {
     const t1 = makeTrack();
     const t2 = makeTrack();
     const t3 = makeTrack();
@@ -384,21 +384,103 @@ describe("PlayerEngine", () => {
     // The failed next track's fallout requests the one after it.
     expect(loader.countFor(t3.trackId)).toBe(1);
 
-    // Playback reaches (skips through) track2.
+    // Playback passes track2's slot with nothing of track3 here yet: it
+    // goes straight to track3 — never landing on the failed entry.
     fake.advanceTo(0.25 + 100);
     await flush();
-    expect(engine.getSnapshot().current?.trackId).toBe(t2.trackId);
-    // track3's fetch was already in flight and is not re-issued.
+    let snap = engine.getSnapshot();
+    expect(snap.current?.trackId).toBe(t3.trackId);
+    expect(snap.status).toBe("loading");
+    expect(snap.lastError?.title).toBe(t2.title); // still the latest news
+    // Neither the failed track nor the in-flight one is requested again.
+    expect(loader.countFor(t2.trackId)).toBe(1);
     expect(loader.countFor(t3.trackId)).toBe(1);
 
     loader.resolve(t3.trackId, 55);
     await flush();
 
-    // t3 chains onto t2's zero-length passthrough anchor — the slot t2
-    // would have used (100.25). Its audio landed only once playback was
-    // already there, so it starts as soon as it can after that.
+    // t3 chains onto t1's end — the slot t2 would have used (100.25). Its
+    // audio landed only once playback was already there, so it starts as
+    // soon as it can after that.
+    snap = engine.getSnapshot();
+    expect(snap.status).toBe("playing");
+    expect(snap.lastError).toBeNull();
     expect(fake.sources).toHaveLength(21); // twenty for t1, one for t3 — none for t2
     expect(fake.sources.at(-1)!.startedAt).toBeCloseTo(0.25 + 100 + 0.1, 5);
+  });
+
+  it("keeps the chunks of the track after a failed next one that arrive while the first is still playing, chained at the failed slot", async () => {
+    const t1 = makeTrack();
+    const t2 = makeTrack();
+    const t3 = makeTrack();
+    const t4 = makeTrack();
+    engine.playTracks([t1, t2, t3, t4]);
+    loader.stream(t1.trackId, 100, 5);
+    await flush();
+
+    loader.reject(t2.trackId);
+    await flush();
+    expect(loader.countFor(t3.trackId)).toBe(1);
+
+    // track3 streams in while track1 is still the current entry: kept (not
+    // aborted as "not current-or-next"), waiting decoded until its slot
+    // comes inside the look-ahead window.
+    loader.chunk(t3.trackId, 4);
+    loader.chunk(t3.trackId, 4);
+    loader.complete(t3.trackId);
+    await flush();
+    expect(loader.aborted(t3.trackId)).toBe(false);
+    expect(engine.getSnapshot().current?.trackId).toBe(t1.trackId);
+    expect(loader.countFor(t4.trackId)).toBe(0); // pacing: not until playback reaches t3
+
+    // Near track1's end, track3 is laid gaplessly onto it — the slot the
+    // failed track2 would have had.
+    fake.advanceTo(96);
+    const t3Sources = fake.sources.filter((s) => s.buffer?.duration === 4);
+    expect(t3Sources).toHaveLength(2);
+    expect(t3Sources[0]!.startedAt).toBeCloseTo(0.25 + 100, 5);
+    expect(t3Sources[1]!.startedAt).toBeCloseTo(0.25 + 100 + 4, 5);
+
+    // track1 ends: straight onto track3, already playing — no stop on the
+    // failed entry, no second request for it, nothing re-fetched.
+    fake.advanceTo(0.25 + 100 + 1);
+    await flush();
+
+    const snap = engine.getSnapshot();
+    expect(snap.current?.trackId).toBe(t3.trackId);
+    expect(snap.status).toBe("playing");
+    expect(snap.duration).toBe(8);
+    expect(snap.lastError).toBeNull();
+    expect(loader.countFor(t2.trackId)).toBe(1);
+    expect(loader.countFor(t3.trackId)).toBe(1);
+    expect(loader.countFor(t4.trackId)).toBe(1);
+    expect(fake.sources.filter((s) => s.buffer?.duration === 4)).toHaveLength(2); // nothing re-laid
+  });
+
+  it("looks through several failed tracks in a row, and retries one the user jumps onto", async () => {
+    const t1 = makeTrack();
+    const t2 = makeTrack();
+    const t3 = makeTrack();
+    const t4 = makeTrack();
+    engine.playTracks([t1, t2, t3, t4]);
+    loader.stream(t1.trackId, 100, 5);
+    await flush();
+    loader.reject(t2.trackId);
+    await flush();
+    loader.reject(t3.trackId);
+    await flush();
+
+    loader.resolve(t4.trackId, 40);
+    await flush();
+    fake.advanceTo(96);
+    const t4Source = fake.sources.find((s) => s.buffer?.duration === 40);
+    expect(t4Source?.startedAt).toBeCloseTo(0.25 + 100, 5);
+    expect(loader.countFor(t2.trackId)).toBe(1);
+    expect(loader.countFor(t3.trackId)).toBe(1);
+
+    // An explicit start on a failed entry is a fresh attempt at it.
+    engine.jumpTo(engine.getSnapshot().order[1]!);
+    expect(loader.countFor(t2.trackId)).toBe(2);
   });
 
   // -----------------------------------------------------------------------
