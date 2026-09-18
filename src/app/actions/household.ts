@@ -10,9 +10,12 @@
 //     auth.api.createOrganization, no extra transaction for seeding, and no
 //     accessKind/accessGrantedAt/accessCodeId columns to stamp (MediaVault's
 //     Household model doesn't carry them — see prisma/schema.prisma).
-//   - createInvitation only has the household-invite branch; jinglejotter's
-//     "appOnly" (no-household, come-try-the-app) branch is a growth-marketing
-//     concept that doesn't apply here.
+//   - createInvitation's "appOnly" (no-household, come-try-the-app) branch
+//     is gated to the APP owner, not the household owner, and mints an
+//     email-bound access code rather than just sending a pitch: a
+//     brand-new household needs a code (HOUSEHOLDS_PLAN.md "Access codes &
+//     the web of trust"), and only the app owner hands those out. It is
+//     the /admin page's mint-and-send in one tick from /account.
 //   - updateHouseholdCurrency is out of scope — MediaVault has no
 //     per-household currency concept.
 //   - updateHouseholdName/promoteToOwner/demoteToMember/removeMember were
@@ -30,18 +33,18 @@ import { headers, cookies } from "next/headers";
 import { SIGNUP_CODE_COOKIE } from "@/lib/flow-cookies";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { requireMember } from "@/lib/require-member";
+import { requireMember, requireOwner } from "@/lib/require-member";
 import { slugify } from "@/lib/slug";
 import { isTooLong } from "@/lib/validation";
-import { claimAccessCode, releaseClaim } from "@/lib/access";
+import { claimAccessCode, formatCode, generateCode, releaseClaim } from "@/lib/access";
+import { sendAccessCodeEmail } from "@/lib/email";
 import { logAudit } from "@/lib/audit";
 import { userFacingError } from "@/lib/user-facing-error";
 import { MAX_ROWS, rowCapMessage } from "@/lib/limits";
 import { revokeSessionsForUser, revokeSessionsIfNoLongerVouched } from "@/lib/revoke-sessions";
 
-// `sent` is unused today (the app-only invite branch that produced it isn't
-// ported), kept only so the shared ActionState shape stays a superset of
-// what any action here returns.
+// `sent` is the app-only invite branch's success (the address the code
+// went to); the household-invite branch just clears the form.
 export type ActionState = { error?: string; sent?: string } | null;
 
 /** First-run: create a brand-new household for the signed-in user, who
@@ -120,7 +123,13 @@ export async function goToInvite(formData: FormData): Promise<void> {
  *  invitation:create permission (owner-only by default — see auth.ts) and
  *  enforces the household's membership limit. The email is a hint shown in
  *  the invite UI, not an authorization check — see acceptInvitation, which
- *  redeems by bearer token, not by matching this address. */
+ *  redeems by bearer token, not by matching this address.
+ *
+ *  With `appOnly` ticked (InviteForm's checkbox, offered only to the app
+ *  owner) it instead invites them to MediaVault itself: they get their own
+ *  household and never see this one. In this app that means an email-bound
+ *  access code — the same mint-and-send the /admin page does — since a new
+ *  household can't be created without one. */
 export async function createInvitation(
   _prevState: ActionState,
   formData: FormData,
@@ -130,6 +139,8 @@ export async function createInvitation(
   const email = String(formData.get("email") ?? "").trim();
   if (!email) return { error: "Enter an email address." };
   if (isTooLong(email)) return { error: "That email address is too long." };
+
+  if (formData.get("appOnly")) return inviteToApp(userId, email.toLowerCase());
 
   // Every Invitation ever sent counts, regardless of status — cancelled and
   // accepted ones still occupy a row, and the point is bounding the table,
@@ -149,6 +160,55 @@ export async function createInvitation(
 
   revalidatePath("/account");
   return null;
+}
+
+/** createInvitation's app-only branch: mint an access code bound to
+ *  `email` and mail it, exactly as /admin's mint-with-send does. The
+ *  household branch gets its guards from BetterAuth (owner-only
+ *  invitation:create, email validation); this one mints the app's trust
+ *  gate directly, so it holds the stricter bar itself — the APP owner
+ *  (User.isAppOwner, via requireOwner), which is also who the form shows
+ *  the checkbox to. A live email-bound code vouches that address for
+ *  sign-in the moment it exists (src/lib/allowed-email.ts). */
+async function inviteToApp(userId: string, email: string): Promise<ActionState> {
+  let admin: Awaited<ReturnType<typeof requireOwner>>;
+  try {
+    admin = await requireOwner();
+  } catch {
+    return { error: "Only the app owner can invite someone to MediaVault." };
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { error: "That doesn't look like an email address." };
+
+  // Same DoS-prevention cap as the admin page's mint.
+  if ((await prisma.accessCode.count()) >= MAX_ROWS) return { error: rowCapMessage("codes") };
+
+  const row = await prisma.accessCode.create({
+    data: { code: generateCode(), email, note: "Invited from the account page" },
+  });
+
+  const inviter = await prisma.user.findUnique({ where: { id: userId }, select: { name: true } });
+  try {
+    await sendAccessCodeEmail({
+      to: email,
+      inviterName: inviter?.name || admin.email,
+      code: formatCode(row.code),
+    });
+  } catch (err) {
+    // The code exists (and shows on /admin, where it can be re-sent) —
+    // surface the send failure rather than pretending nothing happened.
+    await logAudit({ userId, action: "invite.send-app-only", entityId: row.id });
+    revalidatePath("/admin");
+    return {
+      error: `Code ${formatCode(row.code)} was minted, but the email failed: ${
+        userFacingError(err, "unknown error", "household")
+      }`,
+    };
+  }
+  await prisma.accessCode.update({ where: { id: row.id }, data: { sentAt: new Date() } });
+  await logAudit({ userId, action: "invite.send-app-only", entityId: row.id });
+
+  revalidatePath("/admin");
+  return { sent: email };
 }
 
 /** Revoke a pending invite. */

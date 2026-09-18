@@ -94,10 +94,21 @@ export interface TrackStreamHandlers {
   onProgress?: (p: PlayerLoadProgress) => void;
 }
 
+/** A media element that plays and pauses in lockstep with the engine so the
+ *  OS treats the page as a media source — see defaultCreateAnchor. */
+export interface NowPlayingAnchor {
+  play(): void;
+  pause(): void;
+}
+
 export interface EngineDeps {
   /** Construct the one AudioContext. Only ever called from a user gesture
    *  (Play) — autoplay policy requires it. */
   createContext: () => AudioContext;
+  /** Create the Now Playing anchor, alongside the context, inside that same
+   *  first gesture (a media element's first play() must be gesture-bound
+   *  too). null for environments without a document. */
+  createAnchor: () => NowPlayingAnchor | null;
   /** Warm the output right after a cold start's context comes alive (see
      *  ensureContext, on the first Play). The default starts a permanent
    *  inaudible keep-alive tone. */
@@ -265,6 +276,68 @@ export async function streamTrack(
   if (tail) emit(tail);
 }
 
+/** A WAV of silence — 16-bit mono at 8 kHz, the smallest thing Safari will
+ *  decode as a real audio track — as an object URL. */
+function silentWavUrl(secs: number): string {
+  const rate = 8000;
+  const frames = rate * secs;
+  const bytes = new ArrayBuffer(44 + frames * 2);
+  const v = new DataView(bytes);
+  const ascii = (at: number, text: string) => {
+    for (let i = 0; i < text.length; i++) v.setUint8(at + i, text.charCodeAt(i));
+  };
+  ascii(0, "RIFF");
+  v.setUint32(4, 36 + frames * 2, true);
+  ascii(8, "WAVE");
+  ascii(12, "fmt ");
+  v.setUint32(16, 16, true); // PCM chunk size
+  v.setUint16(20, 1, true); // PCM
+  v.setUint16(22, 1, true); // mono
+  v.setUint32(24, rate, true);
+  v.setUint32(28, rate * 2, true); // byte rate
+  v.setUint16(32, 2, true); // block align
+  v.setUint16(34, 16, true); // bits
+  ascii(36, "data");
+  v.setUint32(40, frames * 2, true);
+  // Sample data is already all zeros.
+  return URL.createObjectURL(new Blob([bytes], { type: "audio/wav" }));
+}
+
+/** The production Now Playing anchor: a looping, silent <audio> element.
+ *
+ *  Hardware media keys (F7/F8/F9, the Touch Bar, AirPods, the menu-bar Now
+ *  Playing widget) reach a web page only through the Media Session API,
+ *  and only once the browser has registered the tab with the OS as a
+ *  media source. Safari does that for playing <audio>/<video> elements,
+ *  not for a Web Audio context — so with the engine's AudioContext alone,
+ *  F8 launched Apple Music instead (reported 2026-09-18). This element
+ *  gives Safari something to register: it plays and pauses exactly when
+ *  the engine does (see emit), makes no sound, and the real audio still
+ *  comes from the context. The Media Session metadata, playback state and
+ *  action handlers themselves live in components/player/PlayerProvider.tsx. */
+function defaultCreateAnchor(): NowPlayingAnchor | null {
+  if (typeof document === "undefined" || typeof URL === "undefined" || typeof Blob === "undefined") return null;
+  const audio = document.createElement("audio");
+  // Long enough that no browser dismisses it as a sound effect.
+  audio.src = silentWavUrl(30);
+  audio.loop = true;
+  audio.preload = "auto";
+  audio.setAttribute("playsinline", "");
+  audio.setAttribute("aria-hidden", "true");
+  // Without controls an <audio> renders nothing; it's in the document
+  // only so WebKit counts it as live page media.
+  document.body.appendChild(audio);
+  return {
+    play() {
+      const p = audio.play();
+      if (p) p.catch(() => {}); // autoplay policy — best effort
+    },
+    pause() {
+      audio.pause();
+    },
+  };
+}
+
 function defaultCreateContext(): AudioContext {
   const Ctor =
     window.AudioContext ||
@@ -286,6 +359,8 @@ export class PlayerEngine {
 
   private ctx: AudioContext | null = null;
   private gain: GainNode | null = null;
+  private nowPlaying: NowPlayingAnchor | null = null;
+  private nowPlayingActive = false;
 
   private readonly loads = new Map<number, TrackLoad>();
   /** Live source nodes per entry, by chunk index. */
@@ -332,6 +407,7 @@ export class PlayerEngine {
   constructor(deps: Partial<EngineDeps> = {}) {
     this.deps = {
       createContext: deps.createContext ?? defaultCreateContext,
+      createAnchor: deps.createAnchor ?? defaultCreateAnchor,
       keepWarm: deps.keepWarm ?? defaultKeepWarm,
       loadTrack: deps.loadTrack ?? streamTrack,
     };
@@ -367,6 +443,16 @@ export class PlayerEngine {
       lastError: this.lastError,
       loadProgress: this.loadProgress,
     };
+    // The Now Playing anchor follows the transport: audible-or-about-to-be
+    // means playing, anything else paused. The first "loading" emit happens
+    // synchronously inside startFrom, inside the Play gesture — which is
+    // what unlocks the element for every later, programmatic play().
+    const audible = this.status === "playing" || this.status === "loading";
+    if (this.nowPlaying && audible !== this.nowPlayingActive) {
+      this.nowPlayingActive = audible;
+      if (audible) this.nowPlaying.play();
+      else this.nowPlaying.pause();
+    }
     for (const listener of this.listeners) listener();
   }
 
@@ -449,6 +535,11 @@ export class PlayerEngine {
         this.deps.keepWarm(ctx);
       } catch {
         // Best effort — no keep-alive just means a possible first-start click.
+      }
+      try {
+        this.nowPlaying = this.deps.createAnchor();
+      } catch {
+        this.nowPlaying = null; // no media keys, nothing else lost
       }
     }
     return this.ctx;
