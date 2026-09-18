@@ -1198,6 +1198,33 @@ describe("PlayerEngine", () => {
   // 16: snapshot identity + subscribe
   // -----------------------------------------------------------------------
 
+  it("the Now Playing anchor plays and pauses in step with the transport", async () => {
+    const calls: string[] = [];
+    const anchored = new PlayerEngine({
+      createContext: () => fake.ctx,
+      loadTrack: loader.loadTrack,
+      keepWarm: () => {},
+      createAnchor: () => ({ play: () => calls.push("play"), pause: () => calls.push("pause") }),
+    });
+    const t1 = makeTrack();
+    anchored.playTracks([t1]);
+    // Playing from the very first ("loading") emit, synchronously inside
+    // the gesture that called playTracks — that's what unlocks the element.
+    expect(calls).toEqual(["play"]);
+
+    loader.resolve(t1.trackId, 100);
+    await flush();
+    expect(calls).toEqual(["play"]); // loading → playing: no change
+
+    anchored.pause();
+    expect(calls).toEqual(["play", "pause"]);
+    anchored.play();
+    expect(calls).toEqual(["play", "pause", "play"]);
+
+    anchored.clearQueue();
+    expect(calls).toEqual(["play", "pause", "play", "pause"]);
+  });
+
   it("getSnapshot is referentially stable between mutations, and subscribe stops firing after unsubscribe", () => {
     const snap1 = engine.getSnapshot();
     expect(engine.getSnapshot()).toBe(snap1);

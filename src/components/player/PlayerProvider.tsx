@@ -43,7 +43,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   // Media Session: lock-screen / hardware-key transport and the OS "now
   // playing" card. Best-effort — absent on some engines, and metadata
-  // artwork is a plain URL the OS fetches itself.
+  // artwork is a plain URL the OS fetches itself. None of this reaches the
+  // OS until the browser registers the tab as a media source, which is
+  // what the engine's silent Now Playing anchor is for (see
+  // defaultCreateAnchor in src/lib/player-engine.ts).
   useEffect(() => {
     if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
     const ms = navigator.mediaSession;
@@ -61,6 +64,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       ["pause", () => e.pause()],
       ["previoustrack", () => e.previous()],
       ["nexttrack", () => e.next()],
+      ["seekto", (details) => {
+        if (details.seekTime != null) e.seek(details.seekTime);
+      }],
     ];
     for (const [action, handler] of handlers) {
       try {
@@ -76,6 +82,30 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     navigator.mediaSession.playbackState =
       snapshot.status === "playing" || snapshot.status === "loading" ? "playing" : snapshot.status === "paused" ? "paused" : "none";
   }, [snapshot.status]);
+
+  // Position state: the OS widget's scrubber. Without this it would show
+  // the anchor element's own (silent, looping) timeline. Re-published on
+  // every snapshot change — a new track, a seek, play/pause — and the OS
+  // extrapolates between updates from playbackRate.
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
+    const ms = navigator.mediaSession;
+    if (typeof ms.setPositionState !== "function") return;
+    const pos = engine().getPosition();
+    try {
+      if (!current || !pos || !(pos.duration > 0)) {
+        ms.setPositionState();
+        return;
+      }
+      ms.setPositionState({
+        duration: pos.duration,
+        position: Math.min(Math.max(pos.elapsed, 0), pos.duration),
+        playbackRate: snapshot.status === "playing" ? 1 : 0,
+      });
+    } catch {
+      // A rejected state (NaN, position past duration) is not worth failing over.
+    }
+  }, [snapshot, current]);
 
   return (
     <PlayerContext.Provider value={{ snapshot, engine: engine() }}>
