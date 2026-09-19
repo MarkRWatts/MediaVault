@@ -132,6 +132,25 @@ curl -sS -o /dev/null -w "%{http_code}\n" https://mediavault.markrwatts.com/   #
 docker compose --env-file .env.docker -f docker-compose.yml -f docker-compose.prod.yml logs app   # on the VM: "No pending migrations to apply"
 ```
 
+### ffmpeg and the iGPU
+
+The image is Debian bookworm rather than Alpine, with a pinned
+`jellyfin-ffmpeg` build (`FFMPEG_PATH`/`FFPROBE_PATH` in the Dockerfile)
+instead of the distro's ffmpeg — see `V4_PLAN.md` "ffmpeg: jellyfin-ffmpeg,
+pinned". The VM's Intel iGPU render node is passed into the container
+(`docker-compose.prod.yml`'s `devices`/`group_add`, fed by `RENDER_GID` in
+`.env.docker`) for the hardware video path (`PLAYBACK_HWACCEL`). Verify the
+driver can see the device:
+
+```bash
+docker compose --env-file .env.docker -f docker-compose.yml -f docker-compose.prod.yml \
+  exec app /usr/lib/jellyfin-ffmpeg/vainfo --display drm --device /dev/dri/renderD128
+```
+
+Look for `VAEntrypointEncSlice` under the H.264 profile in the output — its
+absence means the container can't reach the iGPU (wrong `RENDER_GID`, or the
+device missing on the VM).
+
 ### Running as non-root
 
 The image runs the server as the unprivileged `node` user (uid/gid 1000)
@@ -253,6 +272,9 @@ commented per variable. The VM's real values live in the Ansible vault (see
   `AUDIO_CONCURRENCY` cap concurrent transcodes and decodes; the defaults
   suit a 4-core VM.
 - No `FFPROBE_DOCKER_IMAGE`: the image installs ffmpeg.
+- `RENDER_GID` (the VM's `render` group id) and `PLAYBACK_HWACCEL` (`qsv` |
+  `vaapi` | `none`) drive the iGPU pass-through — see
+  [ffmpeg and the iGPU](#ffmpeg-and-the-igpu).
 - `AUDIODB_API_KEY` and `FANART_API_KEY` currently do nothing (see
   `PLAN.md` → Housekeeping).
 
