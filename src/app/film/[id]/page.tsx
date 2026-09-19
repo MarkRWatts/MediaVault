@@ -10,7 +10,7 @@ import { audioTrackLabel } from "@/lib/audio-track-label";
 import CollectionStrip from "@/components/CollectionStrip";
 import FilmPhysicalCopyForm from "@/components/FilmPhysicalCopyForm";
 import { getFilmDetail } from "@/lib/queries";
-import { jellyfinConfigured } from "@/lib/jellyfin";
+import { isFilePlayable } from "@/lib/playback/engine-flag";
 
 export default async function FilmPage({
   params,
@@ -25,14 +25,15 @@ export default async function FilmPage({
   const film = await getFilmDetail(filmId);
   if (!film) notFound();
 
-  // In-app Play: through Jellyfin's transcoder for any Version the sync has
-  // matched to a Jellyfin item (PLAYBACK_PLAN.md, "Status"); the app's own
-  // ffmpeg pipeline is parked, shown only when IN_APP_PLAYBACK=1 (which
-  // scripts/e2e-playback.ts sets for its own server so it stays tested).
+  // In-app Play: the OLD, parked event-playlist pipeline shown only when
+  // IN_APP_PLAYBACK=1 (which scripts/e2e-playback.ts sets for its own
+  // server so it stays tested -- unrelated to PLAYBACK_ENGINE, see
+  // src/lib/playback/engine-flag.ts's module comment); otherwise "jellyfin"
+  // -- the player's session-based protocol name -- whenever the version is
+  // playable at all, through whichever engine the server has picked.
   const localPlay = process.env.IN_APP_PLAYBACK === "1";
-  const jellyfinPlay = jellyfinConfigured();
-  const playSourceFor = (v: { jellyfinId: string | null }) =>
-    localPlay ? ("local" as const) : jellyfinPlay && v.jellyfinId ? ("jellyfin" as const) : null;
+  const playSourceFor = (v: { jellyfinId: string | null; videoCodec: string | null }) =>
+    localPlay ? ("local" as const) : isFilePlayable(v) ? ("jellyfin" as const) : null;
   const audioOptionsFor = (v: (typeof film.versions)[number]) =>
     v.audioTracks.map((a) => ({ streamIdx: a.streamIdx, label: audioTrackLabel(a) }));
   // The main Play button plays the first playable version (versions are

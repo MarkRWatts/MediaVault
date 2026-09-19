@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import PosterImage from "@/components/PosterImage";
 import SeasonSection from "@/components/SeasonSection";
 import { getShowDetail } from "@/lib/queries";
-import { jellyfinConfigured } from "@/lib/jellyfin";
+import { playbackAvailable } from "@/lib/playback/engine-flag";
 import FilmActions from "@/components/FilmActions";
 import CertificationBadge from "@/components/CertificationBadge";
 import { requireMemberOrRedirect } from "@/lib/require-member";
@@ -22,9 +22,9 @@ export default async function ShowPage({
   const show = await getShowDetail(showId);
   if (!show) notFound();
 
-  // Only build deep links when the server is actually reachable — no error
+  // Only build deep links when playback is actually available — no error
   // state in the UI, episodes without a match simply get no chip.
-  const playable = jellyfinConfigured();
+  const playable = playbackAvailable();
   const [userState, next] = await Promise.all([
     getShowUserState(userId, show.id),
     playable ? getNextEpisodeFile(userId, show.id) : Promise.resolve(null),
