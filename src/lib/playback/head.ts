@@ -81,6 +81,15 @@ export function parseSegmentListLine(line: string): SegmentListLine | null {
   return { name, startSecs, endSecs };
 }
 
+async function fileExists(p: string): Promise<boolean> {
+  try {
+    await fs.access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export type HeadStopReason =
   | "caught-up"
   | "finished"
@@ -151,6 +160,13 @@ export class Head {
   private exitResolve!: () => void;
   readonly exited: Promise<void>;
   private failure: Error | null = null;
+  /** Set once every segment this head will ever promote has been promoted.
+   *  Deliberately NOT the same thing as "the child process exited": a copy
+   *  head can remux a whole film in a tenth of a second and be gone while
+   *  its completion lines are still being read and renamed. Treating the
+   *  process's exit as the end of the story made every request that arrived
+   *  in that window time out instead of waiting a few more milliseconds. */
+  private finished = false;
 
   constructor(opts: HeadOptions, stagingDir: string) {
     this.opts = opts;
@@ -226,12 +242,25 @@ export class Head {
 
     const staged = path.join(this.stagingDir, name);
     const target = path.join(this.opts.dir, segmentFileName(index));
+
+    // Never overwrite. Segments are deterministic per key, so an existing
+    // file holds the same bytes this one does and replacing it would gain
+    // nothing -- while a rename over a file an HTTP response is already
+    // streaming unlinks it mid-flight. This is the ordinary case when a head
+    // runs into output a previous head left behind.
+    if (await fileExists(target)) {
+      await fs.unlink(staged).catch(() => {});
+      this.nextIndex = Math.max(this.nextIndex, index + 1);
+      this.wake(index);
+      if (this.opts.shouldStop(this.nextIndex)) void this.stop("caught-up");
+      return;
+    }
+
     try {
       await fs.rename(staged, target);
     } catch (err) {
-      // EEXIST can't happen on POSIX rename (it replaces), so a failure here
-      // is a vanished staging file or a full disk. Either way this segment
-      // is not available; leave it for a later head rather than pretending.
+      // A vanished staging file or a full disk. Either way this segment is
+      // not available; leave it for a later head rather than pretending.
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
         console.warn(`[playback] ${this.key}: could not promote ${name}:`, err);
       }
@@ -249,11 +278,19 @@ export class Head {
 
   /**
    * The table is the contract (decisions.ts's checkSegmentDuration). A
-   * segment whose reported duration doesn't match it is not published and
-   * not counted: the file stays in the staging directory to be deleted with
-   * it, the head is killed rather than left to renumber everything after
-   * this point, and whoever was waiting gets a real error instead of a
-   * segment holding the wrong six seconds of film.
+   * segment whose reported duration doesn't match it is not published: the
+   * file stays in the staging directory to be deleted with it, the head is
+   * killed rather than left to renumber everything after this point, and
+   * whoever was waiting gets a real error instead of a segment holding the
+   * wrong six seconds of film.
+   *
+   * The check earns its keep twice over. A head that is *killed* -- a stop,
+   * an idle timeout, a seek that replaces it -- finishes the segment it was
+   * midway through and prints a CSV line for it, so "a line means the file
+   * is complete" is true only while the head is running of its own accord.
+   * The truncated segment fails this comparison exactly as a mis-cut one
+   * does, which is what keeps it off the disk; it just isn't a fault, so it
+   * is neither counted nor logged as one.
    */
   private async verify(index: number, line: SegmentListLine): Promise<boolean> {
     const entry = this.opts.segments[index];
@@ -272,6 +309,12 @@ export class Head {
     if (verdict.ok) {
       this.opts.onVerified(true);
       return true;
+    }
+
+    if (this.stopping !== null) {
+      // Our own kill cut this segment short -- see the doc comment.
+      console.log(`[playback] ${this.key}: dropping segment ${index}, truncated by the ${this.stopping} that stopped this head`);
+      return false;
     }
 
     this.opts.onVerified(false);
@@ -310,7 +353,7 @@ export class Head {
   waitFor(index: number, deadlineMs: number, signal?: AbortSignal): Promise<void> {
     if (this.nextIndex > index) return Promise.resolve();
     if (this.failure) return Promise.reject(this.failure);
-    if (!this.running && this.stopping === null) return Promise.resolve();
+    if (this.finished) return Promise.resolve();
 
     return new Promise<void>((resolve, reject) => {
       const entry = { index, resolve: () => finish(resolve), reject: (err: Error) => finish(() => reject(err)) };
@@ -411,6 +454,11 @@ export class Head {
         console.log(
           `[playback] head stop ${this.key} (${reason}): ${this.segmentsWritten} segments in ${secs}s (${this.headId})`,
         );
+
+        // Nothing more can be promoted from here, so a waiter that arrives
+        // after this point must be answered immediately rather than sit
+        // until its deadline.
+        this.finished = true;
 
         if (!deliberate && reason === "failed") {
           const detail = (spawnError?.message ?? this.stderrTail).trim().split("\n").filter(Boolean).slice(-3).join(" ");

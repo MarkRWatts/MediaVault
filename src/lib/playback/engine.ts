@@ -684,7 +684,8 @@ export async function getSegment(
 
 /** Tests only: stop everything and forget it, so a test that manipulates the
  *  cache directory behind the engine's back gets a genuinely cold start.
- *  Also what a hot reload would want if modules could be told about one. */
+ *  The counters engineStats reports are deliberately *not* reset -- a test
+ *  measures heads started across a reset, as a delta. */
 export async function resetEngineForTest(): Promise<void> {
   for (const session of state.sessions.values()) {
     if (session.idleTimer) clearTimeout(session.idleTimer);
@@ -699,7 +700,4 @@ export async function resetEngineForTest(): Promise<void> {
   if (state.evictionTimer) clearInterval(state.evictionTimer);
   state.evictionTimer = null;
   state.init = null;
-  state.headsStarted = 0;
-  state.segmentsVerified = 0;
-  state.segmentMismatches = 0;
 }
