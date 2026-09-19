@@ -505,37 +505,72 @@ it a thing the household can rely on.
 
 - **Server (this repo): phases 0, 1 and the server half of 3 are in and
   deployed.** Bearer sessions (`bearer()` in `src/lib/auth.ts`, the header
-  accepted in `src/proxy.ts`); `GET /api/audio/:id/file`; the `/api/v1`
-  reads and mutations under `src/app/api/v1/`, typed in
-  `src/lib/api-v1-types.ts`, with the favourite and playlist logic in
-  `src/lib/music-user-state.ts` and `film-user-state.ts` so the server
-  actions and the routes share it. For the app's home and browse screens
-  the music index also carries `recentAlbums`, every show summary a
-  `createdAt`, and `GET /api/v1/music/albums` lists every playable album.
-  Playback is logged from both clients: a content-free
-  `video.playback` / `audio.playback` audit row per start, and an
-  anonymous per-day play log (`src/lib/play-log.ts`), fed by
-  `POST /api/audio/playback`, `POST /api/audio/:trackId/played` and the
-  progress routes' `isNewPlay`. Phase 6 (passkeys) is not started.
-- **App: `MarkRWatts/MediaVaultiOS`, phases 2 and 4 done, phase 3 done
-  bar hearts.** It runs against the live server in the simulator and on a
-  physical iPhone.
-  - *Shape.* Tabs are Home, Movies, Shows, Music and Search; Account is an
-    icon on Home. Home offers continue listening (the persisted queue),
-    continue watching (films and episodes) and the newest music, films and
-    shows. Movies and Shows are poster grids (poster and title) showing
-    only what can be played, with BBFC certificate symbols and each
-    version's resolution on the detail pages; Music is a grid
-    with Playlists / Artists / Albums filters; Search covers all three
-    libraries from lists already on the phone (word-prefix, case- and
-    accent-insensitive). A mini player with a progress line sits above the
-    tab bar and steps aside for the keyboard.
+  accepted in `src/proxy.ts`); the `/api/v1` reads and mutations under
+  `src/app/api/v1/`, typed in `src/lib/api-v1-types.ts`, with the
+  favourite and playlist logic in `src/lib/music-user-state.ts` and
+  `film-user-state.ts` so the server actions and the routes share it. For
+  the app's home and browse screens the music index also carries
+  `recentAlbums`, every show summary a `createdAt`, the films response its
+  `collections` (two or more owned films, members as ids), the shows
+  response `favouriteShowIds`, and
+  `GET /api/v1/music/albums` lists every playable album.
+  `GET /api/audio/:id/file` serves a track's own bytes, and with
+  `?quality=aac` a 256 kbps AAC copy of a lossless track, converted once
+  into a capped on-disk cache (`src/lib/audio-transcode.ts`); `&probe=1`
+  answers whether that copy is ready and starts it if not, so a client
+  about to play never waits on the conversion. Playback is logged from
+  both clients: a content-free `video.playback` / `audio.playback` audit
+  row per start, and an anonymous per-day play log
+  (`src/lib/play-log.ts`). Phase 6 (passkeys) is not started — see
+  "Blocked on the paid Developer Program" below.
+- **App: `MarkRWatts/MediaVaultiOS`, phases 2, 3 and 4 done.** It runs against the live server in the simulators, on a
+  physical iPhone and on a physical iPad mini; device testing is where
+  the Picture in Picture, canvas-drag and Stage Manager faults below were
+  found.
+  - *Shape.* Tabs are Home, Movies, Shows, Music and Search — a bottom bar
+    with icons on iPhone and iPad alike — and Account is an icon on Home,
+    with an "About this app" section (personal use, where the media and
+    the artwork come from, acknowledgements). Home offers continue
+    listening (the persisted queue), continue watching (films and
+    episodes) and the newest music, films and shows. Movies and Shows are
+    poster grids (poster and title) of what can be played; Movies can
+    switch to Collections, each with its own page of films in release
+    order, and a film's page has a shelf of the rest of its collection.
+    BBFC certificate symbols and each version's resolution are on the
+    detail pages. Music is a grid with Favourites / Playlists / Artists /
+    Albums filters, and Movies and Shows each have a Favourites filter
+    too. Search covers all three libraries from lists already on the
+    device (word-prefix, case- and accent-insensitive). A mini player with
+    a progress line sits above the tab bar and steps aside for the
+    keyboard. Neutral colours come from one brown ramp; the accent is the
+    site's amber, with dark text on it.
   - *Music.* `AVQueuePlayer` engine, audio session, Now Playing, remote
     commands and the persisted queue as planned. The Play button on an
     album, playlist or the favourites list is a play/pause toggle for the
     source that is playing. Playlists can be created, renamed, reordered
-    and deleted, and tracks or whole albums added and removed. Hearts are
-    still display-only.
+    and deleted, and tracks or whole albums added and removed.
+  - *Favourites.* Hearts on tracks, albums, artists, films and shows read
+    and write the same rows as the web app's, through the v1 PUT/DELETE
+    routes, so the two stay in step. A heart flips at once and goes back
+    if the server refuses; `FavouriteOverrides` (MediaVaultKit, tested)
+    lets one changed on one screen show on the others without a reload.
+    Playlist rows have no heart, because that response doesn't say which
+    tracks are hearted.
+  - *Patchy signal.* A rolling cache holds whole files for the next five
+    tracks in play order (system Caches directory, 1 GB, least recently
+    played out first, never the queue itself; emptied on sign-out and
+    after seven days without reaching the server). The player uses a
+    cached file when there is one, swaps a streaming successor for its
+    file when it lands, buffers a streaming track whole, and rebuilds a
+    stream that fails where it stopped. On a metered connection the cache
+    fetches the server's smaller AAC copy unless Account > Music quality
+    says Original; Wi-Fi always gets the original. With no network at
+    launch the app reopens as the last signed-in person rather than at
+    sign-in, so the saved queue and cached tracks still play. The rules
+    are `TrackCachePolicy` and `AudioQuality` in MediaVaultKit, with
+    tests. This is a playback buffer; the offline downloads under
+    "Explicitly deferred" are still deferred, with a plan sketched (a
+    server-set seven-day lease renewed at each check-in).
   - *Video.* Film and show detail screens (versions, seasons, episodes,
     resume, quality remembered per network, audio track) over
     `VideoSession`, which runs the Jellyfin lifecycle as planned —
@@ -544,8 +579,17 @@ it a thing the household can rely on.
     segment, so the same playlist is retried before a new session is paid
     for. The system player is presented modally for its full chrome; the
     phone is portrait except while it is up, and landscape starts in
-    aspect-fill when that crops at most a fifth (16:9 on a phone). Quality
-    and audio track are chosen before playing, not from inside the player.
+    aspect-fill when that crops at most a fifth (16:9 on a phone). Picture
+    in Picture keeps the player presented while the film floats (it used
+    to read as "closed" and end the stream); the rest of the app can't be
+    browsed meanwhile, which would need playback to live above the player
+    screen. The player's drag/pinch/rotate dismissal is disabled — Close
+    is the way out, double-tap switches fill and fit. Quality and audio
+    track are chosen before playing, not from inside the player.
+  - *iPad.* All four orientations are declared, without which iPadOS
+    stretches the app into a resized Stage Manager or Windowed Apps window
+    instead of re-laying it out; with them, windows resize properly, at
+    rest and mid-film.
   - *CarPlay (audio only).* Library, Playlists and Artists templates over
     the same `AudioPlayer` are written but have never run: the
     `carplay-audio` entitlement needs the paid Developer Program and
@@ -556,13 +600,22 @@ it a thing the household can rely on.
     `.xcodeproj` is generated by XcodeGen). On a free team a device build
     lasts seven days; TestFlight, like CarPlay, waits on the paid
     programme.
-- **Not yet done.** Hearts in the app; phase 5's hardening pass
-  (interruptions and route changes on a real drive, cellular hand-off,
-  iPad layout, accessibility labels, the background checklist on a locked
-  phone over cellular); Picture in Picture untested; phase 6. One open observation: in the simulator the
-  system player twice paused a stream by itself a few seconds in, with no
-  cause found and no recurrence on a device so far.
+- **Blocked on the paid Developer Program.** A personal development team
+  can't sign the entitlements two features need, so both wait for the
+  $99/year programme (which also brings TestFlight and year-long builds):
+  passkeys need Associated Domains (confirmed: a device build with it
+  fails to provision), and nothing of phase 6 is built; CarPlay needs
+  `carplay-audio`, and Apple's approval on top.
+- **Not yet done.** Of phase 5's hardening pass: interruptions and route changes on a real drive,
+  accessibility labels, and the background checklist on a locked phone
+  over cellular. Built but not yet proven where they matter: the rolling
+  cache, the stream recovery and the offline launch in a real dead zone;
+  the smaller copy over real mobile data; the video fixes on the devices
+  that showed the faults; favourites on a device. One open observation: the system player has
+  twice paused a stream by itself a few seconds in, in the simulator, with
+  no cause found.
 - **Working on it.** Debug builds take launch arguments for scripted runs
   (`-debugTab`, `-debugPlayFilmVersion`, `-debugPlayEpisodeFile`,
-  `-debugLandscape`, `-debugPlaySeconds`, `-debugSearch`), and
-  `VideoSession` logs to the `com.markrwatts.mediavault` subsystem.
+  `-debugLandscape`, `-debugPlaySeconds`, `-debugSearch`,
+  `-debugMetered`), and the app logs to the `com.markrwatts.mediavault`
+  subsystem (categories `video`, `audio`, `track-cache`).
