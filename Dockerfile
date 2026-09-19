@@ -61,8 +61,13 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # killed any in-flight ffmpeg mid-write and left its multi-GB .partial
 # behind (see src/lib/video-cache.ts's shutdown hook). wget is the
 # healthcheck's probe below (bookworm-slim ships neither tini nor wget by
-# default, unlike Alpine). Done before the app COPYs so this layer is
-# cached across app rebuilds.
+# default, unlike Alpine). openssl is installed by name, not left to arrive
+# as a dependency: Prisma's schema engine (the `migrate deploy` on every
+# start) picks its binary by detecting the OpenSSL version, bookworm-slim
+# has none of its own, and the curl/ca-certificates purge below would
+# otherwise auto-remove it again -- the container then looks for a
+# `debian-openssl-1.1.x` engine that was never installed and restart-loops.
+# Done before the app COPYs so this layer is cached across app rebuilds.
 ARG TARGETARCH
 RUN set -eux; \
   JELLYFIN_FFMPEG_VERSION=8.1.2-5; \
@@ -73,7 +78,7 @@ RUN set -eux; \
   esac; \
   JELLYFIN_FFMPEG_DEB="jellyfin-ffmpeg8_${JELLYFIN_FFMPEG_VERSION}-bookworm_${TARGETARCH}.deb"; \
   apt-get update; \
-  apt-get install -y --no-install-recommends tini wget ca-certificates curl; \
+  apt-get install -y --no-install-recommends tini wget openssl ca-certificates curl; \
   curl -fsSL -o /tmp/jellyfin-ffmpeg.deb \
     "https://github.com/jellyfin/jellyfin-ffmpeg/releases/download/v${JELLYFIN_FFMPEG_VERSION}/${JELLYFIN_FFMPEG_DEB}"; \
   echo "${JELLYFIN_FFMPEG_SHA256}  /tmp/jellyfin-ffmpeg.deb" | sha256sum -c -; \
