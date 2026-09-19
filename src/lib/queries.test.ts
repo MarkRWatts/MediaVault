@@ -7,7 +7,7 @@
 // with the real schema and wired in via vi.mock("@/lib/db", ...) so
 // src/lib/queries.ts's own `import { prisma } from "@/lib/db"` resolves to
 // this test's isolated instance instead of the dev database.
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { vi } from "vitest";
 import { createTempTestDb } from "@/lib/test-temp-db";
 import type { PrismaClient as PrismaClientType } from "@/generated/prisma/client";
@@ -21,7 +21,7 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
-const { getWatchStats } = await import("@/lib/queries");
+const { getWatchStats, getContinueWatchingEpisodes } = await import("@/lib/queries");
 
 beforeAll(async () => {
   const db = await createTempTestDb();
@@ -88,6 +88,89 @@ async function seedProgress(opts: {
     },
   });
 }
+
+let nextShowId = 1;
+let nextSeasonId = 1;
+let nextEpisodeId = 1;
+let nextEpisodeFileId = 1;
+
+async function seedEpisodeWithFile(opts: { jellyfinId?: string | null; videoCodec?: string | null }) {
+  const showId = nextShowId++;
+  const seasonId = nextSeasonId++;
+  const episodeId = nextEpisodeId++;
+  const episodeFileId = nextEpisodeFileId++;
+  await testPrisma.show.create({
+    data: { id: showId, title: `Show ${showId}`, sortTitle: `show ${showId}`, folder: `show-${showId}` },
+  });
+  await testPrisma.showSeason.create({ data: { id: seasonId, showId, seasonNumber: 1 } });
+  await testPrisma.episode.create({ data: { id: episodeId, seasonId, episodeNumber: 1, owned: true } });
+  await testPrisma.episodeFile.create({
+    data: {
+      id: episodeFileId,
+      episodeId,
+      filePath: `show-${showId}/e${episodeId}.mkv`,
+      fileName: `e${episodeId}.mkv`,
+      jellyfinId: opts.jellyfinId ?? null,
+      videoCodec: opts.videoCodec ?? null,
+    },
+  });
+  return { showId, episodeFileId };
+}
+
+describe("getContinueWatchingEpisodes", () => {
+  const ORIGINAL_PLAYBACK_ENGINE = process.env.PLAYBACK_ENGINE;
+  const ORIGINAL_JELLYFIN_URL = process.env.JELLYFIN_URL;
+  const ORIGINAL_JELLYFIN_API_KEY = process.env.JELLYFIN_API_KEY;
+
+  afterEach(() => {
+    if (ORIGINAL_PLAYBACK_ENGINE === undefined) delete process.env.PLAYBACK_ENGINE;
+    else process.env.PLAYBACK_ENGINE = ORIGINAL_PLAYBACK_ENGINE;
+    if (ORIGINAL_JELLYFIN_URL === undefined) delete process.env.JELLYFIN_URL;
+    else process.env.JELLYFIN_URL = ORIGINAL_JELLYFIN_URL;
+    if (ORIGINAL_JELLYFIN_API_KEY === undefined) delete process.env.JELLYFIN_API_KEY;
+    else process.env.JELLYFIN_API_KEY = ORIGINAL_JELLYFIN_API_KEY;
+  });
+
+  it("jellyfin engine: playable follows jellyfinId, same as before", async () => {
+    process.env.PLAYBACK_ENGINE = "jellyfin";
+    process.env.JELLYFIN_URL = "http://jellyfin.example";
+    process.env.JELLYFIN_API_KEY = "key";
+    await seedUser("continue-jf-user");
+    const withItem = await seedEpisodeWithFile({ jellyfinId: "jf-1", videoCodec: null });
+    const withoutItem = await seedEpisodeWithFile({ jellyfinId: null, videoCodec: "h264" });
+    await testPrisma.watchProgress.create({
+      data: { userId: "continue-jf-user", episodeFileId: withItem.episodeFileId, positionSecs: 100, completed: false },
+    });
+    await testPrisma.watchProgress.create({
+      data: { userId: "continue-jf-user", episodeFileId: withoutItem.episodeFileId, positionSecs: 100, completed: false },
+    });
+
+    const rows = await getContinueWatchingEpisodes("continue-jf-user");
+    const byShow = new Map(rows.map((r) => [r.show.id, r.playable]));
+    expect(byShow.get(withItem.showId)).toBe(true);
+    expect(byShow.get(withoutItem.showId)).toBe(false);
+  });
+
+  it("local engine: playable follows whether the file has been probed, not jellyfinId", async () => {
+    process.env.PLAYBACK_ENGINE = "local";
+    await seedUser("continue-local-user");
+    const probed = await seedEpisodeWithFile({ jellyfinId: null, videoCodec: "hevc" });
+    const unprobed = await seedEpisodeWithFile({ jellyfinId: "jf-2", videoCodec: null });
+    await testPrisma.watchProgress.create({
+      data: { userId: "continue-local-user", episodeFileId: probed.episodeFileId, positionSecs: 100, completed: false },
+    });
+    await testPrisma.watchProgress.create({
+      data: { userId: "continue-local-user", episodeFileId: unprobed.episodeFileId, positionSecs: 100, completed: false },
+    });
+
+    const rows = await getContinueWatchingEpisodes("continue-local-user");
+    const byShow = new Map(rows.map((r) => [r.show.id, r.playable]));
+    // Probed (has videoCodec) is playable even with no jellyfinId at all.
+    expect(byShow.get(probed.showId)).toBe(true);
+    // Not probed yet -- not playable, even though it has a jellyfinId.
+    expect(byShow.get(unprobed.showId)).toBe(false);
+  });
+});
 
 describe("getWatchStats", () => {
   it("returns all-zero/empty stats for a user with no watch history", async () => {
