@@ -242,16 +242,18 @@ cookies), the player engine against a fake audio context, playlist
 mutations, the Jellyfin playback broker, and the parked ffmpeg pipeline,
 including a real-ffmpeg HLS integration test.
 
-Two browser-driven harnesses cover what unit tests cannot. Both start their
-own throwaway `next dev` on a scratch database and touch nothing real. Point
-them at Google Chrome; Playwright's own Chromium lacks the codecs and its
-download is unreliable here.
+Three browser-driven harnesses cover what unit tests cannot. All three start
+their own throwaway `next dev` on a scratch database and touch nothing real.
+Point them at Google Chrome; Playwright's own Chromium lacks the codecs and
+its download is unreliable here.
 
 ```bash
 E2E_CHROMIUM="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   npx tsx scripts/e2e-passkey.ts      # WebAuthn ceremonies via a virtual authenticator, ~1 min
 E2E_CHROMIUM="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   npx tsx scripts/e2e-playback.ts     # the parked local HLS pipeline, ~3 min, needs ffmpeg on PATH
+E2E_CHROMIUM="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  npx tsx scripts/e2e-engine.ts       # the v4 local engine, no Jellyfin, ~1 min, needs ffmpeg on PATH
 ```
 
-`E2E_PORT` picks the throwaway server's port (3007 and 3008 by default).
+`E2E_PORT` picks the throwaway server's port (3007, 3008 and 3009 by default).
