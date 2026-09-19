@@ -283,6 +283,51 @@ export function isStreamComplete(ctx: StreamContext): boolean {
   return ctx.present.size >= ctx.segments.length;
 }
 
+/** Every cached segment of a stream directory with the bytes it occupies,
+ *  for the trim pass's selection. Reads the directory rather than `present`
+ *  because the sizes have to come from the filesystem anyway. */
+export async function readCachedSegments(dir: string): Promise<{ index: number; bytes: number }[]> {
+  const names = await fs.readdir(dir).catch(() => [] as string[]);
+  const segments: { index: number; bytes: number }[] = [];
+  for (const name of names) {
+    const index = parseSegmentFileName(name);
+    if (index === null) continue;
+    const stat = await fs.stat(path.join(dir, name)).catch(() => null);
+    if (stat?.isFile()) segments.push({ index, bytes: stat.size });
+  }
+  return segments;
+}
+
+/**
+ * Unlink played segments (decisions.ts's selectSegmentsToTrim picked them)
+ * and put the directory back to being a partial one: `.complete` goes,
+ * because the table is no longer fully populated and the short circuit it
+ * stands for would now be a lie, while plan.json and `.atime` stay -- the
+ * source and table are unchanged and the stream is being watched right now,
+ * which is the opposite of stale.
+ *
+ * A later request for a trimmed index is then an ordinary cold request: no
+ * segment on disk, no head near it, so decideSegment starts one there, and
+ * isHeadCaughtUp stops it again when it runs back into what is still cached.
+ *
+ * Returns how many files were really removed; an index that has already gone
+ * is not an error, only a segment this pass doesn't get to count.
+ */
+export async function removeSegments(ctx: StreamContext, indices: number[]): Promise<number> {
+  let removed = 0;
+  for (const index of indices) {
+    try {
+      await fs.unlink(segmentPath(ctx.dir, index));
+      removed++;
+    } catch {
+      // Already gone -- an eviction, or a previous pass.
+    }
+    ctx.present.delete(index);
+  }
+  if (removed > 0) await fs.rm(path.join(ctx.dir, COMPLETE_FILE), { force: true }).catch(() => {});
+  return removed;
+}
+
 /** Whether a segment is really on disk. The in-memory set is the fast
  *  answer, but eviction can delete a whole directory between requests, so a
  *  positive is confirmed against the filesystem and a stale entry dropped. */

@@ -11,7 +11,7 @@
 // values.
 
 import { createHash } from "node:crypto";
-import { selectEntriesToEvict, type CacheEntry } from "@/lib/video-cache";
+import { selectEntriesToEvict, MIN_FREE_DISK_BYTES, type CacheEntry } from "@/lib/video-cache";
 import type { StreamAction, Variant } from "@/lib/video-playback";
 import type { SegmentEntry } from "./types";
 
@@ -263,6 +263,14 @@ export function checkSegmentDuration(input: SegmentDurationCheckInput): SegmentD
  * at HLS_SEGMENT_SECS (6s) is 30 and 100 segments. Resuming at half the
  * pause watermark rather than at it stops a viewer sitting exactly on the
  * boundary from flapping SIGSTOP/SIGCONT once per segment.
+ *
+ * These are also what a live stream *costs in disk*, which is the other half
+ * of the concurrency question: what the head has run ahead, plus what the
+ * trim pass keeps behind the viewer (KEEP_BEHIND_SEGMENTS below). For a
+ * Blu-ray remux at ~25 MB per 6s segment that is (100 + 20) x 25 MB ~= 3 GB
+ * per live copy-tier stream in steady state, so the default two sessions
+ * settle at ~6 GB of cache volume however long the film is. Raising
+ * PLAYBACK_MAX_SESSIONS multiplies that figure.
  */
 export const THROTTLE_AHEAD_TRANSCODE = 30;
 export const THROTTLE_RESUME_TRANSCODE = 15;
@@ -402,4 +410,163 @@ export function selectStreamsToEvict(
     pinned: isPinned(e.key),
   }));
   return selectEntriesToEvict(asCacheEntries, limitBytes);
+}
+
+// ===========================================================================
+// Trimming played segments (V4_PLAN.md, "Housekeeping")
+// ===========================================================================
+//
+// Whole-stream eviction above cannot help the case that actually fills the
+// disk: the stream someone is *watching* is pinned, and a Blu-ray remux is
+// ~25 MB per 6s segment -- ~27 GB for a film, on a volume with ~9 GB free.
+// One pinned stream can exceed the entire byte budget on its own, so the
+// budget says nothing about it and nothing ever removes the segments the
+// viewer has already been through.
+//
+// So, under pressure only, a live stream gives up what is behind its
+// viewers. Under no pressure nothing is trimmed, which keeps the property
+// the plan is proud of: a small title caches whole and replays with no
+// ffmpeg at all.
+
+/**
+ * How much of what a viewer has already watched is kept anyway: 20 segments
+ * is two minutes at HLS_SEGMENT_SECS. That covers the back-buffer a player
+ * re-requests after a bitrate or audio change, and a "skip back 30s" lands
+ * inside it -- so the commonest rewind costs nothing, while a head is only
+ * ever restarted for a genuine seek backwards.
+ */
+export const KEEP_BEHIND_SEGMENTS = 20;
+
+/**
+ * How far back a session's requests are looked at to decide where its
+ * playhead is. Players fetch a little out of order and hls.js will re-request
+ * a segment it already had, so the playhead is the MINIMUM index asked for in
+ * this window rather than the latest: an in-flight earlier request must never
+ * be trimmed out from under the response that is about to serve it.
+ */
+export const TRIM_PLAYHEAD_WINDOW_MS = 30_000;
+
+/**
+ * A segment requested within this long is never unlinked, whatever its index
+ * and whoever asked for it. The engine hands a route a path and the route
+ * opens it a moment later (serve-file.ts), so the file must outlive that gap
+ * by a wide margin -- a minute is far longer than any request takes and
+ * costs, at worst, one segment's worth of postponed reclamation.
+ */
+export const TRIM_RECENT_REQUEST_MS = 60_000;
+
+/**
+ * The free-disk level at which trimming starts even though the byte budget
+ * is satisfied. MIN_FREE_DISK_BYTES is the point at which the engine refuses
+ * to start heads at all; starting to reclaim only there would mean playback
+ * has already stalled. Three times it leaves room for the heads currently
+ * running to keep writing while the trim pass catches up.
+ */
+export const TRIM_FREE_DISK_LOW_WATER_BYTES = MIN_FREE_DISK_BYTES * 3;
+
+/**
+ * How far past the threshold a pass trims, as a fraction of it. Without this
+ * a stream sitting exactly on the budget would trim a segment or two on every
+ * 30s tick forever; with it, a pass buys roughly 10% of the budget's worth of
+ * quiet before the next one has anything to do.
+ */
+export const TRIM_HYSTERESIS = 0.1;
+
+/** How many bytes a trim pass has to reclaim: enough to get back under the
+ *  byte budget, or enough to get free disk back above the low-water mark,
+ *  whichever demands more -- plus the hysteresis overshoot. Zero means there
+ *  is no pressure and nothing should be trimmed at all. `freeBytes` is null
+ *  where the platform won't say (statfs failed), which is not evidence of a
+ *  problem and so isn't treated as one. */
+export function trimBytesNeeded(totalBytes: number, limitBytes: number, freeBytes: number | null): number {
+  const overBudget = totalBytes > limitBytes ? totalBytes - limitBytes * (1 - TRIM_HYSTERESIS) : 0;
+  const lowDisk =
+    freeBytes !== null && freeBytes < TRIM_FREE_DISK_LOW_WATER_BYTES
+      ? TRIM_FREE_DISK_LOW_WATER_BYTES * (1 + TRIM_HYSTERESIS) - freeBytes
+      : 0;
+  return Math.max(0, Math.ceil(Math.max(overBudget, lowDisk)));
+}
+
+/** One live stream as the trim pass sees it. */
+export interface TrimCandidateStream {
+  key: string;
+  /** Every segment cached for this key, with the bytes it occupies. */
+  segments: { index: number; bytes: number }[];
+  /**
+   * One playhead per LIVE session on this key (the same liveness rule the
+   * session cap uses): the lowest index that session asked for within
+   * TRIM_PLAYHEAD_WINDOW_MS, or its last requested index when it has been
+   * quiet for longer than that (a paused player is still watching).
+   * EMPTY when no session is live here -- an idle stream is whole-stream
+   * eviction's business, not this pass's.
+   */
+  playheads: number[];
+  /** Indices requested within TRIM_RECENT_REQUEST_MS, by any session. */
+  recentIndices: number[];
+}
+
+export interface TrimInput {
+  streams: TrimCandidateStream[];
+  /** What the engine's stream directories hold now, after eviction. */
+  totalBytes: number;
+  limitBytes: number;
+  freeBytes: number | null;
+}
+
+/** What to unlink from one stream, and what that buys. */
+export interface StreamTrim {
+  key: string;
+  indices: number[];
+  bytes: number;
+}
+
+function streamBytes(stream: TrimCandidateStream): number {
+  return stream.segments.reduce((sum, s) => sum + s.bytes, 0);
+}
+
+/**
+ * Which cached segments to unlink, and from where. The rule:
+ *
+ * - Nothing at all unless there is pressure (trimBytesNeeded).
+ * - The largest live stream goes first: it is where the bytes are, and
+ *   taking them from one stream leaves the others' rewind windows intact.
+ * - A stream's protected range is [min(playheads) - KEEP_BEHIND_SEGMENTS,
+ *   infinity): everything from a short rewind window behind the furthest-back
+ *   viewer onward. Segments AHEAD are the head's run-ahead, which the
+ *   throttle already bounds, and taking those would just make the head
+ *   produce them again.
+ * - A segment requested in the last TRIM_RECENT_REQUEST_MS is skipped
+ *   whatever its index (it may be mid-response).
+ * - Oldest index first, and only as far as the pressure demands.
+ */
+export function selectSegmentsToTrim(input: TrimInput): StreamTrim[] {
+  let need = trimBytesNeeded(input.totalBytes, input.limitBytes, input.freeBytes);
+  if (need <= 0) return [];
+
+  const trims: StreamTrim[] = [];
+  const largestFirst = [...input.streams].sort((a, b) => streamBytes(b) - streamBytes(a));
+
+  for (const stream of largestFirst) {
+    if (need <= 0) break;
+    if (stream.playheads.length === 0) continue;
+
+    const protectedFrom = Math.min(...stream.playheads) - KEEP_BEHIND_SEGMENTS;
+    const recent = new Set(stream.recentIndices);
+    const indices: number[] = [];
+    let bytes = 0;
+
+    for (const segment of [...stream.segments].sort((a, b) => a.index - b.index)) {
+      if (need <= 0) break;
+      // Sorted ascending, so the first protected index ends this stream.
+      if (segment.index >= protectedFrom) break;
+      if (recent.has(segment.index)) continue;
+      indices.push(segment.index);
+      bytes += segment.bytes;
+      need -= segment.bytes;
+    }
+
+    if (indices.length > 0) trims.push({ key: stream.key, indices, bytes });
+  }
+
+  return trims;
 }

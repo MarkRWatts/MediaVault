@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { MIN_FREE_DISK_BYTES } from "@/lib/video-cache";
 import {
   CATCH_UP_LOOKAHEAD,
+  KEEP_BEHIND_SEGMENTS,
   PLAN_VERSION,
+  TRIM_FREE_DISK_LOW_WATER_BYTES,
+  TRIM_HYSTERESIS,
   THROTTLE_AHEAD_COPY,
   THROTTLE_AHEAD_TRANSCODE,
   THROTTLE_RESUME_COPY,
@@ -14,15 +18,18 @@ import {
   isPlanStale,
   segmentDurationTolerance,
   segmentTableHash,
+  selectSegmentsToTrim,
   selectStreamsToEvict,
   throttleAction,
   throttleWatermarks,
   tierFor,
+  trimBytesNeeded,
   waitAheadFor,
   type LiveHead,
   type SegmentDurationCheckInput,
   type StreamCacheEntry,
   type StreamPlanIdentity,
+  type TrimCandidateStream,
 } from "./decisions";
 import type { SegmentEntry } from "./types";
 
@@ -371,5 +378,179 @@ describe("checkSegmentDuration", () => {
     expect(check({ index: 4, expectedStart: 24, expectedDuration: 6, reportedStart: 24, reportedEnd: 29 })).toEqual({
       ok: true,
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Trimming played segments
+// ---------------------------------------------------------------------------
+
+describe("trimBytesNeeded", () => {
+  const GiB = 1024 ** 3;
+
+  it("asks for nothing when the cache is inside its budget and the disk is roomy", () => {
+    expect(trimBytesNeeded(100, 200, 50 * GiB)).toBe(0);
+    expect(trimBytesNeeded(200, 200, 50 * GiB)).toBe(0);
+  });
+
+  it("asks for the overage plus the hysteresis overshoot when over budget", () => {
+    // 300 held, 200 allowed: back to 180 rather than exactly 200, so the
+    // next tick has nothing to do.
+    expect(trimBytesNeeded(300, 200, 50 * GiB)).toBe(300 - 200 * (1 - TRIM_HYSTERESIS));
+  });
+
+  it("trims on low free disk even when the byte budget is satisfied", () => {
+    // The budget is meaningless for a live stream -- one pinned remux can
+    // exceed it on its own -- so free disk is the other trigger.
+    const free = 2 * GiB;
+    expect(TRIM_FREE_DISK_LOW_WATER_BYTES).toBe(3 * MIN_FREE_DISK_BYTES);
+    expect(trimBytesNeeded(100, 10 * GiB, free)).toBe(
+      Math.ceil(TRIM_FREE_DISK_LOW_WATER_BYTES * (1 + TRIM_HYSTERESIS) - free),
+    );
+  });
+
+  it("takes whichever pressure demands more", () => {
+    expect(trimBytesNeeded(300, 200, 1 * GiB)).toBeGreaterThan(300);
+  });
+
+  it("does nothing on a platform that won't report free space", () => {
+    // statfs failing is not evidence of a full disk; the budget still applies.
+    expect(trimBytesNeeded(100, 200, null)).toBe(0);
+    expect(trimBytesNeeded(300, 200, null)).toBe(300 - 200 * (1 - TRIM_HYSTERESIS));
+  });
+});
+
+describe("selectSegmentsToTrim", () => {
+  const GiB = 1024 ** 3;
+  const ROOMY_DISK = 50 * GiB;
+  /** 60 cached segments of 10 bytes, one viewer sitting on segment 40. */
+  const stream = (over: Partial<TrimCandidateStream> = {}): TrimCandidateStream => ({
+    key: "film-510-original-a1",
+    segments: Array.from({ length: 60 }, (_, index) => ({ index, bytes: 10 })),
+    playheads: [40],
+    recentIndices: [],
+    ...over,
+  });
+  const range = (from: number, to: number) => Array.from({ length: to - from }, (_, i) => from + i);
+
+  it("trims nothing at all when there is no pressure", () => {
+    // The property V4_PLAN.md is proud of: a small title caches whole and
+    // replays with no ffmpeg. Trimming it because someone watched it would
+    // throw that away for nothing.
+    expect(
+      selectSegmentsToTrim({ streams: [stream()], totalBytes: 600, limitBytes: 10_000, freeBytes: ROOMY_DISK }),
+    ).toEqual([]);
+  });
+
+  it("trims oldest index first, and only as far as the pressure demands", () => {
+    // 600 held, 500 allowed -> 150 bytes to free -> 15 segments.
+    const [trim] = selectSegmentsToTrim({
+      streams: [stream()],
+      totalBytes: 600,
+      limitBytes: 500,
+      freeBytes: ROOMY_DISK,
+    });
+    expect(trim.key).toBe("film-510-original-a1");
+    expect(trim.indices).toEqual(range(0, 15));
+    expect(trim.bytes).toBe(150);
+  });
+
+  it("leaves the hysteresis overshoot, so the next pass has nothing to do", () => {
+    const [trim] = selectSegmentsToTrim({
+      streams: [stream()],
+      totalBytes: 600,
+      limitBytes: 500,
+      freeBytes: ROOMY_DISK,
+    });
+    const after = stream({ segments: stream().segments.filter((s) => !trim.indices.includes(s.index)) });
+    expect(
+      selectSegmentsToTrim({ streams: [after], totalBytes: 600 - trim.bytes, limitBytes: 500, freeBytes: ROOMY_DISK }),
+    ).toEqual([]);
+  });
+
+  it("never trims at or above the protected range, however hard the pressure", () => {
+    // Everything from KEEP_BEHIND_SEGMENTS behind the viewer onward stays:
+    // the rewind window, what the viewer is watching, and the head's
+    // run-ahead (which the throttle, not this, bounds).
+    const [trim] = selectSegmentsToTrim({ streams: [stream()], totalBytes: 600, limitBytes: 1, freeBytes: ROOMY_DISK });
+    expect(trim.indices).toEqual(range(0, 40 - KEEP_BEHIND_SEGMENTS));
+    expect(Math.max(...trim.indices)).toBeLessThan(40 - KEEP_BEHIND_SEGMENTS);
+  });
+
+  it("protects behind the furthest-back viewer when two are watching one file", () => {
+    // Two viewers on one key at different positions: the one at 25 owns the
+    // floor, so nothing the one at 40 has passed is taken from under them.
+    const [trim] = selectSegmentsToTrim({
+      streams: [stream({ playheads: [40, 25] })],
+      totalBytes: 600,
+      limitBytes: 1,
+      freeBytes: ROOMY_DISK,
+    });
+    expect(trim.indices).toEqual(range(0, 25 - KEEP_BEHIND_SEGMENTS));
+  });
+
+  it("trims nothing from a stream with no live session", () => {
+    // Nobody is watching, so there is no "behind the viewer" here at all --
+    // whole-stream LRU eviction owns this case and takes the directory
+    // entire, rather than leaving a gap-ridden one behind.
+    expect(
+      selectSegmentsToTrim({
+        streams: [stream({ playheads: [] })],
+        totalBytes: 600,
+        limitBytes: 1,
+        freeBytes: ROOMY_DISK,
+      }),
+    ).toEqual([]);
+  });
+
+  it("skips a segment that was just requested, whatever its index", () => {
+    // It may be mid-response: the engine has handed the route a path and
+    // the route is about to open it.
+    const [trim] = selectSegmentsToTrim({
+      streams: [stream({ recentIndices: [3, 7, 45] })],
+      totalBytes: 600,
+      limitBytes: 1,
+      freeBytes: ROOMY_DISK,
+    });
+    expect(trim.indices).not.toContain(3);
+    expect(trim.indices).not.toContain(7);
+    expect(trim.indices).toEqual(range(0, 20).filter((i) => i !== 3 && i !== 7));
+  });
+
+  it("takes from the largest live stream first", () => {
+    const big = stream({ key: "film-510-original-a1" });
+    const small = stream({ key: "film-7-remote-a1", segments: big.segments.map((s) => ({ ...s, bytes: 1 })) });
+    const trims = selectSegmentsToTrim({
+      streams: [small, big],
+      totalBytes: 660,
+      limitBytes: 600,
+      freeBytes: ROOMY_DISK,
+    });
+    // 120 bytes to free, and the big stream alone covers it.
+    expect(trims.map((t) => t.key)).toEqual(["film-510-original-a1"]);
+    expect(trims[0].indices).toEqual(range(0, 12));
+  });
+
+  it("moves on to the next stream when the largest cannot free enough", () => {
+    const big = stream({ key: "film-510-original-a1" });
+    const other = stream({ key: "film-7-remote-a1" });
+    const trims = selectSegmentsToTrim({
+      streams: [big, other],
+      totalBytes: 1200,
+      limitBytes: 1,
+      freeBytes: ROOMY_DISK,
+    });
+    expect(trims.map((t) => t.key)).toEqual(["film-510-original-a1", "film-7-remote-a1"]);
+    for (const trim of trims) expect(trim.indices).toEqual(range(0, 20));
+  });
+
+  it("trims on low free disk even when the cache is inside its byte budget", () => {
+    const [trim] = selectSegmentsToTrim({
+      streams: [stream()],
+      totalBytes: 600,
+      limitBytes: 10 * GiB,
+      freeBytes: 2 * GiB,
+    });
+    expect(trim.indices).toEqual(range(0, 20));
   });
 });

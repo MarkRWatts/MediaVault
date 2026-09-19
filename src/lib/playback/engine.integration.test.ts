@@ -31,7 +31,8 @@ import path from "node:path";
 import { createTempTestDb } from "@/lib/test-temp-db";
 import type { PrismaClient } from "@/generated/prisma/client";
 import { ffmpegPath, ffprobePath } from "@/lib/ffmpeg-bin";
-import { parseSegmentFileName } from "./stream-key";
+import { KEEP_BEHIND_SEGMENTS } from "./decisions";
+import { parseSegmentFileName, segmentFileName } from "./stream-key";
 
 const hasFfmpeg = spawnSync(ffmpegPath(), ["-version"], { stdio: "ignore" }).status === 0;
 
@@ -62,6 +63,14 @@ const DURATION_SECS = 60;
  *  0. That makes "is a head still running?" deterministic rather than a race
  *  against how fast this machine encodes. */
 const LONG_DURATION_SECS = 400;
+/** How far the trim test moves the clock on before running housekeeping.
+ *  Walking a viewer through forty segments takes this suite a second, so
+ *  without it every request is still "recent" and the playhead is still at
+ *  0. Two minutes is past both of the trim pass's request windows (30s and
+ *  60s) and still inside the three-minute window that decides whether a
+ *  session is live at all -- a viewer four minutes into a film, in other
+ *  words, which is the case that fills the disk in production. */
+const PLAYED_LONG_AGO_MS = 2 * 60_000;
 
 function buildSource(file: string, durationSecs: number): void {
   execFileSync(
@@ -530,4 +539,98 @@ describe.skipIf(!hasFfmpeg)("playback engine (real ffmpeg)", () => {
       hwaccel.resetHwAccelForTest();
     }
   }, 30_000);
+
+
+  // The production failure this one exists for (19 Sep 2026): a Blu-ray
+  // remux is ~25 MB per 6s segment, the stream being watched is pinned
+  // against whole-stream eviction, and nothing removed what the viewer had
+  // already played -- so ~35 minutes in, free disk fell under
+  // MIN_FREE_DISK_BYTES and the engine refused to start heads. Here the same
+  // pressure is made with a tiny VIDEO_CACHE_MAX_BYTES over the long fixture.
+  it("trims what the viewer has played under pressure, and refills it on a seek back", async () => {
+    await engine.resetEngineForTest();
+    const first = await engine.startSession({
+      kind: "film",
+      id: longVersionId,
+      variant: "original",
+      deviceId: DEVICE,
+    });
+    const longKey = first.key;
+    const table = await engine.getSegmentTable(longKey);
+    const segPath = (index: number) => path.join(cacheRoot, longKey, segmentFileName(index));
+    const marker = (name: string) => path.join(cacheRoot, longKey, name);
+    expect(table.length).toBeGreaterThan(KEEP_BEHIND_SEGMENTS * 2);
+
+    // With pressure off, nothing is trimmed and the stream reaches
+    // `.complete` -- the property V4_PLAN.md is proud of, and the reason
+    // trimming is a pressure response rather than a policy.
+    for (let i = 0; i < table.length; i++) await engine.getSegment(longKey, i, first.playSessionId);
+    await waitForNoLiveHeads();
+    expect(await exists(marker(".complete"))).toBe(true);
+    await engine.runHousekeepingForTest(Date.now() + PLAYED_LONG_AGO_MS);
+    expect(await exists(marker(".complete"))).toBe(true);
+    expect(await exists(segPath(0))).toBe(true);
+
+    const base = firstVideoPacket(segPath(0));
+    await engine.stopSession(first.playSessionId);
+
+    const prevMax = process.env.VIDEO_CACHE_MAX_BYTES;
+    process.env.VIDEO_CACHE_MAX_BYTES = "65536";
+    try {
+      const viewer = await engine.startSession({
+        kind: "film",
+        id: longVersionId,
+        variant: "original",
+        deviceId: DEVICE,
+      });
+      const playhead = 40;
+      for (let i = 0; i <= playhead; i++) await engine.getSegment(longKey, i, viewer.playSessionId);
+
+      // Nothing goes while every request is recent -- the engine has just
+      // handed these paths out and a response may be opening one of them.
+      await engine.runHousekeepingForTest();
+      expect(await exists(segPath(0))).toBe(true);
+      expect(await exists(segPath(playhead))).toBe(true);
+
+      // Two minutes on (still well inside the live window, well past both
+      // request windows) the viewer is four minutes into the film: what is
+      // further behind than the rewind window goes, and nothing from it
+      // onward does -- least of all the segment just served.
+      await engine.runHousekeepingForTest(Date.now() + PLAYED_LONG_AGO_MS);
+      const kept = playhead - KEEP_BEHIND_SEGMENTS;
+      for (let i = 0; i < kept; i++) expect(await exists(segPath(i))).toBe(false);
+      for (let i = kept; i <= playhead; i++) expect(await exists(segPath(i))).toBe(true);
+      // The directory is a partial one again, cut from the same file against
+      // the same table: `.complete` goes, plan.json and `.atime` stay.
+      expect(await exists(marker(".complete"))).toBe(false);
+      expect(await exists(marker("plan.json"))).toBe(true);
+      expect(await exists(marker(".atime"))).toBe(true);
+
+      // Seeking back into the hole is an ordinary cold request: one head
+      // starts there and the segments it writes hold what the table says.
+      // The second request is made after the first rather than beside it, so
+      // that this asserts a waiter being answered by the running head and
+      // not a race over which index the head starts at.
+      const before = engine.engineStats().headsStarted;
+      const seg5 = await engine.getSegment(longKey, 5, viewer.playSessionId);
+      const seg8 = await engine.getSegment(longKey, 8, viewer.playSessionId);
+      expect(engine.engineStats().headsStarted).toBe(before + 1);
+      expectSegmentAt(seg5, table[5].start, base, table[0].start);
+      expectSegmentAt(seg8, table[8].start, base, table[0].start);
+
+      // ...and it stops as soon as it runs into what is still cached
+      // (isHeadCaughtUp), rather than re-writing the rest of the film.
+      await waitForNoLiveHeads();
+      for (let i = 5; i < kept; i++) expect(await exists(segPath(i))).toBe(true);
+      expect(await exists(segPath(0))).toBe(false);
+      expect(engine.engineStats().headsStarted).toBe(before + 1);
+
+      await engine.stopSession(viewer.playSessionId);
+    } finally {
+      if (prevMax === undefined) delete process.env.VIDEO_CACHE_MAX_BYTES;
+      else process.env.VIDEO_CACHE_MAX_BYTES = prevMax;
+    }
+
+    expect(engine.engineStats().segmentMismatches).toBe(0);
+  }, 90_000);
 });

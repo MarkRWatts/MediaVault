@@ -260,7 +260,30 @@ session and throws the output away.
   `JELLYFIN_MAX_SESSIONS` as a fallback for one release) caps live heads;
   the 503 + `Retry-After` message clients already handle is unchanged.
 - Budget: partial directories are ordinary cache entries; a directory with
-  a live head is pinned. `VIDEO_CACHE_MAX_BYTES` and eviction as today.
+  a live head, or one a session has touched inside its idle window, is
+  pinned. `VIDEO_CACHE_MAX_BYTES` (10 GiB) bounds what is *retained*: idle
+  stream directories are evicted whole, least recently played first.
+- Trimming what has been played. The budget says nothing about the stream
+  someone is watching — it is pinned, and one Blu-ray remux (~25 MB per 6 s
+  segment, ~27 GB for a film) exceeds the whole budget on its own. So under
+  pressure, and only then, a live stream gives up what is behind its
+  viewers: oldest index first, from the largest live stream, as far as the
+  pressure demands and a little past it. Pressure is the byte budget after
+  eviction has done what it can, or free disk below three times the
+  head-start floor. A session's playhead is the *lowest* index it has asked
+  for in the last 30 s (players fetch a little out of order, and hls.js
+  re-requests segments it already had), and the 20 segments behind it — two
+  minutes — stay, so the player's back-buffer and a "skip back 30 s" cost
+  nothing. A segment requested within the last minute is never removed
+  whatever its index, because the engine hands the route a path and the
+  route opens it a moment later. A trimmed directory is simply a partial one
+  again (`.complete` goes; `plan.json` and the LRU marker stay), and a later
+  request for a gap is an ordinary cold request: a head starts there and
+  stops when it runs back into cached output. With no pressure nothing is
+  trimmed at all, so a small title caches whole and replays with no ffmpeg.
+  A live copy-tier stream therefore holds its run-ahead plus its rewind
+  window in steady state — (100 + 20) × 25 MB ≈ 3 GB, whatever the length of
+  the film.
 - ffmpeg only ever receives validated integers and enum values plus a path
   resolved from the database; `-protocol_whitelist file,pipe`; segment
   names are matched against a strict pattern before touching the disk.
