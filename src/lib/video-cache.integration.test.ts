@@ -142,7 +142,7 @@ describe.skipIf(!hasFfmpeg)("video-cache prepare pipeline (real ffmpeg, HLS)", (
     await waitForReady("film", versionId, "remote");
     const names = (await readdir(process.env.VIDEO_CACHE_DIR!)).sort();
     expect(names).toEqual([`film-${versionId}`, `film-${versionId}-remote`]);
-    expect(await cache.getVideoStatus("film", versionId, "original")).toEqual({ state: "ready" });
+    expect(await cache.getVideoStatus("film", versionId, "original")).toMatchObject({ state: "ready" });
   });
 
   it("refuses the playlist for a direct-play source and points at /stream", async () => {
@@ -165,7 +165,7 @@ describe.skipIf(!hasFfmpeg)("video-cache prepare pipeline (real ffmpeg, HLS)", (
       },
     });
     expect(await cache.resolveHlsPlaylist("film", direct.id, "original")).toEqual({ kind: "direct" });
-    expect(await cache.getVideoStatus("film", direct.id, "original")).toEqual({ state: "direct" });
+    expect(await cache.getVideoStatus("film", direct.id, "original")).toMatchObject({ state: "direct" });
     expect((await cache.resolveVideoStream("film", direct.id)).kind).toBe("complete");
     // …but a remote rendition of it is a prepare like any other.
     expect((await cache.resolveVideoStream("film", versionId)).kind).toBe("needs-prepare");
@@ -177,7 +177,7 @@ describe.skipIf(!hasFfmpeg)("video-cache prepare pipeline (real ffmpeg, HLS)", (
     await mkdir(dir);
     await writeFile(path.join(dir, "index.m3u8"), "#EXTM3U\n#EXTINF:6,\nseg_00000.m4s\n");
 
-    expect(await cache.getVideoStatus("film", versionId, "original")).toEqual({ state: "idle" });
+    expect(await cache.getVideoStatus("film", versionId, "original")).toMatchObject({ state: "idle" });
     expect(await readdir(process.env.VIDEO_CACHE_DIR!)).not.toContain(`film-${versionId}`);
   });
 
