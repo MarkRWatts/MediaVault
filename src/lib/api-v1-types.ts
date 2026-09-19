@@ -12,6 +12,7 @@
 
 import type {
   LibraryFilm,
+  PlayableCollection,
   VersionView,
   FilmDetail,
   ShowSummary,
@@ -48,6 +49,10 @@ export interface MeResponse {
 export interface FilmsResponse {
   shelves: { continueWatching: LibraryFilm[]; favourites: LibraryFilm[] };
   films: LibraryFilm[];
+  /** Collections with two or more owned films, members as ids into `films`.
+   *  Added after the first app build shipped, so clients decode it as
+   *  optional. */
+  collections: PlayableCollection[];
 }
 
 /** One version's saved position for the signed-in viewer. */

@@ -520,6 +520,35 @@ export interface TimelineFilm {
   physicalMedia: Format[];
 }
 
+/** A collection as the native app's Movies tab shows it: only collections
+ *  with at least two digitally-owned films (the same threshold the web's
+ *  library uses to stack a collection), and only those films, in release
+ *  order. The app already has every film's card data from the same
+ *  response, so members travel as ids. */
+export interface PlayableCollection {
+  id: number;
+  name: string;
+  overview: string | null;
+  posterPath: string | null;
+  filmIds: number[];
+}
+
+export async function getPlayableCollections(): Promise<PlayableCollection[]> {
+  const collections = await prisma.collection.findMany({
+    orderBy: { name: "asc" },
+    select: {
+      id: true,
+      name: true,
+      overview: true,
+      posterPath: true,
+      films: { where: { owned: true }, orderBy: [{ releaseDate: "asc" }, { year: "asc" }], select: { id: true } },
+    },
+  });
+  return collections
+    .filter((c) => c.films.length >= 2)
+    .map((c) => ({ id: c.id, name: c.name, overview: c.overview, posterPath: c.posterPath, filmIds: c.films.map((f) => f.id) }));
+}
+
 export interface CollectionDetail {
   id: number;
   name: string;

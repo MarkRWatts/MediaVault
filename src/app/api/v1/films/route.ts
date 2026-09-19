@@ -7,19 +7,20 @@
 
 import { NextResponse } from "next/server";
 import { requireMemberOrResponse } from "@/lib/require-member";
-import { getLibraryFilms, getContinueWatchingFilms, getFavouriteFilms } from "@/lib/queries";
+import { getLibraryFilms, getContinueWatchingFilms, getFavouriteFilms, getPlayableCollections } from "@/lib/queries";
 import type { FilmsResponse } from "@/lib/api-v1-types";
 
 export async function GET() {
   const gate = await requireMemberOrResponse();
   if (gate instanceof NextResponse) return gate;
 
-  const [{ films }, continueWatching, favourites] = await Promise.all([
+  const [{ films }, continueWatching, favourites, collections] = await Promise.all([
     getLibraryFilms(),
     getContinueWatchingFilms(gate.userId),
     getFavouriteFilms(gate.userId),
+    getPlayableCollections(),
   ]);
 
-  const body: FilmsResponse = { shelves: { continueWatching, favourites }, films };
+  const body: FilmsResponse = { shelves: { continueWatching, favourites }, films, collections };
   return NextResponse.json(body);
 }
