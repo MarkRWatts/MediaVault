@@ -578,25 +578,26 @@ export async function getMusicFavourites(userId: string): Promise<MusicFavourite
   };
 }
 
-/** The newest albums with something to play — the native app's home
- *  screen "New music" row. Owned with at least one track on disk, so a
- *  catalogue gap or a vinyl-only entry never shows up as an addition. */
-export async function getRecentAlbums(limit = 12): Promise<FavouriteAlbumView[]> {
-  const rows = await prisma.album.findMany({
-    where: { owned: true, tracks: { some: {} } },
-    orderBy: { createdAt: "desc" },
-    take: limit,
-    select: {
-      id: true,
-      title: true,
-      year: true,
-      kind: true,
-      coverPath: true,
-      updatedAt: true,
-      artist: { select: { id: true, name: true } },
-    },
-  });
-  return rows.map((album) => ({
+const PLAYABLE_ALBUM_SELECT = {
+  id: true,
+  title: true,
+  year: true,
+  kind: true,
+  coverPath: true,
+  updatedAt: true,
+  artist: { select: { id: true, name: true } },
+} as const;
+
+function shapeAlbumCard(album: {
+  id: number;
+  title: string;
+  year: number | null;
+  kind: string;
+  coverPath: string | null;
+  updatedAt: Date;
+  artist: { id: number; name: string };
+}): FavouriteAlbumView {
+  return {
     id: album.id,
     title: album.title,
     year: album.year,
@@ -605,7 +606,32 @@ export async function getRecentAlbums(limit = 12): Promise<FavouriteAlbumView[]>
     artistName: album.artist.name,
     hasCover: album.coverPath != null,
     coverVersion: album.coverPath != null ? album.updatedAt.getTime() : null,
-  }));
+  };
+}
+
+/** Every album with something to play — owned, with at least one track on
+ *  disk — by artist then title: the native app's Albums grid. A few
+ *  thousand small rows at most, so no paging, like the rest of /api/v1. */
+export async function getPlayableAlbums(): Promise<FavouriteAlbumView[]> {
+  const rows = await prisma.album.findMany({
+    where: { owned: true, tracks: { some: {} } },
+    orderBy: [{ artist: { sortName: "asc" } }, { sortTitle: "asc" }],
+    select: PLAYABLE_ALBUM_SELECT,
+  });
+  return rows.map(shapeAlbumCard);
+}
+
+/** The newest albums with something to play — the native app's home
+ *  screen "New music" row. Owned with at least one track on disk, so a
+ *  catalogue gap or a vinyl-only entry never shows up as an addition. */
+export async function getRecentAlbums(limit = 12): Promise<FavouriteAlbumView[]> {
+  const rows = await prisma.album.findMany({
+    where: { owned: true, tracks: { some: {} } },
+    orderBy: { createdAt: "desc" },
+    take: limit,
+    select: PLAYABLE_ALBUM_SELECT,
+  });
+  return rows.map(shapeAlbumCard);
 }
 
 /** Newest first. Only playable tracks of owned albums — a favourite whose

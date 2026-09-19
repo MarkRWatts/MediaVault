@@ -118,6 +118,12 @@ export interface MusicIndexResponse extends MusicIndexData {
   recentAlbums: FavouriteAlbumView[];
 }
 
+/** GET /api/v1/music/albums — every playable album, for the app's Albums
+ *  grid. */
+export interface AlbumsResponse {
+  albums: FavouriteAlbumView[];
+}
+
 /** GET /api/v1/music/artists/:id */
 export interface ArtistDetailResponse extends ArtistDetail {
   favourite: boolean;
