@@ -8,15 +8,18 @@ import {
   THROTTLE_RESUME_TRANSCODE,
   WAIT_AHEAD_COPY,
   WAIT_AHEAD_TRANSCODE,
+  checkSegmentDuration,
   decideSegment,
   isHeadCaughtUp,
   isPlanStale,
+  segmentDurationTolerance,
   segmentTableHash,
   selectStreamsToEvict,
   throttleAction,
   throttleWatermarks,
   waitAheadFor,
   type LiveHead,
+  type SegmentDurationCheckInput,
   type StreamCacheEntry,
   type StreamPlanIdentity,
 } from "./decisions";
@@ -269,5 +272,88 @@ describe("selectStreamsToEvict", () => {
     // head or a recent session pins one, and this one has neither.
     const entries = [entry("half-written", 900, 300), entry("recent", 100, 0)];
     expect(selectStreamsToEvict(entries, 200, () => false)).toEqual(["/cache/half-written"]);
+  });
+});
+
+describe("segmentDurationTolerance", () => {
+  it("is a quarter second for ordinary frame rates", () => {
+    expect(segmentDurationTolerance(25)).toBeCloseTo(0.25, 6);
+    expect(segmentDurationTolerance(23.976)).toBeCloseTo(0.25, 6);
+  });
+
+  it("widens to two frames when those are longer than the floor", () => {
+    expect(segmentDurationTolerance(5)).toBeCloseTo(0.4, 6);
+  });
+
+  it("falls back to the floor when the container states no frame rate", () => {
+    expect(segmentDurationTolerance(null)).toBeCloseTo(0.25, 6);
+    expect(segmentDurationTolerance(0)).toBeCloseTo(0.25, 6);
+  });
+});
+
+describe("checkSegmentDuration", () => {
+  // A 6s table of five segments; index 4 is the last.
+  const check = (over: Partial<SegmentDurationCheckInput> = {}) =>
+    checkSegmentDuration({
+      index: 1,
+      expectedStart: 6,
+      expectedDuration: 6,
+      segmentCount: 5,
+      reportedStart: 6,
+      reportedEnd: 12,
+      fps: 25,
+      tier: "copy",
+      isHeadFirstSegment: false,
+      ...over,
+    });
+
+  it("accepts a segment whose absolute start and end match the table", () => {
+    expect(check()).toEqual({ ok: true });
+  });
+
+  it("accepts a head's own first segment, whose reported start is 0 rather than a timestamp", () => {
+    // Measured against real ffmpeg: a head restarted at segment 1 prints
+    // "0.000000,12.000000" -- start is the muxer's initial value, end is
+    // absolute. end - start reads 12s; end - table[1].start reads 6s.
+    expect(check({ isHeadFirstSegment: true, reportedStart: 0 })).toEqual({ ok: true });
+  });
+
+  it("accepts head-relative times, the other reading of the same line", () => {
+    expect(check({ reportedStart: 0, reportedEnd: 6, isHeadFirstSegment: true })).toEqual({ ok: true });
+  });
+
+  it("rejects a double-length segment -- the missed cut this exists to catch", () => {
+    const verdict = check({ reportedEnd: 18 });
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) return;
+    expect(verdict.reportedDuration).toBeCloseTo(12, 6);
+    expect(verdict.expectedDuration).toBeCloseTo(6, 6);
+  });
+
+  it("rejects a double-length FIRST segment too, under either reading", () => {
+    // end = table[2]'s end: neither end - 0 (18) nor end - table[1].start
+    // (12) is within tolerance of 6.
+    expect(check({ isHeadFirstSegment: true, reportedStart: 0, reportedEnd: 18 }).ok).toBe(false);
+  });
+
+  it("tolerates a frame or two of drift", () => {
+    expect(check({ reportedEnd: 12.2 })).toEqual({ ok: true });
+    expect(check({ reportedEnd: 11.8 })).toEqual({ ok: true });
+    expect(check({ reportedEnd: 12.6 }).ok).toBe(false);
+  });
+
+  it("lets a transcoded head's first segment run short, where its first frame is late", () => {
+    expect(check({ tier: "transcode", isHeadFirstSegment: true, reportedStart: 0, reportedEnd: 11.7 })).toEqual({
+      ok: true,
+    });
+  });
+
+  it("never checks the last segment, whose length is whatever the file has left", () => {
+    // The probed duration and the container's own streams routinely
+    // disagree by more than a tolerance here, and a missed cut is
+    // impossible at the end -- there is nothing after it to renumber.
+    expect(check({ index: 4, expectedStart: 24, expectedDuration: 6, reportedStart: 24, reportedEnd: 29 })).toEqual({
+      ok: true,
+    });
   });
 });

@@ -101,8 +101,13 @@ function isCompatibleAudio(t: AudioTrackInput): boolean {
  * compatible track that keeps at least as many channels (free and no
  * worse), else transcode the default. With no flags at all, fall back to
  * the first compatible track, then to transcoding the best candidate.
+ *
+ * Exported for the v4 engine (playback/source.ts): when a caller names an
+ * audio stream explicitly, the engine asks this same function about that one
+ * track rather than re-deriving "can this codec be copied?" for itself --
+ * one rule about copy-vs-transcode, not two that can drift apart.
  */
-function pickAudioTrack(tracks: AudioTrackInput[]): { index: number; action: StreamAction } | null {
+export function pickAudioTrack(tracks: AudioTrackInput[]): { index: number; action: StreamAction } | null {
   if (tracks.length === 0) return null;
 
   const byIdx = [...tracks].sort((a, b) => a.streamIdx - b.streamIdx);
