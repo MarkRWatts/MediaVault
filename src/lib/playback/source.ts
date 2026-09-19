@@ -53,6 +53,11 @@ export interface ResolvedSource {
   audioAction: StreamAction | "none";
   /** Channel count of the chosen stream, for sizing an AAC transcode. */
   audioChannels: number | null;
+  /** The codec the chosen stream will *come out* as -- the source's when
+   *  copied, "aac" when transcoded. plan.outputAudioCodec answers this for
+   *  the planner's own pick only, so it is recomputed here for the case
+   *  where the caller overrode it. Feeds the master playlist's CODECS. */
+  audioCodec: string | null;
 }
 
 /** Typed failures the routes turn into a status code, rather than strings
@@ -278,5 +283,7 @@ export async function resolveSource(
     audioStreamIndex: chosenIndex,
     audioAction: chosenAction,
     audioChannels: chosenTrack?.channels ?? null,
+    audioCodec:
+      chosenAction === "none" ? null : chosenAction === "transcode" ? "aac" : ((chosenTrack?.codec ?? "").toLowerCase() || null),
   };
 }
