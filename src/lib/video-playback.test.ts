@@ -309,16 +309,21 @@ describe("pickAudioTrack (via planVideoPlayback)", () => {
     expect(plan).toMatchObject({ audioStreamIndex: 2, audioAction: "copy" });
   });
 
-  it("copies a compatible non-default track that keeps the default's channel count (free, no worse)", () => {
+  it("serves the default track even when another track could be copied for free", () => {
+    // The Lego Movie, 19 Sep 2026: the unflagged AC-3 5.1 "Surround 5.1"
+    // after the DTS tracks is the audio description. Nothing in the metadata
+    // says so, so the default is the only safe answer -- transcoded.
     const plan = planVideoPlayback({
       videoCodec: "h264",
       container: "mkv",
       audioTracks: [
-        { streamIdx: 1, codec: "dts", profile: "DTS", channels: 6, isDefault: true },
-        { streamIdx: 2, codec: "ac3", profile: null, channels: 6 },
+        { streamIdx: 1, codec: "dts", profile: "DTS-HD MA", channels: 6, title: "Surround 5.1", isDefault: true },
+        { streamIdx: 2, codec: "dts", profile: "DTS", channels: 6, title: "Surround 5.1" },
+        { streamIdx: 3, codec: "ac3", profile: null, channels: 6, title: "Surround 5.1" },
+        { streamIdx: 4, codec: "ac3", profile: null, channels: 2, title: "Stereo" },
       ],
     })!;
-    expect(plan).toMatchObject({ audioStreamIndex: 2, audioAction: "copy" });
+    expect(plan).toMatchObject({ audioStreamIndex: 1, audioAction: "transcode" });
   });
 
   it("recognises a description track by its title when the container didn't flag it", () => {
