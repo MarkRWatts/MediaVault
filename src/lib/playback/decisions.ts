@@ -303,8 +303,15 @@ export function throttleAction(input: ThrottleInput): "pause" | "resume" | null 
 // ---------------------------------------------------------------------------
 
 /** Bumped when the on-disk layout or the plan's own fields change shape, so
- *  an older deploy's directories are discarded rather than misread. */
-export const PLAN_VERSION = 1;
+ *  an older deploy's directories are discarded rather than misread.
+ *
+ *  2 (interlace.ts): a transcoded segment cut under version 1 may have been
+ *  needlessly deinterlaced by the old header-trusting rule, and nothing else
+ *  in plan.json -- source mtime/size, the table hash -- moves when only the
+ *  *decision* about a file changes underneath it. Bumping the version is the
+ *  only way to invalidate those cached segments; they otherwise look exactly
+ *  as fresh as ones cut under the corrected rule. */
+export const PLAN_VERSION = 2;
 
 /** What `<key>/plan.json` holds: enough to prove the directory's segments
  *  were produced from the file that is on the share *now*, and against the

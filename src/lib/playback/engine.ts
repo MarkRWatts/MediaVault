@@ -243,7 +243,7 @@ function ensureStream(key: string): StreamRuntime {
   const rt: StreamRuntime = {
     key,
     ctx: (async () => {
-      const source = await resolveSource(parts.kind, parts.id, parts.audioStreamIndex);
+      const source = await resolveSource(parts.kind, parts.id, parts.variant, parts.audioStreamIndex);
       if (!source) throw new PlaybackError("not-found", `no playable ${parts.kind} ${parts.id}`);
       return openStream(source, parts.variant);
     })(),
@@ -486,7 +486,7 @@ function armIdleTimer(session: Session, ms: number): void {
 export async function startSession(input: StartSessionInput): Promise<StartedSession> {
   await ensureInit();
 
-  const source = await resolveSource(input.kind, input.id, input.audioStreamIndex ?? null);
+  const source = await resolveSource(input.kind, input.id, input.variant, input.audioStreamIndex ?? null);
   if (!source) throw new PlaybackError("not-found", `no playable ${input.kind} ${input.id}`);
 
   // A quality or audio switch names the session it replaces, so the old
