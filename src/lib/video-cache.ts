@@ -32,6 +32,7 @@ import path from "node:path";
 import { prisma } from "@/lib/db";
 import { probe } from "@/lib/ffprobe";
 import { SemaphoreFullError, prepareSemaphore } from "@/lib/semaphore";
+import { ffmpegPath } from "@/lib/ffmpeg-bin";
 import {
   planVideoPlayback,
   buildHlsFfmpegArgs,
@@ -449,7 +450,7 @@ let hasLocalFfmpegPromise: Promise<boolean> | null = null;
 function detectLocalFfmpeg(): Promise<boolean> {
   if (!hasLocalFfmpegPromise) {
     hasLocalFfmpegPromise = new Promise<boolean>((resolve) => {
-      execFile("ffmpeg", ["-version"], (err) => resolve(!err));
+      execFile(ffmpegPath(), ["-version"], (err) => resolve(!err));
     });
   }
   return hasLocalFfmpegPromise;
@@ -531,7 +532,7 @@ async function runFfmpeg(
   const hasLocal = await detectLocalFfmpeg();
 
   if (hasLocal) {
-    await runTrackedProcess(key, "ffmpeg", buildHlsFfmpegArgs(sourceAbsPath, outDir, plan, sourceChannels, variant));
+    await runTrackedProcess(key, ffmpegPath(), buildHlsFfmpegArgs(sourceAbsPath, outDir, plan, sourceChannels, variant));
     return;
   }
 

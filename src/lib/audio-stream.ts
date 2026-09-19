@@ -46,6 +46,7 @@ import path from "node:path";
 import { prisma } from "@/lib/db";
 import { audioSemaphore } from "@/lib/semaphore";
 import type { PcmStreamFormat } from "@/lib/pcm-chunks";
+import { ffmpegPath } from "@/lib/ffmpeg-bin";
 
 const execFileAsync = promisify(execFile);
 
@@ -105,7 +106,7 @@ export function estimatePcmBytes(durationSecs: number | null, format: PcmStreamF
 let hasLocalFfmpegPromise: Promise<boolean> | null = null;
 export function detectLocalFfmpeg(): Promise<boolean> {
   if (!hasLocalFfmpegPromise) {
-    hasLocalFfmpegPromise = execFileAsync("ffmpeg", ["-version"])
+    hasLocalFfmpegPromise = execFileAsync(ffmpegPath(), ["-version"])
       .then(() => true)
       .catch(() => false);
   }
@@ -150,7 +151,7 @@ async function pcmStream(
   const outputArgs = pcmOutputArgs(format);
   const hasLocal = await detectLocalFfmpeg();
   if (hasLocal) {
-    return spawnToWebStream("ffmpeg", [...inputArgs, absPath, ...outputArgs], onDone);
+    return spawnToWebStream(ffmpegPath(), [...inputArgs, absPath, ...outputArgs], onDone);
   }
 
   const dockerImage = process.env.FFPROBE_DOCKER_IMAGE;

@@ -28,6 +28,7 @@ import path from "node:path";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
 import { PrismaClient } from "@/generated/prisma/client";
+import { ffmpegPath } from "@/lib/ffmpeg-bin";
 
 const PORT = Number(process.env.E2E_PORT ?? "3008");
 const BASE = `http://localhost:${PORT}`;
@@ -47,7 +48,7 @@ function sessionCookie(token: string): string {
 }
 
 function ffmpeg(args: string[]): void {
-  execFileSync("ffmpeg", ["-y", "-loglevel", "error", ...args], { stdio: "pipe" });
+  execFileSync(ffmpegPath(), ["-y", "-loglevel", "error", ...args], { stdio: "pipe" });
 }
 
 function startNextDev(dir: string, dbUrl: string): { child: ChildProcess; logPath: string } {
