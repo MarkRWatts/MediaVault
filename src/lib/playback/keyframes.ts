@@ -112,6 +112,8 @@ export function segmentTableFromKeyframes(keyframes: number[], durationSecs: num
   });
 }
 
+const MIN_FINAL_SEGMENT_SECS = 1;
+
 /**
  * Transcoded-video segment table: fixed `targetSecs` boundaries, the last
  * segment taking whatever remainder is left of `durationSecs`.
@@ -127,6 +129,13 @@ export function fixedSegmentTable(durationSecs: number, targetSecs = 6): Segment
     segments.push({ index, start, duration: end - start });
     start = end;
     index++;
+  }
+  // A remainder under a second (a 60.006 s source) would be a 6 ms final
+  // segment -- legal, but a pointless extra request and a file some players
+  // handle badly. Fold it into the one before.
+  if (segments.length > 1 && segments[segments.length - 1].duration < MIN_FINAL_SEGMENT_SECS) {
+    const tail = segments.pop()!;
+    segments[segments.length - 1].duration += tail.duration;
   }
   return segments;
 }

@@ -98,3 +98,18 @@ describe("fixedSegmentTable", () => {
     expect(fixedSegmentTable(-1, 6)).toEqual([]);
   });
 });
+
+describe("fixedSegmentTable -- sub-second remainder", () => {
+  it("folds a 6 ms tail into the previous segment", () => {
+    const t = fixedSegmentTable(60.006);
+    expect(t).toHaveLength(10);
+    expect(t[9].start).toBe(54);
+    expect(t[9].duration).toBeCloseTo(6.006, 6);
+  });
+  it("keeps a remainder of a second or more as its own segment", () => {
+    expect(fixedSegmentTable(61.5)).toHaveLength(11);
+  });
+  it("never folds away the only segment", () => {
+    expect(fixedSegmentTable(0.5)).toEqual([{ index: 0, start: 0, duration: 0.5 }]);
+  });
+});

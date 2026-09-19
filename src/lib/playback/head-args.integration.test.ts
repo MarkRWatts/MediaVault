@@ -25,8 +25,9 @@ import path from "node:path";
 import { planVideoPlayback } from "../video-playback";
 import { buildHeadArgs } from "./head-args";
 import type { SegmentEntry } from "./types";
+import { ffmpegPath, ffprobePath } from "../ffmpeg-bin";
 
-const hasFfmpeg = spawnSync("ffmpeg", ["-version"], { stdio: "ignore" }).status === 0;
+const hasFfmpeg = spawnSync(ffmpegPath(), ["-version"], { stdio: "ignore" }).status === 0;
 
 interface SegmentListRow {
   file: string;
@@ -47,7 +48,7 @@ function parseSegmentList(csv: string): SegmentListRow[] {
 
 function probeVideoFrames(file: string): string {
   return execFileSync(
-    "ffprobe",
+    ffprobePath(),
     ["-v", "error", "-select_streams", "v:0", "-show_entries", "frame=key_frame,pts_time,pkt_size", "-of", "csv=p=0", file],
     { encoding: "utf8" },
   );
@@ -63,7 +64,7 @@ describe.skipIf(!hasFfmpeg)("buildHeadArgs (real ffmpeg, software path)", () => 
     // every cut precisely on a real keyframe -- the case "Segment table"
     // describes for copied video.
     execFileSync(
-      "ffmpeg",
+      ffmpegPath(),
       [
         "-y", "-loglevel", "error",
         "-f", "lavfi", "-i", "testsrc=duration=6:size=320x240:rate=25",
@@ -105,7 +106,7 @@ describe.skipIf(!hasFfmpeg)("buildHeadArgs (real ffmpeg, software path)", () => 
         source,
         keyframes,
       });
-      const csv = execFileSync("ffmpeg", args, { encoding: "utf8" });
+      const csv = execFileSync(ffmpegPath(), args, { encoding: "utf8" });
       return parseSegmentList(csv);
     }
 
@@ -149,7 +150,7 @@ describe.skipIf(!hasFfmpeg)("buildHeadArgs (real ffmpeg, software path)", () => 
     // "transcode" for it) -- exercises the libx264 branch of buildHeadArgs
     // rather than the copy branch above.
     execFileSync(
-      "ffmpeg",
+      ffmpegPath(),
       [
         "-y", "-loglevel", "error",
         "-f", "lavfi", "-i", "testsrc=duration=6:size=320x240:rate=25",
@@ -188,7 +189,7 @@ describe.skipIf(!hasFfmpeg)("buildHeadArgs (real ffmpeg, software path)", () => 
         hwaccel: "none",
         source,
       });
-      const csv = execFileSync("ffmpeg", args, { encoding: "utf8" });
+      const csv = execFileSync(ffmpegPath(), args, { encoding: "utf8" });
       return parseSegmentList(csv);
     }
 
