@@ -76,9 +76,8 @@ base change). Reasons:
   `/usr/lib/jellyfin-ffmpeg/`, including `vainfo`. No driver assembly.
 - It carries the fMP4/HLS muxer and QSV/VAAPI filter patches the
   segment-on-demand design was developed against.
-- The test Jellyfin VM logs the exact ffmpeg command line of every
-  transcode. For any problem file, the known-good flags for this exact
-  binary and this exact GPU are one log file away.
+- It is the build Jellyfin itself runs: any Jellyfin server's transcode
+  log shows a known-good command line for the same binary.
 
 It is a standalone binary invoked as a subprocess (as Alpine's ffmpeg is
 today): no server, no API, no licence effect on the app.
@@ -127,26 +126,26 @@ variants).
 
 **Stream key.** `<kind>-<id>-<variant>-a<audioStreamIdx>` names one
 deterministic rendition of one file. Its directory under `VIDEO_CACHE_DIR`
-holds `init.mp4`, `seg_NNNNN.m4s` and a `plan.json` (segment table +
-source mtime/size, so a changed file invalidates the directory).
+holds `seg_NNNNN.ts` and a `plan.json` (segment table + source mtime/size,
+so a changed file invalidates the directory).
 
-**Segment table.** Computed once per key, before any ffmpeg runs:
+**Segment table.** Computed once per key, before any ffmpeg runs, and
+*dictated to* ffmpeg rather than predicted from it:
 
 - *Transcoded video*: fixed `HLS_SEGMENT_SECS` (6 s) boundaries; the last
   segment takes the remainder of the probed duration.
-- *Copied video*: boundaries can only fall on source keyframes. The table
-  is cut from the file's keyframe index with the same rule ffmpeg's HLS
-  muxer applies — a new segment at the first keyframe ≥ 6 s after the
-  previous cut — so `EXTINF` values match what ffmpeg will actually
-  produce. Wrong durations here are what makes Safari drift or stall, so
-  this is the part of the plan that gets the most test attention.
+- *Copied video*: boundaries can only fall on source keyframes. A new
+  segment starts at the first indexed keyframe ≥ 6 s after the previous
+  cut.
 
 **Keyframe index.** New `KeyframeIndex` table (kind, file id, mtime/size
 cache key, packed keyframe timestamps).
 
 - MKV (nearly the whole library): read the Matroska `Cues` element — a
   small EBML reader that seeks to `SeekHead` → `Cues` and reads a few
-  hundred KB, not the file. Fast even over the CIFS share.
+  hundred KB, not the file. Fast even over the CIFS share. A Cues list may
+  be a subset of the file's keyframes; that is fine, because every cue *is*
+  a keyframe and the cut list only ever names cues.
 - Anything else, or an MKV without cues: `ffprobe -show_entries
   packet=pts_time,flags` restricted to the video stream. This reads the
   whole file, so it runs at scan time in the background, never in a
@@ -157,17 +156,43 @@ cache key, packed keyframe timestamps).
 
 **Playlists.** `master.m3u8` (one variant, with `CODECS`, `RESOLUTION`,
 `BANDWIDTH` — AVPlayer is happier with a master) and `main.m3u8` rendered
-from the segment table: `VOD`, `EXT-X-MAP` → `init.mp4`,
-`EXT-X-INDEPENDENT-SEGMENTS`, `ENDLIST`.
+from the segment table: `VOD`, `EXT-X-INDEPENDENT-SEGMENTS`, `ENDLIST`.
 
 **Heads.** A *head* is one ffmpeg process writing consecutive segments
-into a key's directory, from segment N onward: `-ss <start of N>
--noaccurate_seek -copyts -avoid_negative_ts disabled -start_number N -f hls
--hls_segment_type fmp4 -hls_time 6 -hls_playlist_type vod`, writing to
-temp names renamed into place on completion, so a half-written segment is
-never served and two heads can never corrupt each other. ffmpeg's own
-playlist output is discarded. `-copyts` keeps timestamps absolute, so
-segments written by different heads line up on one timeline.
+into a key's directory, from segment N onward, written to temp names and
+renamed into place on completion, so a half-written segment is never
+served and two heads can never corrupt each other.
+
+The shape of a head was settled by experiment on the VM (19 Sep 2026,
+stream-copying a Blu-ray remux whose keyframes are ~1 s apart) — the first
+design, ffmpeg's `hls` muxer with `-hls_time 6` and a playlist predicted
+from the keyframe index, does not survive a restart:
+
+- The `hls` muxer cuts at the first keyframe ≥ 6·k seconds *from the start
+  of the run*. A head restarted at segment N has a different grid from the
+  run that started at 0, so its later boundaries drift off the playlist
+  (segment 7 differed in the test). `-hls_init_time` doesn't realign it.
+- **So ffmpeg is told where to cut:** `-f segment -segment_times
+  <cuts relative to this head's first packet> -segment_time_delta 0.02
+  -segment_start_number N -break_non_keyframes 0`. A head started at 0 and
+  a head restarted at segment 6 then produce the same video segments,
+  packet for packet.
+- **Segments are MPEG-TS** (`-segment_format mpegts`, `h264_mp4toannexb`).
+  The segment muxer starts a fresh container per file: MP4 segments come
+  out with timestamps reset to zero, TS segments keep the absolute
+  `-copyts` timeline and need no init segment. Native HLS and hls.js
+  (1.6, including AC-3 in TS) both take it. The cost is HEVC, which Apple
+  only plays from fMP4 — no HEVC in the library today; see "Later".
+- **Seeking to a keyframe:** `-noaccurate_seek -ss <keyframe + 0.135 s>`.
+  ffmpeg subtracts 3/23 s from the seek target when the video has B-frames,
+  so `-ss <keyframe>` itself lands one keyframe early (seen in the test);
+  the offset is clamped below the following keyframe.
+- **Audio seam:** a restarted head's audio begins ~80 ms after its first
+  video frame. That is the point a player has just seeked to, so it is
+  inaudible there; a viewer playing *across* a boundary between segments
+  written by different heads gets a single ~0.25 s audio dropout.
+  Accepted for 4.0.0; a second, accurately seeked audio input is the fix
+  if it is ever noticed.
 
 Segment request for N:
 
@@ -214,7 +239,7 @@ speak a small, engine-agnostic protocol: `POST session` → play the returned
 | Route (under `/api/video/:versionId` and `/api/tv-video/:episodeFileId`) | |
 |---|---|
 | `POST play/session?variant=&audio=` | `{ playlistUrl, playSessionId, durationSecs, transcodeReasons, audioTracks }` — same shape as today. |
-| `GET play/<key>/master.m3u8`, `main.m3u8`, `init.mp4`, `seg_NNNNN.m4s` | Session cookie or bearer on every request, as now. |
+| `GET play/<key>/master.m3u8`, `main.m3u8`, `seg_NNNNN.ts` | Session cookie or bearer on every request, as now. |
 | `POST play/stop?playSessionId=` | |
 | `progress` | Unchanged. |
 
@@ -335,16 +360,14 @@ cap, idle stop, and a container restart mid-play.
 
 ## Risks
 
-- **Copy-tier segment durations.** If the table and ffmpeg disagree about
-  where a segment ends, native players drift. Mitigations: the integration
-  test compares every produced segment's real duration with its `EXTINF`;
-  fallback is `-f segment -segment_times` with the explicit cut list
-  instead of `-hls_time`; last resort for a pathological file is to
-  transcode its video (hardware makes that affordable).
-- **`init.mp4` across heads.** Every head of a key must produce an
-  equivalent initialisation segment. Same input, same arguments and
-  `-copyts` should guarantee it; the integration test asserts it, and the
-  first head's `init.mp4` is the one kept.
+- **Copy-tier segment boundaries.** Settled by experiment (see "Heads"):
+  ffmpeg is given the cut list, and the integration test compares every
+  produced segment's first timestamp and duration with the table, from a
+  cold start and after a restart. Last resort for a pathological file is
+  to transcode its video (hardware makes that affordable).
+- **MPEG-TS on every client.** The clients are verified today on fMP4 from
+  Jellyfin. TS is HLS's original container and the safer bet for splicing,
+  but phase 5 is where AVPlayer, Safari and hls.js confirm it.
 - **Share throughput — measured, not a constraint.** With the Proxmox
   host and the NAS both on 2.5 GbE (19 Sep 2026), reads from the share
   inside the app container run at ~260 MiB/s single-stream (≈2.2 Gbit/s,
@@ -362,6 +385,9 @@ cap, idle stop, and a container restart mid-play.
   renditions in a `SUBTITLES` group on the master playlist, extracted per
   segment window. Image subtitles (PGS) still mean burn-in and a video
   encode — affordable now on the iGPU.
+- **HEVC sources.** Apple plays HEVC only from fMP4, so an HEVC copy tier
+  needs fMP4 segments with absolute `tfdt` (rewritten per segment, or a
+  patched muxer). Until then an HEVC source would be transcoded to H.264.
 - **HDR and 10-bit.** When 4K content arrives: HD Graphics 530 can't
   decode HEVC Main10, so either software decode + `tonemap_opencl` (needs
   Intel's legacy OpenCL runtime for Gen9) or a newer iGPU; and prefer an
