@@ -134,6 +134,111 @@ export function isHeadCaughtUp(nextIndex: number, segmentCount: number, exists: 
 }
 
 // ---------------------------------------------------------------------------
+// Verifying a finished segment against the table
+// ---------------------------------------------------------------------------
+
+/**
+ * A head writes the file the *table* named, or it writes nothing. The
+ * failure this guards against is the one found on the VM (19 Sep 2026, fixed
+ * at source in head-args.ts by widening `-segment_time_delta` for
+ * transcodes): the segment muxer misses a cut, so one file comes out double
+ * length and every later file is numbered one too low -- right filename,
+ * wrong content, silently, for the rest of the film. Nothing downstream can
+ * detect that; a player just sees the picture jump. So every completed
+ * segment's reported duration is compared with the table's before the file
+ * is renamed into place, and a mismatch stops the head instead of publishing
+ * it.
+ *
+ * ## What the CSV numbers actually are
+ *
+ * Measured against ffmpeg 9.0.2 (Homebrew, 19 Sep 2026) for copy and
+ * transcode heads started at 0, 1 and 2:
+ *
+ *   - Every entry *after* a head's first reports absolute source times
+ *     (start and end), because `-copyts` plus `mpegts_copyts=1` keep the
+ *     timeline absolute.
+ *   - A head's FIRST entry reports `start = 0.000000` whatever index it
+ *     started at -- the muxer's own initial value, not a timestamp -- while
+ *     its `end` is absolute. A head restarted at segment 1 of a 2s table
+ *     therefore prints `seg_00001.ts,0.000000,4.000000`: an apparent 4s
+ *     duration for a 2s segment.
+ *
+ * So `end - start` is not, on its own, the duration. Two readings are
+ * accepted, and a segment passes if either lands within tolerance:
+ * `end - start` (both times in the same frame of reference, whichever it
+ * is) and `end - table[index].start` (an absolute end against a start the
+ * table already knows). A missed cut fails both, because its reported end
+ * is the *next* boundary's.
+ */
+export const SEGMENT_DURATION_TOLERANCE_SECS = 0.25;
+
+/**
+ * Extra slack on the short side for a transcoded head's own first segment:
+ * its first encoded frame is not exactly on the boundary (an accurate seek
+ * can land a frame late, and a source's first pts is not always 0), so that
+ * segment legitimately runs a little short. Currently inside the floor
+ * above; kept explicit so the floor can be tightened without re-discovering
+ * this.
+ */
+export const TRANSCODE_FIRST_SEGMENT_SHORTFALL_SECS = 0.1;
+
+/** How far a reported duration may sit from the table's: a quarter second,
+ *  or two frames where those are longer (a 12fps DVD-era oddity, or an
+ *  animation frame-rate source). */
+export function segmentDurationTolerance(fps: number | null): number {
+  const twoFrames = fps !== null && Number.isFinite(fps) && fps > 0 ? 2 / fps : 0;
+  return Math.max(SEGMENT_DURATION_TOLERANCE_SECS, twoFrames);
+}
+
+export interface SegmentDurationCheckInput {
+  index: number;
+  /** table[index].start and .duration. */
+  expectedStart: number;
+  expectedDuration: number;
+  segmentCount: number;
+  /** The CSV line's two numbers, verbatim. */
+  reportedStart: number;
+  reportedEnd: number;
+  fps: number | null;
+  tier: StreamTier;
+  /** Whether this is the first segment this head produced. */
+  isHeadFirstSegment: boolean;
+}
+
+export type SegmentDurationVerdict =
+  | { ok: true }
+  | { ok: false; reportedDuration: number; expectedDuration: number; tolerance: number };
+
+/**
+ * Whether a completed segment may be renamed into place. See the block
+ * comment above for the two readings and why both are tried.
+ *
+ * The table's LAST segment is never checked. Its duration is "whatever
+ * remains of the probed duration", which the container's own header can
+ * disagree with by more than a tolerance would allow (video and audio rarely
+ * end on the same frame), and the corruption this exists to catch -- a
+ * missed cut renumbering everything after it -- is impossible there: a
+ * missed cut is always detected at the boundary it skipped, which by
+ * definition has segments after it.
+ */
+export function checkSegmentDuration(input: SegmentDurationCheckInput): SegmentDurationVerdict {
+  if (input.index >= input.segmentCount - 1) return { ok: true };
+
+  const tolerance = segmentDurationTolerance(input.fps);
+  const shortfall =
+    input.isHeadFirstSegment && input.tier === "transcode" ? TRANSCODE_FIRST_SEGMENT_SHORTFALL_SECS : 0;
+
+  const candidates = [input.reportedEnd - input.reportedStart, input.reportedEnd - input.expectedStart];
+  let best = candidates[0];
+  for (const reported of candidates) {
+    const delta = reported - input.expectedDuration;
+    if (delta <= tolerance && -delta <= tolerance + shortfall) return { ok: true };
+    if (Math.abs(delta) < Math.abs(best - input.expectedDuration)) best = reported;
+  }
+  return { ok: false, reportedDuration: best, expectedDuration: input.expectedDuration, tolerance };
+}
+
+// ---------------------------------------------------------------------------
 // Run-ahead throttle (V4_PLAN.md, "Housekeeping")
 // ---------------------------------------------------------------------------
 

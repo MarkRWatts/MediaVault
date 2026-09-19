@@ -40,8 +40,8 @@ import { ffmpegPath } from "@/lib/ffmpeg-bin";
 import { PlaybackError } from "./source";
 import { parseSegmentFileName, segmentFileName } from "./stream-key";
 import { PART_DIR_PREFIX } from "./stream";
-import type { StreamTier } from "./decisions";
-import type { HwAccel } from "./types";
+import { checkSegmentDuration, type StreamTier } from "./decisions";
+import type { HwAccel, SegmentEntry } from "./types";
 
 /** How long a killed head is given to write its trailer and exit before
  *  SIGKILL. ffmpeg's SIGTERM handler closes the current output and returns
@@ -81,7 +81,15 @@ export function parseSegmentListLine(line: string): SegmentListLine | null {
   return { name, startSecs, endSecs };
 }
 
-export type HeadStopReason = "caught-up" | "finished" | "stopped" | "idle" | "replaced" | "shutdown" | "failed";
+export type HeadStopReason =
+  | "caught-up"
+  | "finished"
+  | "stopped"
+  | "idle"
+  | "replaced"
+  | "shutdown"
+  | "failed"
+  | "bad-segment";
 
 export interface HeadOptions {
   key: string;
@@ -91,6 +99,12 @@ export interface HeadOptions {
   startIndex: number;
   tier: StreamTier;
   hwaccel: HwAccel;
+  /** The immutable table every produced segment is checked against. */
+  segments: SegmentEntry[];
+  /** Source frame rate, for the two-frame half of the duration tolerance. */
+  fps: number | null;
+  /** Counters for engineStats: bumped per verified / rejected segment. */
+  onVerified: (ok: boolean) => void;
   /** Built once the staging directory is known (head-args.ts's `outDir`). */
   buildArgs: (stagingDir: string) => string[];
   /** Called after a segment has been renamed into `dir`, before any waiter
@@ -186,19 +200,30 @@ export class Head {
       const line = this.stdoutBuffer.slice(0, nl);
       this.stdoutBuffer = this.stdoutBuffer.slice(nl + 1);
       const parsed = parseSegmentListLine(line);
-      if (parsed) this.queuePromotion(parsed.name);
+      if (parsed) this.queuePromotion(parsed);
     }
   }
 
   /** Renames are chained rather than run concurrently so `nextIndex`, the
    *  `.complete` marker and the waiter wake-ups stay in segment order. */
-  private queuePromotion(name: string): void {
-    this.renameChain = this.renameChain.then(() => this.promote(name)).catch(() => {});
+  private queuePromotion(line: SegmentListLine | string): void {
+    this.renameChain = this.renameChain.then(() => this.promote(line)).catch(() => {});
   }
 
-  private async promote(name: string): Promise<void> {
+  /**
+   * Verify one finished segment against the table and, if it matches, rename
+   * it into the stream directory. A `string` argument is a file found by the
+   * clean-exit sweep, which has no CSV line to check: that can only ever be
+   * the final segment, which checkSegmentDuration does not check anyway (see
+   * its doc comment).
+   */
+  private async promote(line: SegmentListLine | string): Promise<void> {
+    const name = typeof line === "string" ? line : line.name;
     const index = parseSegmentFileName(name);
     if (index === null) return;
+
+    if (typeof line !== "string" && !(await this.verify(index, line))) return;
+
     const staged = path.join(this.stagingDir, name);
     const target = path.join(this.opts.dir, segmentFileName(index));
     try {
@@ -218,8 +243,49 @@ export class Head {
     this.wake(index);
 
     if (this.opts.shouldStop(this.nextIndex)) {
-      void this.stop(this.nextIndex >= 0 ? "caught-up" : "finished");
+      void this.stop("caught-up");
     }
+  }
+
+  /**
+   * The table is the contract (decisions.ts's checkSegmentDuration). A
+   * segment whose reported duration doesn't match it is not published and
+   * not counted: the file stays in the staging directory to be deleted with
+   * it, the head is killed rather than left to renumber everything after
+   * this point, and whoever was waiting gets a real error instead of a
+   * segment holding the wrong six seconds of film.
+   */
+  private async verify(index: number, line: SegmentListLine): Promise<boolean> {
+    const entry = this.opts.segments[index];
+    if (!entry) return false;
+    const verdict = checkSegmentDuration({
+      index,
+      expectedStart: entry.start,
+      expectedDuration: entry.duration,
+      segmentCount: this.opts.segments.length,
+      reportedStart: line.startSecs,
+      reportedEnd: line.endSecs,
+      fps: this.opts.fps,
+      tier: this.opts.tier,
+      isHeadFirstSegment: this.segmentsWritten === 0,
+    });
+    if (verdict.ok) {
+      this.opts.onVerified(true);
+      return true;
+    }
+
+    this.opts.onVerified(false);
+    console.error(
+      `[playback] ${this.key}: segment ${index} is ${verdict.reportedDuration.toFixed(3)}s but the table says ` +
+        `${verdict.expectedDuration.toFixed(3)}s (tolerance ${verdict.tolerance.toFixed(3)}s) -- discarding it and stopping the head`,
+    );
+    this.failure = new PlaybackError(
+      "head-failed",
+      `ffmpeg produced a ${verdict.reportedDuration.toFixed(3)}s segment where the table says ${verdict.expectedDuration.toFixed(3)}s`,
+    );
+    for (const w of this.waiters.splice(0)) w.reject(this.failure);
+    void this.stop("bad-segment");
+    return false;
   }
 
   /** A head that overwrote nothing still has to answer the request that
