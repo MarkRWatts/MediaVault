@@ -86,34 +86,62 @@ export class PlaybackError extends Error {
 // Probe cache
 // ---------------------------------------------------------------------------
 
+/**
+ * Smallest useful LRU: a Map already keeps insertion order, so "least
+ * recently used" is "first key", and a hit only has to re-insert itself to
+ * move to the back.
+ */
+export class LruCache<T> {
+  private readonly entries = new Map<string, T>();
+
+  constructor(private readonly max: number) {}
+
+  get(key: string): T | undefined {
+    const hit = this.entries.get(key);
+    if (hit === undefined) return undefined;
+    this.entries.delete(key);
+    this.entries.set(key, hit);
+    return hit;
+  }
+
+  set(key: string, value: T): void {
+    this.entries.delete(key);
+    this.entries.set(key, value);
+    while (this.entries.size > this.max) {
+      const oldest = this.entries.keys().next();
+      if (oldest.done) break;
+      this.entries.delete(oldest.value);
+    }
+  }
+
+  clear(): void {
+    this.entries.clear();
+  }
+
+  get size(): number {
+    return this.entries.size;
+  }
+}
+
 // A probe of a container header costs one ffprobe spawn (tens of ms locally,
 // more over the share). It is asked for on every session start and again
-// whenever a stream directory is opened, so a tiny LRU keyed by identity --
-// path plus the mtime/size that would make the answer stale -- turns the
-// repeat calls into map lookups without ever risking a stale answer: a
-// changed file simply has a different key and misses.
+// whenever a stream directory is opened, so a small LRU turns the repeat
+// calls into map lookups. Keying by identity rather than by path -- the
+// mtime and size that would make the answer stale are part of the key --
+// means a changed file simply misses; there is no invalidation to get wrong.
 const PROBE_CACHE_MAX = 32;
-const probeCache = new Map<string, ProbeResult>();
+const probeCache = new LruCache<ProbeResult>(PROBE_CACHE_MAX);
 
-function probeCacheKey(absPath: string, mtimeMs: number, sizeBytes: number): string {
+export function probeCacheKey(absPath: string, mtimeMs: number, sizeBytes: number): string {
   return `${absPath}|${mtimeMs}|${sizeBytes}`;
 }
 
 async function cachedProbe(absPath: string, mtimeMs: number, sizeBytes: number): Promise<ProbeResult> {
   const key = probeCacheKey(absPath, mtimeMs, sizeBytes);
   const hit = probeCache.get(key);
-  if (hit) {
-    // Re-insert so the Map's own insertion order is the LRU order.
-    probeCache.delete(key);
-    probeCache.set(key, hit);
-    return hit;
-  }
+  if (hit) return hit;
   const result = await probe(absPath);
   probeCache.set(key, result);
-  if (probeCache.size > PROBE_CACHE_MAX) {
-    const oldest = probeCache.keys().next();
-    if (!oldest.done) probeCache.delete(oldest.value);
-  }
   return result;
 }
 
