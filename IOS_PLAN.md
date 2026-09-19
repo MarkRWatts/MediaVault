@@ -233,10 +233,10 @@ the web (same rpID: the hostname of `BETTER_AUTH_URL`). It needs:
 
 ### 6. Later, server-side
 
-- **Music listening history** (PLAN.md "Worth doing next"): the app would
-  report track plays the way the web can't (backgrounded), so once the
-  server has a route it is a one-line addition in the player. Not part of
-  this plan.
+- **Music listening history** (PLAN.md "Worth doing next"): the app
+  reports track plays the way the web can't (backgrounded). The
+  anonymous play log now takes them from both clients; a per-user
+  history, if it is ever wanted, is still not part of this plan.
 - **tvOS onto `/api/v1` + bearer via the device-authorization plugin**:
   the reason the surface is versioned.
 
@@ -501,24 +501,68 @@ it a thing the household can rely on.
 - `docs/TEST_PLAN_2026-09.md`-style manual pass for the background
   checklist, on a real iPhone, over cellular.
 
-## Status (11 Sep 2026)
+## Status (19 Sep 2026)
 
-- **Server (this repo): phases 0, 1 and the server half of 3 are in.**
-  Bearer sessions (`bearer()` in `src/lib/auth.ts`, the header accepted in
-  `src/proxy.ts`, `src/proxy.test.ts`); `GET /api/audio/:id/file`; the
-  `/api/v1` reads and mutations under `src/app/api/v1/` typed in
-  `src/lib/api-v1-types.ts`, with the favourite and playlist logic moved
-  into `src/lib/music-user-state.ts` and `film-user-state.ts` so the
-  server actions and the routes share it. Phase 6 (passkeys) is not
-  started.
-- **App: `MarkRWatts/MediaVaultiOS`** holds `MediaVaultKit` (API client,
-  DTOs, Keychain token store, sign-in flow, `QueueModel` with tests) and
-  the phase-2 app target (sign-in, music screens, `AVQueuePlayer` engine,
-  audio session, Now Playing, remote commands, persisted queue). Movies
-  and Shows are title lists only; phase 3's hearts and playlist editing
-  in the app, and phase 4's video, are next.
-- **The app builds and launches** (MediaVaultiOS PR #1): warning-free
-  in Xcode, to sign-in in the simulator, `MediaVaultKit` tests passing.
-  The first compile is what moved `AVFoundation` onto the session cookie
-  (see "Bearer sessions"). It has not yet run against a live server or
-  on a device; that needs this branch deployed.
+- **Server (this repo): phases 0, 1 and the server half of 3 are in and
+  deployed.** Bearer sessions (`bearer()` in `src/lib/auth.ts`, the header
+  accepted in `src/proxy.ts`); `GET /api/audio/:id/file`; the `/api/v1`
+  reads and mutations under `src/app/api/v1/`, typed in
+  `src/lib/api-v1-types.ts`, with the favourite and playlist logic in
+  `src/lib/music-user-state.ts` and `film-user-state.ts` so the server
+  actions and the routes share it. For the app's home and browse screens
+  the music index also carries `recentAlbums`, every show summary a
+  `createdAt`, and `GET /api/v1/music/albums` lists every playable album.
+  Playback is logged from both clients: a content-free
+  `video.playback` / `audio.playback` audit row per start, and an
+  anonymous per-day play log (`src/lib/play-log.ts`), fed by
+  `POST /api/audio/playback`, `POST /api/audio/:trackId/played` and the
+  progress routes' `isNewPlay`. Phase 6 (passkeys) is not started.
+- **App: `MarkRWatts/MediaVaultiOS`, phases 2 and 4 done, phase 3 done
+  bar hearts.** It runs against the live server in the simulator and on a
+  physical iPhone.
+  - *Shape.* Tabs are Home, Movies, Shows, Music and Search; Account is an
+    icon on Home. Home offers continue listening (the persisted queue),
+    continue watching (films and episodes) and the newest music, films and
+    shows. Movies and Shows are poster grids (poster and title) showing
+    only what can be played, with BBFC certificate symbols and each
+    version's resolution on the detail pages; Music is a grid
+    with Playlists / Artists / Albums filters; Search covers all three
+    libraries from lists already on the phone (word-prefix, case- and
+    accent-insensitive). A mini player with a progress line sits above the
+    tab bar and steps aside for the keyboard.
+  - *Music.* `AVQueuePlayer` engine, audio session, Now Playing, remote
+    commands and the persisted queue as planned. The Play button on an
+    album, playlist or the favourites list is a play/pause toggle for the
+    source that is playing. Playlists can be created, renamed, reordered
+    and deleted, and tracks or whole albums added and removed. Hearts are
+    still display-only.
+  - *Video.* Film and show detail screens (versions, seasons, episodes,
+    resume, quality remembered per network, audio track) over
+    `VideoSession`, which runs the Jellyfin lifecycle as planned —
+    including the silent re-session after a long pause, plus a patient
+    start: a cold transcode can miss `AVPlayer`'s ~3 s limit for the first
+    segment, so the same playlist is retried before a new session is paid
+    for. The system player is presented modally for its full chrome; the
+    phone is portrait except while it is up, and landscape starts in
+    aspect-fill when that crops at most a fifth (16:9 on a phone). Quality
+    and audio track are chosen before playing, not from inside the player.
+  - *CarPlay (audio only).* Library, Playlists and Artists templates over
+    the same `AudioPlayer` are written but have never run: the
+    `carplay-audio` entitlement needs the paid Developer Program and
+    Apple's approval, so it is applied to simulator builds only, and
+    Xcode 27 drives CarPlay from the separate CarPlay Simulator app with a
+    real phone.
+  - *Signing.* Automatic, with the development team in `project.yml` (the
+    `.xcodeproj` is generated by XcodeGen). On a free team a device build
+    lasts seven days; TestFlight, like CarPlay, waits on the paid
+    programme.
+- **Not yet done.** Hearts in the app; phase 5's hardening pass
+  (interruptions and route changes on a real drive, cellular hand-off,
+  iPad layout, accessibility labels, the background checklist on a locked
+  phone over cellular); Picture in Picture untested; phase 6. One open observation: in the simulator the
+  system player twice paused a stream by itself a few seconds in, with no
+  cause found and no recurrence on a device so far.
+- **Working on it.** Debug builds take launch arguments for scripted runs
+  (`-debugTab`, `-debugPlayFilmVersion`, `-debugPlayEpisodeFile`,
+  `-debugLandscape`, `-debugPlaySeconds`, `-debugSearch`), and
+  `VideoSession` logs to the `com.markrwatts.mediavault` subsystem.
