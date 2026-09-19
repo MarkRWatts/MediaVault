@@ -124,6 +124,10 @@ export function mapPlaybackError(err: PlaybackError): { status: number; message:
       return { status: 503, message: err.message, retryAfterSecs: 60 };
     case "timeout":
       return { status: 503, message: "Playback is taking longer than expected — try again.", retryAfterSecs: 2 };
+    case "aborted":
+      // The client went away mid-request (every seek abandons a fetch or
+      // two). Nobody reads this response; 499 keeps it out of the 5xx count.
+      return { status: 499, message: "request aborted" };
     case "head-failed":
     case "no-keyframes":
       return { status: 502, message: "Playback could not be started for this file." };
@@ -134,6 +138,8 @@ export function mapPlaybackError(err: PlaybackError): { status: number; message:
 
 /** Detail stays in the server log for every branch -- see mapPlaybackError. */
 function logEngineError(context: string, err: unknown): void {
+  // Routine, not an error: a seeking player cancels requests in flight.
+  if (err instanceof PlaybackError && err.code === "aborted") return;
   if (err instanceof PlaybackError) console.error(`[playback] ${context}: ${err.code}: ${err.message}`);
   else console.error(`[playback] ${context}:`, err);
 }

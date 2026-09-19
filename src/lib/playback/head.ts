@@ -42,6 +42,7 @@ import { parseSegmentFileName, segmentFileName } from "./stream-key";
 import { PART_DIR_PREFIX } from "./stream";
 import { checkSegmentDuration, type StreamTier } from "./decisions";
 import type { HwAccel, SegmentEntry } from "./types";
+import os from "node:os";
 
 /** How long a killed head is given to write its trailer and exit before
  *  SIGKILL. ffmpeg's SIGTERM handler closes the current output and returns
@@ -132,6 +133,27 @@ let headCounter = 0;
  * spawns, so a Head object always corresponds to a real child (or one that
  * has since exited).
  */
+
+/** Nice value for every head. A copy-tier head runs far faster than realtime
+ *  until the throttle suspends it, and in that burst it will take both of
+ *  the VM's vCPUs (seen in production: ~1.3 cores for ~45 s per eleven
+ *  minutes of film, nearly all of it the audio transcode). Nothing about a
+ *  head is latency-critical once its first segment is out, whereas the web
+ *  app sharing the box is -- so heads yield to it. Costs nothing on an idle
+ *  machine. */
+const HEAD_NICE = 10;
+
+/** Lowering one's own child's priority needs no privilege; failing to (an
+ *  exotic platform, a pid already gone) is not worth failing a play for. */
+function lowerPriority(pid: number | undefined): void {
+  if (pid === undefined) return;
+  try {
+    os.setPriority(pid, HEAD_NICE);
+  } catch {
+    /* best effort */
+  }
+}
+
 export class Head {
   readonly headId: string;
   readonly sessionId: string;
@@ -182,6 +204,7 @@ export class Head {
 
     const args = opts.buildArgs(stagingDir);
     this.child = spawn(ffmpegPath(), args, { stdio: ["ignore", "pipe", "pipe"] });
+    lowerPriority(this.child.pid);
     this.child.stdout?.setEncoding("utf8");
     this.child.stdout?.on("data", (chunk: string) => this.onStdout(chunk));
     this.child.stderr?.setEncoding("utf8");
@@ -313,7 +336,7 @@ export class Head {
 
     if (this.stopping !== null) {
       // Our own kill cut this segment short -- see the doc comment.
-      console.log(`[playback] ${this.key}: dropping segment ${index}, truncated by the ${this.stopping} that stopped this head`);
+      console.log(`[playback] ${this.key}: dropping segment ${index}, cut short when this head was stopped (${this.stopping})`);
       return false;
     }
 
@@ -361,7 +384,7 @@ export class Head {
         () => entry.reject(new PlaybackError("timeout", `timed out waiting for segment ${index} of ${this.key}`)),
         Math.max(0, deadlineMs - Date.now()),
       );
-      const onAbort = () => entry.reject(new PlaybackError("timeout", "the request was aborted"));
+      const onAbort = () => entry.reject(new PlaybackError("aborted", "the request was aborted"));
       const finish = (done: () => void) => {
         clearTimeout(timer);
         signal?.removeEventListener("abort", onAbort);
@@ -370,7 +393,7 @@ export class Head {
         done();
       };
       if (signal?.aborted) {
-        entry.reject(new PlaybackError("timeout", "the request was aborted"));
+        entry.reject(new PlaybackError("aborted", "the request was aborted"));
         return;
       }
       signal?.addEventListener("abort", onAbort, { once: true });
