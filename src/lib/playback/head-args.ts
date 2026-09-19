@@ -96,6 +96,10 @@ const SEEK_CLAMP_MARGIN_SECS = 0.13 - 0.005;
 // search for "the next keyframe after this one" must skip it.
 const KEYFRAME_EPSILON_SECS = 1e-6;
 
+// -segment_time_delta per tier -- see where it is pushed.
+const COPY_SEGMENT_TIME_DELTA = "0.02";
+const TRANSCODE_SEGMENT_TIME_DELTA = "0.5";
+
 export interface HeadAudioInput {
   /** ffprobe's absolute stream index, or null when the file has no audio
    *  stream at all. */
@@ -299,12 +303,15 @@ export function buildHeadArgs(input: BuildHeadArgsInput): string[] {
         args.push("-crf", "18");
       }
       args.push("-pix_fmt", "yuv420p", "-threads", "2");
+      // Forced boundary keyframes only: a scene-cut keyframe just before a
+      // boundary would be taken for the cut (see -segment_time_delta).
+      args.push("-sc_threshold", "0", "-g", "600");
     } else {
       const filters: string[] = [];
       if (tenBit) filters.push("format=nv12", "hwupload");
       if (hwaccel === "vaapi") {
         if (source.interlaced) filters.push("deinterlace_vaapi");
-        if (variant === "remote") filters.push("scale_vaapi=w=-2:h=720");
+        if (variant === "remote") filters.push("scale_vaapi=w=-2:h=min(720\\,ih)");
       } else {
         if (source.interlaced) filters.push("vpp_qsv=deinterlace=2");
         if (variant === "remote") filters.push("scale_qsv=w=-1:h=720");
@@ -358,7 +365,19 @@ export function buildHeadArgs(input: BuildHeadArgsInput): string[] {
   // depends on.
   args.push("-segment_format_options", "mpegts_copyts=1");
   args.push("-segment_start_number", String(N));
-  args.push("-segment_time_delta", "0.02", "-break_non_keyframes", "0");
+  // The muxer cuts at the first keyframe whose pts, *relative to this
+  // head's first video packet*, is >= cut - delta. For copied video the
+  // first packet is the boundary keyframe itself, so a tight delta is
+  // right (and necessary: real keyframes can be well under a second
+  // apart). For transcoded video the first frame is NOT exactly on the
+  // boundary -- a source whose first pts is 0.063, or an accurate seek
+  // landing a frame late -- while the forced keyframes are on the absolute
+  // grid, so with a tight delta the first cut is missed, segment N comes
+  // out double length and every later file is numbered one too low (seen
+  // on the VM, 19 Sep 2026: VC-1 from 0 and MPEG-2 from a cold seek). The
+  // only keyframes a transcode contains are the forced ones, so a wide
+  // delta is safe there.
+  args.push("-segment_time_delta", doVideoCopy ? COPY_SEGMENT_TIME_DELTA : TRANSCODE_SEGMENT_TIME_DELTA, "-break_non_keyframes", "0");
   if (N < segments.length - 1) {
     args.push("-segment_times", relativeCutTimes(segments, N).join(","));
   }

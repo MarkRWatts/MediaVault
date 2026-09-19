@@ -302,7 +302,7 @@ describe("buildHeadArgs -- hardware transcode", () => {
       expect.arrayContaining(["-c:v", "h264_vaapi", "-b:v", REMOTE_VIDEO_MAXRATE, "-maxrate", REMOTE_VIDEO_MAXRATE, "-bufsize", "6M"]),
     );
     expect(args).not.toContain("-qp");
-    expect(argValue(args, "-vf")).toBe("scale_vaapi=w=-2:h=720");
+    expect(argValue(args, "-vf")).toBe("scale_vaapi=w=-2:h=min(720\\,ih)");
   });
 
   it("vaapi interlaced Original: deinterlace_vaapi in the filter chain", () => {
@@ -312,7 +312,7 @@ describe("buildHeadArgs -- hardware transcode", () => {
 
   it("vaapi interlaced Remote: deinterlace before scale, comma-joined", () => {
     const args = buildHeadArgs(hw({ hwaccel: "vaapi", variant: "remote", startIndex: 0, source: INTERLACED_SOURCE }));
-    expect(argValue(args, "-vf")).toBe("deinterlace_vaapi,scale_vaapi=w=-2:h=720");
+    expect(argValue(args, "-vf")).toBe("deinterlace_vaapi,scale_vaapi=w=-2:h=min(720\\,ih)");
   });
 
   it("qsv Original: -qsv_device, h264_qsv, -global_quality 20", () => {
@@ -345,7 +345,7 @@ describe("buildHeadArgs -- hardware transcode", () => {
     const args = buildHeadArgs(
       hw({ hwaccel: "vaapi", variant: "remote", startIndex: 0, source: { ...TEN_BIT_SOURCE, interlaced: true } }),
     );
-    expect(argValue(args, "-vf")).toBe("format=nv12,hwupload,deinterlace_vaapi,scale_vaapi=w=-2:h=720");
+    expect(argValue(args, "-vf")).toBe("format=nv12,hwupload,deinterlace_vaapi,scale_vaapi=w=-2:h=min(720\\,ih)");
   });
 
   it("qsv 10-bit keeps -qsv_device and drops -hwaccel the same way", () => {
@@ -435,5 +435,39 @@ describe("buildHeadArgs -- validation", () => {
   it("throws on an empty input path or outDir", () => {
     expect(() => buildHeadArgs(baseInput({ input: "" }))).toThrow(/input path/);
     expect(() => buildHeadArgs(baseInput({ outDir: "" }))).toThrow(/outDir/);
+  });
+});
+
+describe("buildHeadArgs -- -segment_time_delta per tier (VM finding, 19 Sep 2026)", () => {
+  it("is tight for copied video and wide for every transcode", () => {
+    const find = (args: string[]) => args[args.indexOf("-segment_time_delta") + 1];
+    const all = [
+      ...[true, false].flatMap((copy) =>
+        (["none", "vaapi", "qsv"] as const).map((hwaccel) => ({ copy, hwaccel })),
+      ),
+    ];
+    for (const { copy, hwaccel } of all) {
+      const args = buildHeadArgs({
+        input: "/movies/a.mkv",
+        plan: planVideoPlayback({
+          videoCodec: copy ? "h264" : "vc1",
+          container: "mkv",
+          audioTracks: [{ streamIdx: 1, codec: "ac3", profile: null, channels: 6, title: null, isDefault: true, isDescriptive: false }],
+        } as never)!,
+        variant: "original",
+        audio: { streamIndex: 1, action: "copy", sourceChannels: 6 },
+        segments: [
+          { index: 0, start: 0, duration: 6 },
+          { index: 1, start: 6, duration: 6 },
+        ],
+        startIndex: 0,
+        outDir: "/cache/k/.part-1",
+        hwaccel,
+        source: { fps: 24, pixFmt: "yuv420p", interlaced: false, width: 1920, height: 1080 },
+        keyframes: [0, 6],
+      });
+      expect(find(args)).toBe(copy ? "0.02" : "0.5");
+      if (!copy && hwaccel === "none") expect(args).toEqual(expect.arrayContaining(["-sc_threshold", "0"]));
+    }
   });
 });
