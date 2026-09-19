@@ -12,6 +12,7 @@ import {
   type ResolutionTier,
 } from "@/lib/constants";
 import { audioBadge } from "@/lib/audio";
+import { isFilePlayable } from "@/lib/playback/engine-flag";
 
 // ---------------------------------------------------------------------------
 // Formatting helpers
@@ -285,6 +286,7 @@ export async function getContinueWatchingEpisodes(userId: string): Promise<Conti
           id: true,
           durationSecs: true,
           jellyfinId: true,
+          videoCodec: true,
           episode: {
             select: {
               episodeNumber: true,
@@ -314,7 +316,7 @@ export async function getContinueWatchingEpisodes(userId: string): Promise<Conti
       stillPath: f.episode.stillPath,
       positionSecs: r.positionSecs,
       durationSecs: f.durationSecs,
-      playable: f.jellyfinId !== null,
+      playable: isFilePlayable(f),
     });
   }
   return out;
@@ -656,6 +658,9 @@ export interface EpisodeFileView {
   audioSummary: string | null;
   sizeLabel: string;
   jellyfinId: string | null;
+  /** Set once the scanner has probed this file -- the local engine's whole
+   *  "can this be played" rule (see isFilePlayable). */
+  videoCodec: string | null;
 }
 
 export interface EpisodeView {
@@ -737,6 +742,7 @@ export async function getShowDetail(id: number): Promise<ShowDetail | null> {
         audioSummary: f.audioSummary,
         sizeLabel: formatBytes(f.sizeBytes === null ? null : Number(f.sizeBytes)),
         jellyfinId: f.jellyfinId,
+        videoCodec: f.videoCodec,
       })),
     }));
     const ownedCount = episodes.filter((e) => e.owned).length;

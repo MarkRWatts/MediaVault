@@ -8,6 +8,7 @@ import ScanControls from "@/components/admin/ScanControls";
 import { JellyfinClientForm } from "@/components/admin/JellyfinClientForm";
 import { jellyfinConfigured } from "@/lib/jellyfin";
 import { isSpotifyConfigured } from "@/lib/spotify";
+import { playbackAvailable, playbackEngine } from "@/lib/playback/engine-flag";
 
 // DB-backed listing: must render per-request, not be frozen at build time
 // (the Docker image is built with no database present).
@@ -79,6 +80,9 @@ function apiStatusRows(): ApiStatusRow[] {
   const discogsTokenSet = Boolean(process.env.DISCOGS_TOKEN);
   const spotifySet = isSpotifyConfigured();
   const jellyfinSet = jellyfinConfigured();
+  const engine = playbackEngine();
+  const engineAvailable = playbackAvailable();
+  const hwaccel = process.env.PLAYBACK_HWACCEL || "none";
 
   return [
     {
@@ -132,9 +136,24 @@ function apiStatusRows(): ApiStatusRow[] {
       tone: "active",
     },
     {
+      name: "Playback engine",
+      purpose: "In-app video playback (PLAYBACK_ENGINE)",
+      status:
+        engine === "local"
+          ? `Local — hardware: ${hwaccel}`
+          : jellyfinSet
+            ? "Jellyfin — brokered through the Jellyfin server"
+            : "Jellyfin — not configured, in-app playback unavailable",
+      tone: engineAvailable ? "active" : "off",
+    },
+    {
       name: "Jellyfin",
       purpose: "In-app playback brokering & SSO",
-      status: jellyfinSet ? "Configured" : "Not configured — in-app playback unavailable",
+      status: jellyfinSet
+        ? "Configured"
+        : engine === "local"
+          ? "Not configured — SSO only, in-app playback served by the local engine"
+          : "Not configured — in-app playback unavailable",
       tone: jellyfinSet ? "active" : "off",
     },
   ];

@@ -54,11 +54,20 @@ services:
       PREPARE_CONCURRENCY: ${PREPARE_CONCURRENCY:-}
       PREPARE_QUEUE: ${PREPARE_QUEUE:-}
       AUDIO_CONCURRENCY: ${AUDIO_CONCURRENCY:-}
+      # jellyfin | local (default jellyfin) — which backend serves in-app
+      # video playback (V4_PLAN.md phase 4, src/lib/playback/engine-flag.ts).
+      # A bad evening is one env var away from reverting: set back to
+      # "jellyfin" and redeploy.
+      PLAYBACK_ENGINE: ${PLAYBACK_ENGINE:-jellyfin}
       # qsv | vaapi | none (default none, i.e. software libx264) — whether
       # the video playback engine uses the VM's Intel iGPU, passed through
       # by docker-compose.prod.yml's device/group_add (see V4_PLAN.md
       # "Hardware switch"). No device on the Mac, so this stays "none" here.
       PLAYBACK_HWACCEL: ${PLAYBACK_HWACCEL:-none}
+      # How many people may stream through the local engine at once. Empty
+      # (default in code) leaves it uncapped for now — a later phase adds
+      # the actual session-limiting behind this variable.
+      PLAYBACK_MAX_SESSIONS: ${PLAYBACK_MAX_SESSIONS:-}
       # BetterAuth (see HOUSEHOLDS_PLAN.md) — session/cookie signing key.
       # Generate with `npx @better-auth/cli secret`; set in .env.docker on
       # the VM, never committed.
