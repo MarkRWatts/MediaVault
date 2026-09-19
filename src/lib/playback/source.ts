@@ -26,6 +26,8 @@ import {
   type Variant,
   type VideoPlaybackPlan,
 } from "@/lib/video-playback";
+import { tierFor } from "./decisions";
+import { resolveInterlaced } from "./interlace";
 import type { MediaKind, SourceFacts } from "./types";
 
 /** One audio stream as the player's Audio dropdown shows it -- the same
@@ -193,16 +195,24 @@ async function loadRow(kind: MediaKind, id: number): Promise<SourceRow | null> {
 // Facts and audio
 // ---------------------------------------------------------------------------
 
-/** Field orders that mean "no deinterlacing needed". ffprobe reports
- *  "progressive" for a progressive stream and omits the field entirely for a
- *  container that doesn't say; "unknown" turns up on some remuxes. Anything
- *  else ("tt", "bb", "tb", "bt") is a real interlaced field order. Treating
- *  the don't-know cases as progressive is the safe default: a yadif pass on
- *  progressive video softens the picture and costs an encode, while a
- *  genuinely interlaced file that the container failed to flag is rare and
- *  merely looks like the source. */
+/** Field orders that mean "the header doesn't claim this is interlaced".
+ *  ffprobe reports "progressive" for a progressive stream and omits the
+ *  field entirely for a container that doesn't say; "unknown" turns up on
+ *  some remuxes. Anything else ("tt", "bb", "tb", "bt") is a header claim of
+ *  a real interlaced field order.
+ *
+ *  This is *only* the header's opinion, not the engine's final answer: a
+ *  header-interlaced claim is measured before it's believed (interlace.ts,
+ *  resolveInterlaced) because PAL film DVDs routinely flag a stream
+ *  interlaced while carrying progressive pictures throughout. A
+ *  header-progressive claim, on the other hand, is trusted outright -- see
+ *  resolveInterlaced's doc comment for why the asymmetry is deliberate. */
 const NON_INTERLACED_FIELD_ORDERS = new Set(["progressive", "unknown"]);
 
+/** The header's own claim, before any measurement. Kept pure and exported
+ *  for its own sake (the master/main playlist and the audio menu don't need
+ *  a measurement, and this is what resolveSource starts from before
+ *  possibly overriding `interlaced` below). */
 export function sourceFactsFromProbe(result: ProbeResult): SourceFacts {
   const fieldOrder = result.videoFieldOrder;
   return {
@@ -247,12 +257,21 @@ export function transcodeReasonsFor(plan: VideoPlaybackPlan, variant: Variant): 
  * from -- a viewer who asked for the commentary and got the main mix has no
  * way to tell.
  *
+ * `variant` decides whether `facts.interlaced` is worth measuring rather
+ * than just read off the header: copy-tier plays never deinterlace
+ * (head-args.ts only ever looks at `source.interlaced` in its transcode
+ * branch), so a variant that will copy the video costs nothing extra here,
+ * while a variant that will transcode gets the real measurement
+ * (interlace.ts's resolveInterlaced, cached per file) instead of trusting a
+ * header that PAL film discs routinely get wrong.
+ *
  * Returns null when there is no such row, or the share isn't configured.
  * Throws PlaybackError for a file that exists but can't be played.
  */
 export async function resolveSource(
   kind: MediaKind,
   id: number,
+  variant: Variant,
   audioStreamIndex?: number | null,
 ): Promise<ResolvedSource | null> {
   const row = await loadRow(kind, id);
@@ -299,6 +318,20 @@ export async function resolveSource(
 
   const chosenTrack = chosenIndex === null ? null : (probed.audioTracks.find((t) => t.streamIdx === chosenIndex) ?? null);
 
+  let facts = sourceFactsFromProbe(probed);
+  if (tierFor(variant, plan.videoAction) === "transcode") {
+    const interlaced = await resolveInterlaced({
+      kind,
+      fileId: id,
+      absPath,
+      mtimeMs: stat.mtimeMs,
+      sizeBytes: stat.size,
+      durationSecs,
+      headerInterlaced: facts.interlaced,
+    });
+    facts = { ...facts, interlaced };
+  }
+
   return {
     kind,
     id,
@@ -307,7 +340,7 @@ export async function resolveSource(
     sizeBytes: stat.size,
     durationSecs,
     plan,
-    facts: sourceFactsFromProbe(probed),
+    facts,
     audioTracks: labelAudioTracks(probed.audioTracks),
     audioStreamIndex: chosenIndex,
     audioAction: chosenAction,

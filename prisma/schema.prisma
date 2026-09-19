@@ -14,6 +14,7 @@
 //     comment drifts, don't trust it)   ScanRun.status: RUNNING | DONE | FAILED
 //   KeyframeIndex.kind: film | episode | scene (Version | EpisodeFile | Scene)
 //   KeyframeIndex.source: cues | ffprobe
+//   InterlaceCheck.kind: film | episode | scene, same split as KeyframeIndex
 
 generator client {
   provider = "prisma-client"
@@ -241,6 +242,27 @@ model KeyframeIndex {
   count     Int
   data      Bytes // packed little-endian Float64 seconds, sorted ascending
   createdAt DateTime @default(now())
+
+  @@unique([kind, fileId])
+}
+
+// A measured verdict on whether a file's video is *really* interlaced
+// (interlace.ts, V4_PLAN.md "Session-time probe"): the container header's
+// field_order says whether a stream is flagged interlaced, but PAL film
+// transfers routinely carry progressive pictures in an interlaced-flagged
+// MPEG-2 stream, so the header alone decides nothing here -- only counting
+// idet's verdict across a few sampled windows does. Cached exactly like
+// KeyframeIndex (same cache-key shape, same reason: the measurement costs a
+// real ffmpeg run and must never be redone for a file that hasn't changed).
+model InterlaceCheck {
+  id               Int      @id @default(autoincrement())
+  kind             String
+  fileId           Int
+  mtimeMs          Float
+  sizeBytes        BigInt
+  sampledFrames    Int // tff + bff + progressive across every sampled window
+  interlacedFrames Int // tff + bff
+  createdAt        DateTime @default(now())
 
   @@unique([kind, fileId])
 }

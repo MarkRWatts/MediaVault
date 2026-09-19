@@ -17,6 +17,7 @@ import {
   selectStreamsToEvict,
   throttleAction,
   throttleWatermarks,
+  tierFor,
   waitAheadFor,
   type LiveHead,
   type SegmentDurationCheckInput,
@@ -26,6 +27,21 @@ import {
 import type { SegmentEntry } from "./types";
 
 const head = (headId: string, sessionId: string, nextIndex: number): LiveHead => ({ headId, sessionId, nextIndex });
+
+describe("tierFor", () => {
+  it("is copy only for the Original variant of a video the planner can copy", () => {
+    expect(tierFor("original", "copy")).toBe("copy");
+  });
+
+  it("is transcode for Original when the codec doesn't survive as-is", () => {
+    expect(tierFor("original", "transcode")).toBe("transcode");
+  });
+
+  it("is always transcode for Remote, whatever the source codec is", () => {
+    expect(tierFor("remote", "copy")).toBe("transcode");
+    expect(tierFor("remote", "transcode")).toBe("transcode");
+  });
+});
 
 describe("decideSegment", () => {
   it("serves a segment that is already on disk, whatever the heads are doing", () => {

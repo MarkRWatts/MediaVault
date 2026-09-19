@@ -271,6 +271,26 @@ hold for every kind of file — audio streams for episodes (`EpisodeFile`
 has only `audioSummary`), `pix_fmt`, frame rate — so the audio menu and
 the hardware decisions are ground truth for films and episodes alike.
 
+**Measured interlace detection.** The container header's field order is not
+trusted for deinterlacing. PAL film DVDs routinely store progressive
+pictures in a stream flagged interlaced throughout — measured on this
+library, several film titles carry `field_order=tt` and every frame's
+`interlaced_frame` flag set, yet `ffmpeg`'s `idet` filter measures 100%
+progressive; a real interlaced source (a concert recording) measures mostly
+TFF. Neither the container flag nor the per-frame MPEG-2 bit can tell the
+two apart, so a header claiming interlaced is sampled with `idet` at three
+points across the runtime (a single point for anything under a minute)
+before it's believed; a header claiming progressive is trusted outright,
+since probing every first play against a case this library has never shown
+would tax every file to guard against none of them. The measurement is
+cached per file (`InterlaceCheck`, keyed and invalidated exactly like
+`KeyframeIndex`) and only run at all when the requested variant will
+transcode the video — the copy tier never deinterlaces, so its plays cost
+nothing extra. Any failure to measure (a share outage, too few frames
+sampled) falls back to the header's own answer, because an unnecessary
+deinterlace merely softens a picture while a missed one leaves real combing
+on screen.
+
 ### HTTP contract
 
 The clients (web `VideoPlayer`, iOS `VideoSession`, the tvOS shell) already

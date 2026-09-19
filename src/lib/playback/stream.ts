@@ -29,6 +29,7 @@ import { getCuesKeyframes, getKeyframes, fixedSegmentTable, segmentTableFromKeyf
 import {
   isPlanStale,
   segmentTableHash,
+  tierFor,
   PLAN_VERSION,
   type StreamCacheEntry,
   type StreamPlanFile,
@@ -185,14 +186,15 @@ async function resolveKeyframes(source: ResolvedSource): Promise<number[]> {
 // ---------------------------------------------------------------------------
 
 /**
- * The tier a key runs at. "original" keeps the source's video only when the
- * planner says the codec survives as-is; "remote" is always a real encode,
- * whatever the source (head-args.ts's `doVideoCopy` makes the same call, and
- * both must agree -- the tier decides which segment table is built, and a
- * table built for the wrong one would be dictated to ffmpeg anyway).
+ * The tier a key runs at (decisions.ts's tierFor; head-args.ts's
+ * `doVideoCopy` makes the same call, and both must agree -- the tier decides
+ * which segment table is built, and a table built for the wrong one would be
+ * dictated to ffmpeg anyway). source.ts asks the identical question before a
+ * ResolvedSource exists, to decide whether an interlace measurement is
+ * worth running.
  */
 export function streamTier(source: ResolvedSource, variant: Variant): StreamTier {
-  return variant === "original" && source.plan.videoAction === "copy" ? "copy" : "transcode";
+  return tierFor(variant, source.plan.videoAction);
 }
 
 function planIdentity(key: string, source: ResolvedSource, segments: SegmentEntry[]) {
