@@ -578,18 +578,27 @@ function resolutionFor(ctx: StreamContext): { width: number; height: number } | 
   return { width: outWidth, height: outHeight };
 }
 
-async function contextFor(key: string): Promise<StreamContext> {
+/** Every playlist request is the viewer still being there, exactly as a
+ *  segment request is -- a player that has buffered ahead may go a while
+ *  without asking for either, and the idle timer must not read a playlist
+ *  refresh as silence. */
+async function contextFor(key: string, playSessionId?: string): Promise<StreamContext> {
   await ensureInit();
   const rt = ensureStream(key);
   const ctx = await rt.ctx;
   touchStream(ctx.dir);
+  if (playSessionId) touchSession(playSessionId);
   return ctx;
 }
 
 /** `master.m3u8` for a key. `mainUri` is what the route serves the media
  *  playlist at, relative to the master -- the engine never constructs URLs. */
-export async function getMasterPlaylist(key: string, mainUri: string = MAIN_PLAYLIST_NAME): Promise<string> {
-  const ctx = await contextFor(key);
+export async function getMasterPlaylist(
+  key: string,
+  mainUri: string = MAIN_PLAYLIST_NAME,
+  playSessionId?: string,
+): Promise<string> {
+  const ctx = await contextFor(key, playSessionId);
   const videoCodec = ctx.variant === "remote" ? "h264" : ctx.source.plan.outputVideoCodec;
   const audioCodec = ctx.variant === "remote" ? (ctx.source.audioCodec === null ? null : "aac") : ctx.source.audioCodec;
   return renderMasterPlaylist({
@@ -602,8 +611,8 @@ export async function getMasterPlaylist(key: string, mainUri: string = MAIN_PLAY
 
 /** `main.m3u8` for a key: the whole VOD table, complete from the first
  *  request whether or not a single segment exists yet. */
-export async function getMainPlaylist(key: string): Promise<string> {
-  const ctx = await contextFor(key);
+export async function getMainPlaylist(key: string, playSessionId?: string): Promise<string> {
+  const ctx = await contextFor(key, playSessionId);
   return renderMainPlaylist(ctx.segments);
 }
 

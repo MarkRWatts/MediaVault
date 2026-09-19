@@ -25,7 +25,7 @@
 // video-cache.integration.test.ts.
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, readdir, rm, stat, utimes } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, realpath, rm, stat, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createTempTestDb } from "@/lib/test-temp-db";
@@ -154,7 +154,12 @@ describe.skipIf(!hasFfmpeg)("playback engine (real ffmpeg)", () => {
     testPrisma = db.prisma;
     cleanupDb = db.cleanup;
 
-    root = await mkdtemp(path.join(tmpdir(), "mv-playback-engine-"));
+    // Canonical, not as mkdtemp returns it: on a Mac the temp root is
+    // /var/folders/..., and /var is a symlink to /private/var. That resolves
+    // fine for a local ffmpeg and not at all for one running in a container
+    // with /private bind-mounted, which is how this suite is also run
+    // against the production jellyfin-ffmpeg build.
+    root = await realpath(await mkdtemp(path.join(tmpdir(), "mv-playback-engine-")));
     const movies = path.join(root, "movies");
     await mkdir(movies);
     cacheRoot = path.join(root, "cache");
@@ -369,6 +374,10 @@ describe.skipIf(!hasFfmpeg)("playback engine (real ffmpeg)", () => {
     await engine.stopSession(session.playSessionId);
     const elapsed = Date.now() - startedAt;
 
+    // Measured 19 Sep 2026: 7ms against a local ffmpeg, 199ms with the
+    // binary behind a `docker run` shim (SIGTERM is proxied to the
+    // container's PID 1; SIGSTOP and SIGCONT are not, so the head above
+    // keeps encoding past the pause watermark under the shim).
     expect(elapsed).toBeLessThan(2_500);
     expect(engine.engineStats().liveHeads).toBe(0);
     const leftovers = (await readdir(path.join(cacheRoot, session.key))).filter((n) => n.startsWith(".part-"));
