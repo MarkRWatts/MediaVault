@@ -146,6 +146,12 @@ cache key, packed keyframe timestamps).
   hundred KB, not the file. Fast even over the CIFS share. A Cues list may
   be a subset of the file's keyframes; that is fine, because every cue *is*
   a keyframe and the cut list only ever names cues.
+  Measured against the production share (19 Sep 2026): all 263 film files
+  have Cues; indexing the whole library read 101 MiB in 325 s (120–830 KiB
+  and 0.4–2.6 s per film, 35 GiB remuxes included), and the cue times match
+  ffprobe's keyframe packets exactly on the title checked. Blu-ray remuxes
+  have a keyframe every ~1 s; the smaller re-encodes have GOPs up to 10 s,
+  so copy-tier segments there run to 10 s and `TARGETDURATION` follows.
 - Anything else, or an MKV without cues: `ffprobe -show_entries
   packet=pts_time,flags` restricted to the video stream. This reads the
   whole file, so it runs at scan time in the background, never in a
