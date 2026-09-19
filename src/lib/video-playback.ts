@@ -97,10 +97,15 @@ function isCompatibleAudio(t: AudioTrackInput): boolean {
  * track first and a stereo AC-3 audio-description track after it, and
  * "first copyable codec" used to land on the description (Captain Marvel,
  * 5 Sep 2026). Among the rest, the container's default-flagged track is
- * the source's own answer: copy it if compatible; otherwise copy a
- * compatible track that keeps at least as many channels (free and no
- * worse), else transcode the default. With no flags at all, fall back to
- * the first compatible track, then to transcoding the best candidate.
+ * the source's own answer and is always the one served: copied if
+ * compatible, transcoded if not. It is never swapped for a "compatible
+ * track with at least as many channels" to save a transcode -- an audio
+ * description is not always stereo and not always flagged (The Lego Movie,
+ * 19 Sep 2026: DTS-HD MA 5.1 default, and an unflagged AC-3 5.1 "Surround
+ * 5.1" that is the description), and nothing in the metadata tells it from
+ * a genuine alternate mix. Jellyfin made the same choice. Only with no
+ * default flag at all does it fall back to the first compatible track,
+ * then to transcoding the best candidate.
  *
  * Exported for the v4 engine (playback/source.ts): when a caller names an
  * audio stream explicitly, the engine asks this same function about that one
@@ -119,9 +124,6 @@ export function pickAudioTrack(tracks: AudioTrackInput[]): { index: number; acti
   const compatible = pool.find(isCompatibleAudio) ?? null;
 
   if (preferred && isCompatibleAudio(preferred)) return { index: preferred.streamIdx, action: "copy" };
-  if (preferred && compatible && (compatible.channels ?? 0) >= (preferred.channels ?? 0)) {
-    return { index: compatible.streamIdx, action: "copy" };
-  }
   if (preferred) return { index: preferred.streamIdx, action: "transcode" };
   if (compatible) return { index: compatible.streamIdx, action: "copy" };
 
