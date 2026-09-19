@@ -158,19 +158,24 @@ export function parseFfprobeJson(stdout: string): ProbeResult {
 }
 
 /**
- * Probe a file given its absolute path on the local filesystem (or, when
- * falling back to Docker, a path under one of the media roots — MOVIES_PATH,
- * TVSHOWS_PATH, MUSIC_PATH, or ADULT_PATH — so it can be translated to a
- * container mount).
+ * Run ffprobe with arbitrary `-show_entries`/output args against a file
+ * given its absolute path on the local filesystem (or, when falling back to
+ * Docker, a path under one of the media roots — MOVIES_PATH, TVSHOWS_PATH,
+ * MUSIC_PATH, or ADULT_PATH — so it can be translated to a container
+ * mount), returning raw stdout. This is the one place that decides "local
+ * binary or Docker fallback" and constructs the actual argv, so every other
+ * caller (probe() below, keyframes.ts's ffprobe fallback) goes through it
+ * rather than re-deciding for itself — a future switch to a centralised
+ * FFPROBE_PATH only has to change this function.
  */
-export async function probe(absPath: string): Promise<ProbeResult> {
+export async function runFfprobeRaw(args: string[], absPath: string): Promise<string> {
   const hasLocal = await detectLocalFfprobe();
 
   if (hasLocal) {
-    const { stdout } = await execFileAsync("ffprobe", [...FFPROBE_ARGS, absPath], {
+    const { stdout } = await execFileAsync("ffprobe", [...args, absPath], {
       maxBuffer: 1024 * 1024 * 32,
     });
-    return parseFfprobeJson(stdout);
+    return stdout;
   }
 
   const dockerImage = process.env.FFPROBE_DOCKER_IMAGE;
@@ -213,10 +218,21 @@ export async function probe(absPath: string): Promise<ProbeResult> {
     "-v",
     `${mountRoot}:/probe-root:ro`,
     dockerImage,
-    ...FFPROBE_ARGS,
+    ...args,
     containerPath,
   ];
 
   const { stdout } = await execFileAsync("docker", dockerArgs, { maxBuffer: 1024 * 1024 * 32 });
+  return stdout;
+}
+
+/**
+ * Probe a file given its absolute path on the local filesystem (or, when
+ * falling back to Docker, a path under one of the media roots — MOVIES_PATH,
+ * TVSHOWS_PATH, MUSIC_PATH, or ADULT_PATH — so it can be translated to a
+ * container mount).
+ */
+export async function probe(absPath: string): Promise<ProbeResult> {
+  const stdout = await runFfprobeRaw(FFPROBE_ARGS, absPath);
   return parseFfprobeJson(stdout);
 }
