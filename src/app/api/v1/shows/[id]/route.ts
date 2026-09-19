@@ -1,5 +1,5 @@
 // GET /api/v1/shows/:id — a show's detail screen: seasons and episodes with
-// each file's `playable` (has a jellyfinId, same rule as film versions —
+// each file's `playable` (isFilePlayable, same rule as film versions —
 // see /api/v1/films/:id), the viewer's favourite state, and their saved
 // position on each episode file.
 
@@ -8,6 +8,7 @@ import { requireMemberOrResponse } from "@/lib/require-member";
 import { getShowDetail } from "@/lib/queries";
 import { getShowUserState } from "@/lib/film-user-state";
 import { prisma } from "@/lib/db";
+import { isFilePlayable } from "@/lib/playback/engine-flag";
 import type { ShowDetailResponse, SeasonV1, EpisodeFileProgress } from "@/lib/api-v1-types";
 
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
@@ -40,7 +41,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     ...s,
     episodes: s.episodes.map((e) => ({
       ...e,
-      files: e.files.map((f) => ({ ...f, playable: f.jellyfinId !== null })),
+      files: e.files.map((f) => ({ ...f, playable: isFilePlayable(f) })),
     })),
   }));
   const progress: EpisodeFileProgress[] = progressRows.map((p) => ({
