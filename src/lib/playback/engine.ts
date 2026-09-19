@@ -33,10 +33,16 @@ import { REMOTE_AUDIO_BITRATE, REMOTE_VIDEO_MAXRATE, type Variant } from "@/lib/
 import {
   decideSegment,
   isHeadCaughtUp,
+  selectSegmentsToTrim,
   selectStreamsToEvict,
   throttleAction,
+  trimBytesNeeded,
   SEGMENT_WAIT_TIMEOUT_MS,
+  TRIM_PLAYHEAD_WINDOW_MS,
+  TRIM_RECENT_REQUEST_MS,
   type LiveHead,
+  type StreamCacheEntry,
+  type TrimCandidateStream,
 } from "./decisions";
 import { buildHeadArgs } from "./head-args";
 import { startHead, type Head, type HeadStopReason } from "./head";
@@ -47,9 +53,12 @@ import { buildStreamKey, parseStreamKey } from "./stream-key";
 import {
   notePresent,
   openStream,
+  readCachedSegments,
   readStreamCacheEntries,
+  removeSegments,
   segmentOnDisk,
   segmentPath,
+  streamDir,
   sweepStagingDirs,
   touchStream,
   type StreamContext,
@@ -128,6 +137,12 @@ interface StreamRuntime {
   /** Highest index any session has asked this stream for, for the run-ahead
    *  throttle. null until the first request. */
   highestRequested: number | null;
+  /** index -> when it was last asked for, by any session. The trim pass will
+   *  not unlink anything in here that is younger than
+   *  TRIM_RECENT_REQUEST_MS, whoever asked and whatever its index, because
+   *  the route may be about to open the file (decisions.ts). Pruned by age,
+   *  so it stays a handful of entries per live stream. */
+  recentRequests: Map<number, number>;
 }
 
 interface Session {
@@ -136,6 +151,14 @@ interface Session {
   deviceId: string;
   touchedAtMs: number;
   idleTimer: ReturnType<typeof setTimeout> | null;
+  /** The last index this session asked for, or null before its first
+   *  request: where a player that has gone quiet (a long pause, a full
+   *  buffer) still counts as sitting. */
+  lastIndex: number | null;
+  /** This session's requests within TRIM_PLAYHEAD_WINDOW_MS, oldest first.
+   *  Their minimum is the playhead the trim pass protects behind -- see
+   *  decisions.ts for why the minimum rather than the latest. */
+  recentRequests: { index: number; atMs: number }[];
 }
 
 interface EngineState {
@@ -250,6 +273,7 @@ function ensureStream(key: string): StreamRuntime {
     lock: Promise.resolve(),
     heads: new Map(),
     highestRequested: null,
+    recentRequests: new Map(),
   };
   // A stream that fails to open must not be cached as a permanent failure:
   // the share can come back, the file can be re-probed. Dropping it here
@@ -305,16 +329,87 @@ function isStreamPinned(key: string, now: number): boolean {
   return false;
 }
 
-async function runEviction(): Promise<void> {
-  const entries = await readStreamCacheEntries();
-  const now = Date.now();
-  const victims = selectStreamsToEvict(entries, maxCacheBytes(), (key) => isStreamPinned(key, now));
+/** Whole-stream LRU eviction: idle directories go entirely. Returns the
+ *  entries that survived, so the trim pass below can reason about what the
+ *  cache holds *after* this without reading the disk a second time. */
+async function evictStreams(entries: StreamCacheEntry[], now: number): Promise<StreamCacheEntry[]> {
+  const victims = new Set(selectStreamsToEvict(entries, maxCacheBytes(), (key) => isStreamPinned(key, now)));
   for (const dir of victims) {
     const key = path.basename(dir);
     await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
     state.streams.delete(key);
     console.log(`[playback] evicted ${key}`);
   }
+  return entries.filter((e) => !victims.has(e.path));
+}
+
+/** Where each live session on this key is sitting, as decisions.ts's trim
+ *  selection wants it: the lowest index asked for in the recent window, or
+ *  the last one asked for at all when the player has been quiet longer than
+ *  that. A live session that has never requested a segment has no playhead
+ *  and contributes none -- there is nothing behind it yet. */
+function playheadsFor(key: string, now: number): number[] {
+  const playheads: number[] = [];
+  for (const session of liveSessions(now)) {
+    if (session.key !== key) continue;
+    const recent = session.recentRequests.filter((r) => now - r.atMs <= TRIM_PLAYHEAD_WINDOW_MS);
+    if (recent.length > 0) playheads.push(Math.min(...recent.map((r) => r.index)));
+    else if (session.lastIndex !== null) playheads.push(session.lastIndex);
+  }
+  return playheads;
+}
+
+/**
+ * Trim what live viewers have already played (V4_PLAN.md, "Housekeeping").
+ * Only under pressure -- the byte budget after eviction, or free disk below
+ * the low-water mark -- so a small title still caches whole and replays with
+ * no ffmpeg at all.
+ *
+ * `lockedKey` is the one stream whose per-key lock the caller already holds
+ * (spawnHeadAt runs inside it): taking it again here would deadlock against
+ * the caller that is waiting for us, and it is already serialised, which is
+ * all the lock was for.
+ */
+async function trimPlayedSegments(entries: StreamCacheEntry[], now: number, lockedKey?: string): Promise<void> {
+  const totalBytes = entries.reduce((sum, e) => sum + e.size, 0);
+  const limitBytes = maxCacheBytes();
+  const freeBytes = await freeDiskBytes(cacheDir());
+  // Cheap check first: no pressure, no directory listing, no trim.
+  if (trimBytesNeeded(totalBytes, limitBytes, freeBytes) <= 0) return;
+
+  const cutoff = now - TRIM_RECENT_REQUEST_MS;
+  const streams: TrimCandidateStream[] = [];
+  for (const rt of state.streams.values()) {
+    const playheads = playheadsFor(rt.key, now);
+    if (playheads.length === 0) continue; // Idle: whole-stream eviction owns it.
+    const segments = await readCachedSegments(streamDir(rt.key));
+    if (segments.length === 0) continue;
+    const recentIndices = [...rt.recentRequests].filter(([, atMs]) => atMs >= cutoff).map(([index]) => index);
+    streams.push({ key: rt.key, segments, playheads, recentIndices });
+  }
+
+  for (const trim of selectSegmentsToTrim({ streams, totalBytes, limitBytes, freeBytes })) {
+    const rt = state.streams.get(trim.key);
+    if (!rt) continue;
+    const apply = async () => {
+      const ctx = await rt.ctx;
+      const removed = await removeSegments(ctx, trim.indices);
+      if (removed > 0) {
+        console.log(
+          `[playback] trimmed ${trim.key}: ${removed} segments (${(trim.bytes / 1024 ** 3).toFixed(1)} GB) behind the viewer`,
+        );
+      }
+    };
+    await (trim.key === lockedKey ? apply() : withStreamLock(rt, apply)).catch(() => {});
+  }
+}
+
+/** One housekeeping pass: whole-stream LRU eviction for idle streams, then
+ *  played-segment trimming for the live ones if that wasn't enough. */
+async function runHousekeeping(now: number = Date.now(), lockedKey?: string): Promise<void> {
+  const entries = await readStreamCacheEntries();
+  const remaining = await evictStreams(entries, now);
+  await trimPlayedSegments(remaining, now, lockedKey);
 }
 
 function startEvictionTimer(): void {
@@ -327,7 +422,7 @@ function startEvictionTimer(): void {
       if (state.evictionTimer === timer) state.evictionTimer = null;
       return;
     }
-    void runEviction().catch(() => {});
+    void runHousekeeping().catch(() => {});
   }, EVICTION_INTERVAL_MS);
   timer.unref?.();
   state.evictionTimer = timer;
@@ -335,11 +430,16 @@ function startEvictionTimer(): void {
 
 /**
  * Refuse to start a head that would fill the volume holding the SQLite
- * database. The byte budget is a retention policy (eviction has just run);
- * this is the actual safety net, the same division of labour video-cache.ts
- * makes. A head's total output isn't knowable up front -- it stops wherever
- * the viewer stops -- so there is nothing to subtract, only headroom to
- * insist on.
+ * database. The byte budget is a retention policy (housekeeping has just
+ * run); this is the actual safety net, the same division of labour
+ * video-cache.ts makes. A head's total output isn't knowable up front -- it
+ * stops wherever the viewer stops -- so there is nothing to subtract, only
+ * headroom to insist on.
+ *
+ * Checked only AFTER a housekeeping pass has had its chance: the disk being
+ * full of segments this engine wrote and could reclaim is the ordinary
+ * case, and refusing to play with GBs of already-played remux sitting in the
+ * cache is exactly the stall this pass exists to prevent.
  */
 async function ensureDiskSpace(): Promise<void> {
   const free = await freeDiskBytes(cacheDir());
@@ -357,8 +457,8 @@ async function ensureDiskSpace(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function spawnHeadAt(rt: StreamRuntime, ctx: StreamContext, index: number, sessionId: string): Promise<Head> {
+  await runHousekeeping(Date.now(), ctx.key).catch(() => {});
   await ensureDiskSpace();
-  await runEviction().catch(() => {});
   const hwaccel = await resolveHwAccel();
   const { source } = ctx;
 
@@ -517,7 +617,15 @@ export async function startSession(input: StartSessionInput): Promise<StartedSes
   touchStream(ctx.dir);
 
   const playSessionId = randomBytes(16).toString("hex");
-  const session: Session = { playSessionId, key, deviceId: input.deviceId, touchedAtMs: Date.now(), idleTimer: null };
+  const session: Session = {
+    playSessionId,
+    key,
+    deviceId: input.deviceId,
+    touchedAtMs: Date.now(),
+    idleTimer: null,
+    lastIndex: null,
+    recentRequests: [],
+  };
   state.sessions.set(playSessionId, session);
   armIdleTimer(session, IDLE_CANCEL_MS);
 
@@ -667,6 +775,38 @@ export interface GetSegmentOptions {
   signal?: AbortSignal;
 }
 
+/** How many indices one stream remembers having been asked for. A live
+ *  player asks for a handful per TRIM_RECENT_REQUEST_MS; this only bounds
+ *  what a pathological client (or a very long seek-happy session) can make
+ *  the engine hold, and expired entries go first. */
+const MAX_RECENT_REQUESTS = 256;
+
+/**
+ * Record a segment request: where its session is sitting, and that this
+ * index has just been asked for. Both feed the trim pass -- the first says
+ * what is "behind the viewer", the second is what keeps a file that a
+ * response is about to open from being unlinked under it (decisions.ts).
+ *
+ * The stream-level note is deliberately made for sessions this process
+ * doesn't know (one that survived a restart): it can't say where such a
+ * viewer is, but it can still refuse to delete what they just asked for.
+ */
+function noteRequest(rt: StreamRuntime, playSessionId: string, index: number, now: number): void {
+  rt.recentRequests.set(index, now);
+  if (rt.recentRequests.size > MAX_RECENT_REQUESTS) {
+    const cutoff = now - TRIM_RECENT_REQUEST_MS;
+    for (const [i, atMs] of rt.recentRequests) if (atMs < cutoff) rt.recentRequests.delete(i);
+  }
+
+  const session = state.sessions.get(playSessionId);
+  if (!session) return;
+  session.lastIndex = index;
+  session.recentRequests.push({ index, atMs: now });
+  while (session.recentRequests.length > 0 && now - session.recentRequests[0].atMs > TRIM_PLAYHEAD_WINDOW_MS) {
+    session.recentRequests.shift();
+  }
+}
+
 /**
  * The absolute path of one segment, producing it if necessary
  * (V4_PLAN.md, "Heads" -- serve / wait / restart). Bounded by
@@ -690,6 +830,7 @@ export async function getSegment(
 
   touchStream(ctx.dir);
   touchSession(playSessionId);
+  noteRequest(rt, playSessionId, index, Date.now());
   rt.highestRequested = rt.highestRequested === null ? index : Math.max(rt.highestRequested, index);
   applyThrottle(rt, ctx);
 
@@ -727,6 +868,20 @@ export async function getSegment(
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+/**
+ * Tests only: run one housekeeping pass (eviction, then the trim) now,
+ * instead of waiting for the 30s tick.
+ *
+ * `now` lets a test move the clock forward rather than sleep through the
+ * request windows: walking a viewer through forty segments takes a test a
+ * second, so every one of those requests is still "recent" and the playhead
+ * is still at 0 -- which is correct, and useless for exercising what happens
+ * four minutes into a film.
+ */
+export async function runHousekeepingForTest(now: number = Date.now()): Promise<void> {
+  await runHousekeeping(now);
+}
 
 /** Tests only: stop everything and forget it, so a test that manipulates the
  *  cache directory behind the engine's back gets a genuinely cold start.
