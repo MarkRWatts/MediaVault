@@ -35,6 +35,33 @@ on 5 Sep 2026:
 | Encode H.264 | yes | Remote (720p) variant and the Original of non-copyable video. |
 | Decode HEVC 10-bit, HDR tone-mapping | no (Kaby Lake and later) | **Out of scope for 4.0.0** — there is no 4K/HDR content in the library. The engine detects a 10-bit source from the probe and decodes it in software so such a file still plays; tone-mapping is future work (see "Later"). |
 
+### Measured on the VM (19 Sep 2026)
+
+jellyfin-ffmpeg 8.1.2-5 in an unprivileged container (uid 1000, render
+gid added, `/dev/dri/renderD128`), iHD driver 26.2.4, 60 s from the middle
+of each file, reading from the share. The VM has 2 vCPUs.
+
+| Source → output | libx264, 2 threads | QSV | VAAPI |
+|---|---|---|---|
+| H.264 1080p remux → 720p 3 Mbit/s (Remote) | 2.4× realtime | 13.5× | 13.7× |
+| VC-1 1080p → 720p 3 Mbit/s (Remote) | 2.5× | 15.7× | 15.5× |
+| VC-1 / H.264 1080p → 1080p high quality (Original of non-copyable video) | — | 8× | — |
+| MPEG-2 576i DVD → deinterlaced H.264 (Original) | 7.5× | 26× | 38× |
+
+Quality at 720p / 3 Mbit/s on a 30 s action clip (SSIM against the scaled
+source): libx264 `veryfast` crf 23 0.972 (at 2.2 Mbit/s), **VAAPI 0.969**.
+The QSV runs scored 0.88 regardless of preset or bitrate, which points at
+a frame-alignment or scaling difference in that pipeline rather than
+encoder quality; not investigated further because VAAPI matches it on
+speed with one less layer.
+
+**Decision: `PLAYBACK_HWACCEL=vaapi` in production.** The Remote ceiling
+stays at 3 Mbit/s.
+
+The library today is 241 H.264, 14 VC-1 and 8 MPEG-2 film files and 77
+H.264 episode files — no HEVC. Almost every Original play is a video
+copy; the hardware encoder serves Remote and the 22 non-copyable titles.
+
 ## Design
 
 ### ffmpeg: jellyfin-ffmpeg, pinned
@@ -87,8 +114,8 @@ pipeline; nothing else in the engine knows which is in use.
   it fails, the engine logs why, falls back to `none` and says so on the
   admin page — a missing render node or wrong group id degrades playback,
   it doesn't break it.
-- Phase 0 decides `qsv` vs `vaapi` by measurement on the real VM; Jellyfin
-  recommends QSV on Linux for this generation.
+- Production runs `vaapi` (see "Measured on the VM"); `qsv` stays
+  selectable.
 
 ### The engine (`src/lib/playback/`)
 
@@ -328,10 +355,6 @@ cap, idle stop, and a container restart mid-play.
   start-up time.
 - **q35 conversion of a production VM** (above): backup, console access,
   NIC naming.
-- **Hardware encoder quality at 3 Mbit/s.** Skylake's H.264 encoder is
-  visibly softer than x264 `veryfast` at the same bitrate. Phase 0
-  compares them; the Remote ceiling may move to ~4 Mbit/s (what the
-  Jellyfin path uses today).
 
 ## Later (not 4.0.0)
 
