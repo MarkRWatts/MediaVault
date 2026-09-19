@@ -370,6 +370,17 @@ describe.skipIf(!hasFfmpeg)("playback engine (real ffmpeg)", () => {
       "the head to be throttled",
     );
 
+    // Heads yield to the web app sharing the box (head.ts, HEAD_NICE). Only
+    // checkable when ffmpeg is a direct child: under the docker shim the
+    // child is `docker run`, and niceness doesn't cross into the container.
+    if (engine.engineStats().liveHeads === 1 && !/jfbin|docker/.test(process.env.FFMPEG_PATH ?? "")) {
+      const ni = execFileSync("ps", ["-A", "-o", "ni=,command="], { encoding: "utf8" })
+        .split("\n")
+        .filter((l) => l.includes("seg_%05d.ts") && l.includes(process.env.VIDEO_CACHE_DIR!))
+        .map((l) => Number(l.trim().split(/\s+/)[0]));
+      expect(ni).toEqual([10]);
+    }
+
     const startedAt = Date.now();
     await engine.stopSession(session.playSessionId);
     const elapsed = Date.now() - startedAt;

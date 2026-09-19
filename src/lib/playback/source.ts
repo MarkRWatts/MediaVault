@@ -69,6 +69,7 @@ export type PlaybackErrorCode =
   | "no-keyframes"
   | "session-cap"
   | "timeout"
+  | "aborted"
   | "head-failed"
   | "no-disk-space";
 

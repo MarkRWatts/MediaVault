@@ -145,6 +145,14 @@ describe("mapPlaybackError", () => {
     expect(mapped.message).not.toContain("segment 3");
   });
 
+  it("treats a request the client abandoned as routine, not a server error", () => {
+    // Every seek cancels a fetch or two; that must not read as a 5xx (or as
+    // the engine being slow, which is what "timeout" means).
+    const mapped = mapPlaybackError(err("aborted", "the request was aborted"));
+    expect(mapped.status).toBe(499);
+    expect(mapped.retryAfterSecs).toBeUndefined();
+  });
+
   it("keeps ffmpeg/keyframe failure detail out of the response", () => {
     for (const code of ["head-failed", "no-keyframes"] as const) {
       const mapped = mapPlaybackError(err(code, "ffmpeg stderr: /Volumes/media/Movies/Secret Title.mkv exit 1"));
