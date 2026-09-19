@@ -9,6 +9,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { jellyfinDeviceId } from "@/lib/jellyfin-playback";
 import { linkJellyfinUserId } from "@/lib/jellyfin";
+import { playbackEngine } from "@/lib/playback/engine-flag";
 
 export interface Viewer {
   userId: string;
@@ -25,7 +26,14 @@ export async function currentViewer(): Promise<Viewer | null> {
   // Jellyfin 12's PlaybackInfo now rejects requests with no UserId, so every
   // viewer needs their Jellyfin id resolved here, not just the ones who've
   // toggled adult access (the only prior path that cached it).
-  const jellyfinUserId = await linkJellyfinUserId({ id: userId, email: user.email, jellyfinUserId: user.jellyfinUserId });
+  // The local engine needs no Jellyfin identity -- and must not depend on a
+  // Jellyfin server being reachable, which is the point of it -- so the
+  // lookup (a network call for a user not linked yet, on every playlist and
+  // segment request) only happens on the Jellyfin path.
+  const jellyfinUserId =
+    playbackEngine() === "local"
+      ? user.jellyfinUserId
+      : await linkJellyfinUserId({ id: userId, email: user.email, jellyfinUserId: user.jellyfinUserId });
   return { userId, jellyfinUserId, deviceId: jellyfinDeviceId(userId) };
 }
 
