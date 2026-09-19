@@ -47,8 +47,8 @@ services:
     # device and joining its group needs none of the hardening above
     # relaxed -- `node` just needs to be a member of the host's `render`
     # group to open it. RENDER_GID is the VM's `render` group id, templated
-    # into .env.docker by the Ansible playbook (roles/jellyfin/tasks/main.yml
-    # has the pattern this reuses). Not added to the base docker-compose.yml:
+    # into .env.docker by the Ansible playbook (roles/app, app_render_device).
+    # Not added to the base docker-compose.yml:
     # the Mac has no iGPU to pass through.
     devices: ["/dev/dri/renderD128:/dev/dri/renderD128"]
     group_add: ["${RENDER_GID}"]
