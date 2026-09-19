@@ -54,6 +54,11 @@ services:
       PREPARE_CONCURRENCY: ${PREPARE_CONCURRENCY:-}
       PREPARE_QUEUE: ${PREPARE_QUEUE:-}
       AUDIO_CONCURRENCY: ${AUDIO_CONCURRENCY:-}
+      # qsv | vaapi | none (default none, i.e. software libx264) — whether
+      # the video playback engine uses the VM's Intel iGPU, passed through
+      # by docker-compose.prod.yml's device/group_add (see V4_PLAN.md
+      # "Hardware switch"). No device on the Mac, so this stays "none" here.
+      PLAYBACK_HWACCEL: ${PLAYBACK_HWACCEL:-none}
       # BetterAuth (see HOUSEHOLDS_PLAN.md) — session/cookie signing key.
       # Generate with `npx @better-auth/cli secret`; set in .env.docker on
       # the VM, never committed.

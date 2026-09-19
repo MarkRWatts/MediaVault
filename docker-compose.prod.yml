@@ -42,6 +42,16 @@ services:
       - /app/.next/cache:size=256m,mode=1777
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
+    # The VM's Intel iGPU render node (V4_PLAN.md "Infrastructure"), for
+    # hardware-accelerated decode/encode (PLAYBACK_HWACCEL). Passing a
+    # device and joining its group needs none of the hardening above
+    # relaxed -- `node` just needs to be a member of the host's `render`
+    # group to open it. RENDER_GID is the VM's `render` group id, templated
+    # into .env.docker by the Ansible playbook (roles/jellyfin/tasks/main.yml
+    # has the pattern this reuses). Not added to the base docker-compose.yml:
+    # the Mac has no iGPU to pass through.
+    devices: ["/dev/dri/renderD128:/dev/dri/renderD128"]
+    group_add: ["${RENDER_GID}"]
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/signin"]
       interval: 30s
