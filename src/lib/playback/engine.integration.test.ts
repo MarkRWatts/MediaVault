@@ -436,6 +436,29 @@ describe.skipIf(!hasFfmpeg)("playback engine (real ffmpeg)", () => {
     expect(stats.segmentsVerified).toBeGreaterThan(20);
   });
 
+  it("scopes sessionBelongsTo to the session's own device and stream key", async () => {
+    // The local-engine routes' whole ownership check (engine-routes.ts's
+    // checkEngineAccess) rests on this: a session must not be usable by a
+    // request that names a different device, and a stream key request must
+    // not be honoured for a session that started against a different one.
+    await engine.resetEngineForTest();
+    const session = await engine.startSession({
+      kind: "film",
+      id: mainVersionId,
+      variant: "original",
+      deviceId: DEVICE,
+    });
+
+    expect(engine.sessionBelongsTo(session.playSessionId, DEVICE)).toBe(true);
+    expect(engine.sessionBelongsTo(session.playSessionId, DEVICE, session.key)).toBe(true);
+    expect(engine.sessionBelongsTo(session.playSessionId, "some-other-device")).toBe(false);
+    expect(engine.sessionBelongsTo(session.playSessionId, DEVICE, "film-999999-original-a1")).toBe(false);
+    expect(engine.sessionBelongsTo("0".repeat(32), DEVICE)).toBe(false);
+
+    await engine.stopSession(session.playSessionId);
+    expect(engine.sessionBelongsTo(session.playSessionId, DEVICE)).toBe(false);
+  }, 30_000);
+
   it("falls back to software when the configured hardware encoder isn't there", async () => {
     // This Mac has no render node. V4_PLAN.md is explicit that a missing or
     // misconfigured device degrades playback rather than breaking it.
