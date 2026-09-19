@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 import ShowCard from "@/components/ShowCard";
 import { CARD_COLUMNS, CARD_GRID } from "@/lib/card-grid";
 import { getContinueWatchingEpisodes, getShows } from "@/lib/queries";
-import { jellyfinConfigured } from "@/lib/jellyfin";
+import { playbackAvailable } from "@/lib/playback/engine-flag";
 import CollapsibleSection from "@/components/CollapsibleSection";
 import EpisodeCard from "@/components/EpisodeCard";
 import { SHELF_ITEM } from "@/lib/card-grid";
@@ -19,7 +19,7 @@ export default async function ShowsPage() {
     getShowIdsState(userId),
     getContinueWatchingEpisodes(userId),
   ]);
-  const playable = jellyfinConfigured();
+  const playable = playbackAvailable();
   const favouriteSet = new Set(ids?.favouriteIds ?? []);
   const watchedSet = new Set(ids?.watchedIds ?? []);
   const episodesOnDisk = shows.reduce((sum, s) => sum + s.ownedEpisodeCount, 0);

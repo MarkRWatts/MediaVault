@@ -19,6 +19,7 @@ import os from "node:os";
 import path from "node:path";
 import { fetchImage } from "@/lib/fetch-image";
 import { prisma } from "@/lib/db";
+import { ffmpegPath } from "@/lib/ffmpeg-bin";
 
 const execFileAsync = promisify(execFile);
 
@@ -177,7 +178,7 @@ async function fetchItunesCover(artistName: string, title: string): Promise<Buff
 let hasLocalFfmpegPromise: Promise<boolean> | null = null;
 function detectLocalFfmpeg(): Promise<boolean> {
   if (!hasLocalFfmpegPromise) {
-    hasLocalFfmpegPromise = execFileAsync("ffmpeg", ["-version"])
+    hasLocalFfmpegPromise = execFileAsync(ffmpegPath(), ["-version"])
       .then(() => true)
       .catch(() => false);
   }
@@ -198,7 +199,7 @@ async function extractEmbeddedCover(absTrackPath: string, musicPath: string): Pr
   try {
     const hasLocal = await detectLocalFfmpeg();
     if (hasLocal) {
-      await execFileAsync("ffmpeg", ["-i", absTrackPath, ...FFMPEG_ARGS, tmpOut], {
+      await execFileAsync(ffmpegPath(), ["-i", absTrackPath, ...FFMPEG_ARGS, tmpOut], {
         maxBuffer: 1024 * 1024 * 32,
       });
     } else {

@@ -101,8 +101,13 @@ function isCompatibleAudio(t: AudioTrackInput): boolean {
  * compatible track that keeps at least as many channels (free and no
  * worse), else transcode the default. With no flags at all, fall back to
  * the first compatible track, then to transcoding the best candidate.
+ *
+ * Exported for the v4 engine (playback/source.ts): when a caller names an
+ * audio stream explicitly, the engine asks this same function about that one
+ * track rather than re-deriving "can this codec be copied?" for itself --
+ * one rule about copy-vs-transcode, not two that can drift apart.
  */
-function pickAudioTrack(tracks: AudioTrackInput[]): { index: number; action: StreamAction } | null {
+export function pickAudioTrack(tracks: AudioTrackInput[]): { index: number; action: StreamAction } | null {
   if (tracks.length === 0) return null;
 
   const byIdx = [...tracks].sort((a, b) => a.streamIdx - b.streamIdx);
@@ -191,8 +196,11 @@ export function planVideoPlayback(input: VideoPlaybackInput): VideoPlaybackPlan 
 // profile/level doesn't matter for the question being asked ("can this
 // browser's MSE decode this codec family at all"); these are the safe,
 // universally recognised forms.
-const MSE_VIDEO_CODEC: Record<string, string> = { h264: "avc1.640028", hevc: "hvc1.1.6.L120.B0", h265: "hvc1.1.6.L120.B0" };
-const MSE_AUDIO_CODEC: Record<string, string> = { aac: "mp4a.40.2", ac3: "ac-3", eac3: "ec-3" };
+// Exported for src/lib/playback/playlist.ts: the master playlist's CODECS
+// attribute wants the same RFC 6381 strings for the same reason this probe
+// does (a codec family in, a standard string out) -- one map, not two.
+export const MSE_VIDEO_CODEC: Record<string, string> = { h264: "avc1.640028", hevc: "hvc1.1.6.L120.B0", h265: "hvc1.1.6.L120.B0" };
+export const MSE_AUDIO_CODEC: Record<string, string> = { aac: "mp4a.40.2", ac3: "ac-3", eac3: "ec-3" };
 
 /**
  * The fMP4 MIME type a variant's segments will carry, for the player to

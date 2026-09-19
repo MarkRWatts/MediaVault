@@ -25,6 +25,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { detectLocalFfmpeg, resolveTrackPath, trackFileContentType } from "@/lib/audio-stream";
 import { audioSemaphore } from "@/lib/semaphore";
+import { ffmpegPath } from "@/lib/ffmpeg-bin";
 
 export type AudioQuality = "original" | "aac";
 
@@ -152,7 +153,7 @@ async function transcode(absPath: string, musicRoot: string, dir: string, name: 
   let cmd: string;
   let args: string[];
   if (await detectLocalFfmpeg()) {
-    cmd = "ffmpeg";
+    cmd = ffmpegPath();
     args = [...input, absPath, ...encode, path.join(dir, partial)];
   } else {
     // Local-dev shim, as in audio-stream.ts: ffmpeg from the probe image,

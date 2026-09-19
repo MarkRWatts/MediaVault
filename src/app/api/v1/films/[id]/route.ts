@@ -1,15 +1,16 @@
 // GET /api/v1/films/:id — a film's detail screen: versions with their
-// audio tracks, `playable` (has a jellyfinId — the only versions the app's
-// Jellyfin-brokered player can open, see IOS_PLAN.md "Video: nothing new"),
-// the viewer's favourite state, and their saved position on each version
-// (so a resume prompt doesn't need a second round trip once a version is
-// picked).
+// audio tracks, `playable` (isFilePlayable — has been probed and, for the
+// jellyfin engine, matched to a Jellyfin item, see IOS_PLAN.md "Video:
+// nothing new" and src/lib/playback/engine-flag.ts), the viewer's favourite
+// state, and their saved position on each version (so a resume prompt
+// doesn't need a second round trip once a version is picked).
 
 import { NextResponse } from "next/server";
 import { requireMemberOrResponse } from "@/lib/require-member";
 import { getFilmDetail } from "@/lib/queries";
 import { getFilmUserState } from "@/lib/film-user-state";
 import { prisma } from "@/lib/db";
+import { isFilePlayable } from "@/lib/playback/engine-flag";
 import type { FilmDetailResponse, FilmVersionV1, VersionProgress } from "@/lib/api-v1-types";
 
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
@@ -38,7 +39,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       : Promise.resolve([]),
   ]);
 
-  const versions: FilmVersionV1[] = film.versions.map((v) => ({ ...v, playable: v.jellyfinId !== null }));
+  const versions: FilmVersionV1[] = film.versions.map((v) => ({ ...v, playable: isFilePlayable(v) }));
   const progress: VersionProgress[] = progressRows.map((p) => ({
     // versionId is non-null by construction (queried `in: versionIds`).
     versionId: p.versionId!,

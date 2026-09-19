@@ -12,6 +12,8 @@
 //   Scene.matchConfidence: EXACT | SEARCH | LOW | UNMATCHED
 //   ScanRun.kind: see the RunKind union in src/lib/runs.ts (source of truth — this
 //     comment drifts, don't trust it)   ScanRun.status: RUNNING | DONE | FAILED
+//   KeyframeIndex.kind: film | episode | scene (Version | EpisodeFile | Scene)
+//   KeyframeIndex.source: cues | ffprobe
 
 generator client {
   provider = "prisma-client"
@@ -220,6 +222,27 @@ model EpisodeFile {
 
   @@unique([filePath, episodeId])
   @@index([episodeId])
+}
+
+// V4_PLAN.md "The engine" -> "Keyframe index": cached video keyframe
+// timestamps for the copy-tier HLS segment table, so a play never has to
+// wait on a fresh EBML/ffprobe pass. No FK — same reasoning as PlayLog:
+// Version.id and EpisodeFile.id are independent autoincrement sequences, so
+// (kind, fileId) is the identity, not a bare fileId. `kind` is "film" |
+// "scene" (video-cache.ts's MediaKind) or "episode" (EpisodeFile, not yet
+// wired into MediaKind — see its own scope note) — see keyframe-store.ts.
+model KeyframeIndex {
+  id        Int      @id @default(autoincrement())
+  kind      String
+  fileId    Int
+  mtimeMs   Float // probe-cache key, same shape as Version/EpisodeFile.mtimeMs
+  sizeBytes BigInt
+  source    String // "cues" | "ffprobe" — see keyframes.ts
+  count     Int
+  data      Bytes // packed little-endian Float64 seconds, sorted ascending
+  createdAt DateTime @default(now())
+
+  @@unique([kind, fileId])
 }
 
 // Bookkeeping for scans and enrichment runs; log holds a JSON array of

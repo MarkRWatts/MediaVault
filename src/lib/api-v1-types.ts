@@ -40,7 +40,20 @@ export interface MeResponse {
   user: { id: string; name: string; email: string };
   household: { id: string; role: string };
   network: NetworkKind;
-  features: { tv: boolean; music: boolean; jellyfin: boolean };
+  features: {
+    tv: boolean;
+    music: boolean;
+    /** playbackAvailable() (src/lib/playback/engine-flag.ts) under its old
+     *  name — kept, and kept mirroring `playback`, because the installed
+     *  iOS app only decodes this field and gates video on it (IOS_PLAN.md).
+     *  Drop once `server.minAppBuild` retires the /jf/* aliases
+     *  (V4_PLAN.md "HTTP contract"). */
+    jellyfin: boolean;
+    /** Whether in-app video playback can be offered at all right now,
+     *  through whichever engine PLAYBACK_ENGINE selects — added in v4
+     *  phase 4; new clients should read this instead of `jellyfin`. */
+    playback: boolean;
+  };
   server: { version: string; minAppBuild: number };
 }
 
@@ -62,10 +75,12 @@ export interface VersionProgress {
   completed: boolean;
 }
 
-/** VersionView plus whether the app can actually play it: only a version
- *  with a jellyfinId is reachable through the Jellyfin-brokered HLS routes
- *  the app uses (IOS_PLAN.md "Video: nothing new" — the local direct-play
- *  tier needs IN_APP_PLAYBACK, which the app never sets). */
+/** VersionView plus whether the app can actually play it: isFilePlayable
+ *  (src/lib/playback/engine-flag.ts) — a jellyfinId match under the
+ *  jellyfin engine, or a completed probe under the local engine
+ *  (IOS_PLAN.md "Video: nothing new" — the app only ever speaks the
+ *  session-based "jellyfin" protocol name; which engine actually serves it
+ *  is a server-side decision it never sees). */
 export interface FilmVersionV1 extends VersionView {
   playable: boolean;
 }

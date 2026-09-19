@@ -3,12 +3,15 @@ import ResolutionBadge from "@/components/ResolutionBadge";
 import HdrBadge from "@/components/HdrBadge";
 import PlayButton from "@/components/PlayButton";
 import type { EpisodeFileView, EpisodeView } from "@/lib/queries";
+import { isFilePlayable } from "@/lib/playback/engine-flag";
 
 // One file's specs on an owned episode row — badges + audio summary + size +
-// an in-app Play button (through Jellyfin, /api/tv-video) when the file has
-// a Jellyfin item. An episode normally has a single file, but multi-cut
-// episodes (theatrical + extended rips of the same episode) render one
-// FileLine per file, stacked, so nothing gets silently dropped.
+// an in-app Play button (/api/tv-video, "jellyfin" being the player's
+// session-based protocol name regardless of which engine actually serves
+// it) when the file is playable through whichever engine is active. An
+// episode normally has a single file, but multi-cut episodes (theatrical +
+// extended rips of the same episode) render one FileLine per file, stacked,
+// so nothing gets silently dropped.
 function FileLine({ file, playable, playTitle }: { file: EpisodeFileView; playable: boolean; playTitle: string }) {
   return (
     <div className="flex flex-wrap items-center gap-1.5">
@@ -21,7 +24,7 @@ function FileLine({ file, playable, playTitle }: { file: EpisodeFileView; playab
         </span>
       )}
       <span className="font-mono text-[11px] text-text-faint">{file.sizeLabel}</span>
-      {playable && file.jellyfinId && (
+      {playable && isFilePlayable(file) && (
         <PlayButton versionId={file.id} title={playTitle} source="jellyfin" basePath="/api/tv-video" />
       )}
     </div>
@@ -35,7 +38,8 @@ export default function EpisodeRow({
   seasonNumber,
 }: {
   episode: EpisodeView;
-  /** Jellyfin is configured, so files with a Jellyfin item get Play. */
+  /** playbackAvailable() — playback is possible at all right now, so
+   *  individually playable files get a Play button. */
   playable: boolean;
   showTitle: string;
   seasonNumber: number;

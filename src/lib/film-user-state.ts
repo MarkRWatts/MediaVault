@@ -15,6 +15,7 @@
 // wants, reads the current state and calls set with the opposite.
 
 import { prisma } from "@/lib/db";
+import { playbackEngine } from "@/lib/playback/engine-flag";
 
 export interface FilmUserState {
   favourite: boolean;
@@ -112,8 +113,13 @@ export async function getNextEpisodeFile(
   userId: string | null,
   showId: number,
 ): Promise<{ episodeFileId: number; label: string } | null> {
+  // Same "is this file playable" gate as isFilePlayable (src/lib/playback/
+  // engine-flag.ts), applied at the query level rather than filtered in
+  // memory afterward: jellyfin wants a matched library item, local wants
+  // nothing more than a completed probe.
+  const playableFilter = playbackEngine() === "local" ? { videoCodec: { not: null } } : { jellyfinId: { not: null } };
   const files = await prisma.episodeFile.findMany({
-    where: { episode: { season: { showId } }, jellyfinId: { not: null } },
+    where: { episode: { season: { showId } }, ...playableFilter },
     select: {
       id: true,
       episode: { select: { episodeNumber: true, name: true, season: { select: { seasonNumber: true } } } },

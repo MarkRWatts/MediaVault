@@ -1,7 +1,16 @@
-// Route handlers for Jellyfin-brokered playback, shared by the film
-// (/api/video/<versionId>/jf/*) and episode (/api/tv-video/<episodeFileId>/jf/*)
-// routes -- they differ only in how an id resolves to a Jellyfin item.
-// See src/lib/jellyfin-playback.ts for what each does.
+// Route handlers for Jellyfin-brokered and local-engine playback, shared by
+// the film (/api/video/<versionId>/jf/*) and episode
+// (/api/tv-video/<episodeFileId>/jf/*) routes -- they differ only in how an
+// id resolves to a Jellyfin item (jf-viewer.ts) and, for the local engine,
+// in which MediaKind their versionId/episodeFileId names. See
+// src/lib/jellyfin-playback.ts and src/lib/playback/engine-routes.ts for
+// what each branch actually does.
+//
+// Each handler branches on playbackEngine() FIRST and returns straight out
+// of engine-routes.ts for "local" -- the Jellyfin branch below that check is
+// completely untouched code, because V4_PLAN.md's cut-over promise is that
+// PLAYBACK_ENGINE at its default ("jellyfin") behaves byte for byte as it
+// did before this file learned about the local engine.
 
 import { NextResponse } from "next/server";
 import { jellyfinConfigured } from "@/lib/jellyfin";
@@ -14,10 +23,19 @@ import {
 } from "@/lib/jellyfin-playback";
 import { parseVariant } from "@/lib/video-playback";
 import { currentViewer } from "@/lib/jf-viewer";
+import { playbackEngine } from "@/lib/playback/engine-flag";
+import { engineProxy, engineSession, engineStop } from "@/lib/playback/engine-routes";
+import type { MediaKind } from "@/lib/playback/types";
 
 type ResolveItem = (id: number) => Promise<string | null>;
 
-export async function jfSession(req: Request, idParam: string, resolveItem: ResolveItem, basePath: string) {
+export async function jfSession(req: Request, idParam: string, resolveItem: ResolveItem, basePath: string, kind: MediaKind) {
+  if (playbackEngine() === "local") {
+    const viewer = await currentViewer();
+    if (!viewer) return NextResponse.json({ error: "not signed in" }, { status: 401 });
+    return engineSession(req, idParam, kind, basePath, viewer.deviceId);
+  }
+
   if (!jellyfinConfigured()) return NextResponse.json({ error: "Jellyfin is not configured" }, { status: 503 });
   const viewer = await currentViewer();
   if (!viewer) return NextResponse.json({ error: "not signed in" }, { status: 401 });
@@ -70,6 +88,12 @@ export async function jfSession(req: Request, idParam: string, resolveItem: Reso
 }
 
 export async function jfStop(req: Request) {
+  if (playbackEngine() === "local") {
+    const viewer = await currentViewer();
+    if (!viewer) return NextResponse.json({ error: "not signed in" }, { status: 401 });
+    return engineStop(req, viewer.deviceId);
+  }
+
   if (!jellyfinConfigured()) return NextResponse.json({ error: "Jellyfin is not configured" }, { status: 503 });
   const viewer = await currentViewer();
   if (!viewer) return NextResponse.json({ error: "not signed in" }, { status: 401 });
@@ -79,7 +103,15 @@ export async function jfStop(req: Request) {
   return new NextResponse(null, { status: 204 });
 }
 
-export async function jfProxy(req: Request, idParam: string, path: string[], resolveItem: ResolveItem) {
+export async function jfProxy(req: Request, idParam: string, path: string[], resolveItem: ResolveItem, kind: MediaKind) {
+  if (playbackEngine() === "local") {
+    const viewer = await currentViewer();
+    if (!viewer) return NextResponse.json({ error: "not signed in" }, { status: 401 });
+    const id = Number(idParam);
+    if (!Number.isInteger(id) || id <= 0) return new NextResponse("not found", { status: 404 });
+    return engineProxy(req, path.join("/"), kind, id, viewer.deviceId);
+  }
+
   if (!jellyfinConfigured()) return NextResponse.json({ error: "Jellyfin is not configured" }, { status: 503 });
   const viewer = await currentViewer();
   if (!viewer) return NextResponse.json({ error: "not signed in" }, { status: 401 });

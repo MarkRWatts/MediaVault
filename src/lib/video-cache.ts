@@ -32,6 +32,10 @@ import path from "node:path";
 import { prisma } from "@/lib/db";
 import { probe } from "@/lib/ffprobe";
 import { SemaphoreFullError, prepareSemaphore } from "@/lib/semaphore";
+import { ffmpegPath } from "@/lib/ffmpeg-bin";
+import { onShutdown } from "@/lib/shutdown";
+import { STREAM_KEY_RE } from "@/lib/playback/stream-key";
+import type { MediaKind as PlaybackMediaKind } from "@/lib/playback/types";
 import {
   planVideoPlayback,
   buildHlsFfmpegArgs,
@@ -92,7 +96,11 @@ function cacheKey(kind: MediaKind, id: number, variant: Variant): string {
   return variant === "original" ? `${kind}-${id}` : `${kind}-${id}-${variant}`;
 }
 
-function cacheDir(): string {
+/** Root of the on-disk cache. Exported: the v4 playback engine writes its
+ *  own stream directories into the same VIDEO_CACHE_DIR (V4_PLAN.md,
+ *  "Housekeeping" -- one budget, one volume, one env var), so it must
+ *  resolve the path the same way rather than re-reading the env itself. */
+export function cacheDir(): string {
   return path.resolve(process.env.VIDEO_CACHE_DIR || "./data/video-cache");
 }
 
@@ -109,8 +117,9 @@ export function maxCacheBytes(): number {
 
 // Headroom the disk must keep AFTER a prepare would finish. A prepare that
 // would leave less than this is refused with a clear error rather than
-// filling the volume that also holds the SQLite database.
-const MIN_FREE_DISK_BYTES = 1 * 1024 ** 3;
+// filling the volume that also holds the SQLite database. Exported because
+// the v4 engine writes into the same volume and owes it the same headroom.
+export const MIN_FREE_DISK_BYTES = 1 * 1024 ** 3;
 
 export interface CacheEntry {
   path: string;
@@ -145,7 +154,10 @@ export function selectEntriesToEvict(entries: CacheEntry[], limitBytes: number):
   return toEvict;
 }
 
-async function dirSize(dir: string): Promise<number> {
+/** Sum of the plain files directly inside `dir` (subdirectories are not
+ *  descended into — neither layout nests). Exported for the v4 engine's own
+ *  budget pass, which sizes its stream directories exactly this way. */
+export async function dirSize(dir: string): Promise<number> {
   let total = 0;
   let names: string[];
   try {
@@ -228,7 +240,9 @@ async function makeRoomFor(bytes: number): Promise<void> {
   }
 }
 
-async function freeDiskBytes(dir: string): Promise<number | null> {
+/** Free bytes on the volume holding `dir`, or null where statfs isn't
+ *  available. Exported for the v4 engine's own pre-head disk check. */
+export async function freeDiskBytes(dir: string): Promise<number | null> {
   try {
     const s = await fs.statfs(dir);
     return Number(s.bavail) * Number(s.bsize);
@@ -269,6 +283,13 @@ export async function sweepOrphanedEntriesIn(root: string, isLive: (key: string)
   }
   const removed: string[] = [];
   for (const name of names) {
+    // The v4 playback engine shares VIDEO_CACHE_DIR with this pipeline and
+    // has its own, differently-shaped key directories
+    // (`film-42-original-a1`, see playback/stream-key.ts) plus its own
+    // orphan/eviction accounting. Neither sweep may touch the other's
+    // output, so this one skips anything the other owns before the
+    // "unknown files are removed" rule below can claim it.
+    if (STREAM_KEY_RE.test(name)) continue;
     const p = path.join(root, name);
     const stat = await fs.stat(p).catch(() => null);
     if (!stat) continue;
@@ -338,13 +359,13 @@ const activeDirs = new Map<string, string>();
 // means the whole file again from byte 0), while a viewer who genuinely
 // left still stops a two-hour transcode long before it finishes.
 const idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
-const IDLE_CANCEL_MS = 10 * 60_000;
+export const IDLE_CANCEL_MS = 10 * 60_000;
 // When a viewer says they've left (VideoPlayer's leave beacon on close,
 // navigation or a quality switch), the wait shrinks to this: long enough
 // for anyone else watching the same title to make a segment request and
 // re-arm the full window, short enough that a deliberate close doesn't
 // leave a transcode running for ten minutes for nobody.
-const LEAVE_CANCEL_MS = 30_000;
+export const LEAVE_CANCEL_MS = 30_000;
 
 function armIdleTimer(key: string, ms: number): void {
   const pending = idleTimers.get(key);
@@ -431,11 +452,19 @@ async function loadMedia(kind: MediaKind, id: number): Promise<ResolvedMedia | n
   return kind === "film" ? loadVersion(id) : loadScene(id);
 }
 
-function mediaRootEnv(kind: MediaKind): string {
-  return kind === "film" ? "MOVIES_PATH" : "ADULT_PATH";
+/** Which env var holds the share a kind's files live under. Takes the v4
+ *  engine's wider MediaKind (playback/types.ts) rather than this module's
+ *  film|scene pair, so both pipelines resolve paths through one function --
+ *  "episode" is simply a case this module never passes. */
+export function mediaRootEnv(kind: PlaybackMediaKind): string {
+  if (kind === "film") return "MOVIES_PATH";
+  if (kind === "episode") return "TVSHOWS_PATH";
+  return "ADULT_PATH";
 }
 
-function resolveSourcePath(kind: MediaKind, filePath: string): string | null {
+/** A DB row's stored relative `filePath` resolved against its share, or null
+ *  when the share isn't configured or the path escapes it. */
+export function resolveSourcePath(kind: PlaybackMediaKind, filePath: string): string | null {
   const mediaRoot = process.env[mediaRootEnv(kind)];
   if (!mediaRoot) return null;
   const root = path.resolve(mediaRoot);
@@ -449,7 +478,7 @@ let hasLocalFfmpegPromise: Promise<boolean> | null = null;
 function detectLocalFfmpeg(): Promise<boolean> {
   if (!hasLocalFfmpegPromise) {
     hasLocalFfmpegPromise = new Promise<boolean>((resolve) => {
-      execFile("ffmpeg", ["-version"], (err) => resolve(!err));
+      execFile(ffmpegPath(), ["-version"], (err) => resolve(!err));
     });
   }
   return hasLocalFfmpegPromise;
@@ -467,14 +496,16 @@ class PrepareCancelledError extends Error {}
 // On SIGTERM/SIGINT (a `docker stop`, a deploy, Ctrl-C in dev): stop every
 // running ffmpeg and remove the directory it was writing, synchronously --
 // there is no time for the async cleanup in prepare() to run before the
-// process exits. Prepended so it runs before Next's own handler, which may
-// call process.exit in the same tick. The startup sweep is the backstop for
-// a SIGKILL, which no handler can catch.
+// process exits. The listener itself lives in shutdown.ts (prepended there
+// so it runs before Next's own handler, which may call process.exit in the
+// same tick) and is shared with the v4 playback engine, which has its own
+// children to stop -- one pair of process listeners, two callbacks. The
+// startup sweep is the backstop for a SIGKILL, which no handler can catch.
 let shutdownHookInstalled = false;
 function installShutdownHook(): void {
   if (shutdownHookInstalled) return;
   shutdownHookInstalled = true;
-  const stopAll = () => {
+  onShutdown(() => {
     for (const [key, proc] of activeProcesses) {
       cancelledJobs.add(key);
       try {
@@ -490,9 +521,7 @@ function installShutdownHook(): void {
         // Best effort; the startup sweep catches anything left.
       }
     }
-  };
-  process.prependListener("SIGTERM", stopAll);
-  process.prependListener("SIGINT", stopAll);
+  });
 }
 
 function runTrackedProcess(key: string, cmd: string, args: string[]): Promise<void> {
@@ -531,7 +560,7 @@ async function runFfmpeg(
   const hasLocal = await detectLocalFfmpeg();
 
   if (hasLocal) {
-    await runTrackedProcess(key, "ffmpeg", buildHlsFfmpegArgs(sourceAbsPath, outDir, plan, sourceChannels, variant));
+    await runTrackedProcess(key, ffmpegPath(), buildHlsFfmpegArgs(sourceAbsPath, outDir, plan, sourceChannels, variant));
     return;
   }
 

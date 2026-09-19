@@ -11,7 +11,7 @@ import { NextResponse } from "next/server";
 import { requireMemberOrResponse } from "@/lib/require-member";
 import { prisma } from "@/lib/db";
 import { networkKind } from "@/lib/request-network";
-import { jellyfinConfigured } from "@/lib/jellyfin";
+import { playbackAvailable } from "@/lib/playback/engine-flag";
 import { version as APP_VERSION } from "@/../package.json";
 import type { MeResponse } from "@/lib/api-v1-types";
 
@@ -36,6 +36,12 @@ export async function GET() {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
 
+  // features.jellyfin mirrors features.playback until the /jf/* aliases
+  // retire (V4_PLAN.md "HTTP contract") -- the installed iOS app only
+  // decodes `jellyfin` and gates video on it (IOS_PLAN.md), so it must keep
+  // reporting the real answer even once the local engine is what's actually
+  // serving video.
+  const playback = playbackAvailable();
   const body: MeResponse = {
     user: { id: gate.userId, name: user.name, email: user.email },
     household: { id: gate.householdId, role: gate.role },
@@ -43,7 +49,8 @@ export async function GET() {
     features: {
       tv: Boolean(process.env.TVSHOWS_PATH),
       music: Boolean(process.env.MUSIC_PATH),
-      jellyfin: jellyfinConfigured(),
+      jellyfin: playback,
+      playback,
     },
     server: { version: APP_VERSION, minAppBuild: MIN_APP_BUILD },
   };

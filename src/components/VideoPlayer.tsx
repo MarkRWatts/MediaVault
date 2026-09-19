@@ -574,7 +574,11 @@ export default function VideoPlayer({
     if (old) sendJellyfinStop(basePath, versionId, old);
     setJfSession(null);
     const audioParam = nextAudio === null ? "" : `&audio=${nextAudio}`;
-    fetch(`${basePath}/${versionId}/jf/session?variant=${nextVariant}${audioParam}`, { method: "POST", cache: "no-store" })
+    // Names the session being superseded: the stop above is fire-and-forget
+    // and can land after this request, and the server must not count the
+    // old session against this viewer's stream allowance.
+    const replacesParam = old ? `&replaces=${encodeURIComponent(old)}` : "";
+    fetch(`${basePath}/${versionId}/jf/session?variant=${nextVariant}${audioParam}${replacesParam}`, { method: "POST", cache: "no-store" })
       .then(async (res) => {
         const body = await res.json().catch(() => null);
         if (!res.ok || typeof body?.playlistUrl !== "string") {
