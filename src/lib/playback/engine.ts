@@ -54,7 +54,7 @@ import {
   touchStream,
   type StreamContext,
 } from "./stream";
-import type { MediaKind } from "./types";
+import type { MediaKind, SegmentEntry } from "./types";
 
 /** MPEG-TS, always (V4_PLAN.md, "Heads"). Exported so the route doesn't
  *  have to know the container to set a Content-Type. */
@@ -618,7 +618,7 @@ export async function getMainPlaylist(key: string, playSessionId?: string): Prom
 
 /** The segment table itself, for a caller that wants the numbers rather
  *  than the playlist text (tests, and phase 4's progress reporting). */
-export async function getSegmentTable(key: string) {
+export async function getSegmentTable(key: string): Promise<SegmentEntry[]> {
   return (await contextFor(key)).segments;
 }
 
