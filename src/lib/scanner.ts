@@ -8,6 +8,8 @@ import { promises as fs, type Dirent } from "node:fs";
 import path from "node:path";
 import { prisma } from "@/lib/db";
 import { probe, type ProbedAudioTrack } from "@/lib/ffprobe";
+import { getCuesKeyframes } from "@/lib/playback/keyframes";
+import { saveKeyframeIndex, type KeyframeKind } from "@/lib/playback/keyframe-store";
 import { parseFileName, filmKey, normalizeTitle, sortTitle, VIDEO_EXTENSIONS, type ParsedFile } from "@/lib/parse";
 import { parseEpisodePath, type ParsedEpisodeFile } from "@/lib/parse-tv";
 import { parseTrackPath, type ParsedTrack } from "@/lib/parse-music";
@@ -137,6 +139,34 @@ function deriveVideoRange(colorTransfer: string | null, hasDolbyVision: boolean)
   return "SDR";
 }
 
+// V4_PLAN.md "Keyframe index": cues-only, never the ffprobe fallback — that
+// reads the whole file, which belongs at scan time in the background per
+// the plan, not inline in *this* pass (a scan already probes every changed
+// file once; a second whole-file read here would double that cost for
+// every MKV without cues). A file with no Cues yet is simply left unindexed
+// — the engine builds one on demand behind a "preparing" state later. One
+// cues read covers every id in `fileIds` (multi-episode range files share a
+// single physical file across several EpisodeFile rows). Never throws: an
+// index is a cache, not something worth failing a scan over.
+async function indexKeyframes(
+  kind: KeyframeKind,
+  fileIds: number[],
+  absPath: string,
+  cacheKey: { mtimeMs: number; sizeBytes: bigint },
+  log: string[],
+): Promise<void> {
+  try {
+    const cues = await getCuesKeyframes(absPath);
+    if (!cues) return;
+    for (const fileId of fileIds) {
+      await saveKeyframeIndex(kind, fileId, cacheKey, { keyframeSecs: cues.keyframeSecs, source: "cues" });
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log.push(`Keyframe index failed for "${absPath}": ${message}`);
+  }
+}
+
 async function processVersion(
   file: CandidateFile,
   filmId: number,
@@ -213,6 +243,8 @@ async function processVersion(
         })),
       });
     }
+
+    await indexKeyframes("film", [version.id], absPath, { mtimeMs, sizeBytes }, log);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log.push(`Probe failed for "${parsed.relPath}": ${message}`);
@@ -324,14 +356,17 @@ async function processEpisodeFile(
     container: parsed.container || null,
   };
 
-  const upsertAll = async (data: EpisodeFileData) => {
+  const upsertAll = async (data: EpisodeFileData): Promise<number[]> => {
+    const ids: number[] = [];
     for (const episodeId of episodeIds) {
-      await prisma.episodeFile.upsert({
+      const row = await prisma.episodeFile.upsert({
         where: { filePath_episodeId: { filePath: parsed.relPath, episodeId } },
         create: { ...data, filePath: parsed.relPath, episodeId },
         update: data,
       });
+      ids.push(row.id);
     }
+    return ids;
   };
 
   if (!needProbe) {
@@ -345,7 +380,7 @@ async function processEpisodeFile(
     const videoRange = deriveVideoRange(result.colorTransfer, result.hasDolbyVision);
     const sizeBytes = BigInt(Math.round(result.sizeBytes ?? size));
 
-    await upsertAll({
+    const fileIds = await upsertAll({
       ...baseData,
       width: result.width,
       height: result.height,
@@ -358,6 +393,8 @@ async function processEpisodeFile(
       audioSummary: buildAudioSummary(result.audioTracks),
       probedAt: new Date(),
     });
+
+    await indexKeyframes("episode", fileIds, absPath, { mtimeMs, sizeBytes }, log);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log.push(`Probe failed for "${parsed.relPath}": ${message}`);
