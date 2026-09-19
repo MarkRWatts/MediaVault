@@ -81,6 +81,9 @@ export interface FilmDetailResponse extends Omit<FilmDetail, "versions"> {
 export interface ShowsResponse {
   shows: ShowSummary[];
   continueWatching: ContinueEpisode[];
+  /** This person's hearted shows, newest first, as ids into `shows`. Added
+   *  after the first app build shipped, so clients decode it as optional. */
+  favouriteShowIds: number[];
 }
 
 /** One episode file's saved position for the signed-in viewer. */
