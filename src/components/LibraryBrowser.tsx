@@ -378,7 +378,9 @@ export default function LibraryBrowser({
         )}
       </p>
 
-      {(
+      {/* Searching is for one film: the shelves would push the results off
+          the bottom of the page, so they step aside until the box is cleared. */}
+      {query.trim() === "" && (
         [
           ["Continue watching", continueWatching],
           ["New releases", newReleases],
