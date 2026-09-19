@@ -12,6 +12,7 @@
 
 import { createHash } from "node:crypto";
 import { selectEntriesToEvict, type CacheEntry } from "@/lib/video-cache";
+import type { StreamAction, Variant } from "@/lib/video-playback";
 import type { SegmentEntry } from "./types";
 
 /**
@@ -21,6 +22,19 @@ import type { SegmentEntry } from "./types";
  * encode, which on the software path runs near realtime.
  */
 export type StreamTier = "copy" | "transcode";
+
+/**
+ * The one rule for which tier a variant of a file runs at: "original" keeps
+ * the source's video only when the planner says the codec survives as-is;
+ * "remote" is always a real encode, whatever the source. Pulled out here
+ * (rather than living only on stream.ts's streamTier, which needs a whole
+ * ResolvedSource) so source.ts can ask the same question before a
+ * ResolvedSource exists yet -- deciding whether an interlace measurement is
+ * worth its cost needs exactly this, and only this.
+ */
+export function tierFor(variant: Variant, videoAction: StreamAction): StreamTier {
+  return variant === "original" && videoAction === "copy" ? "copy" : "transcode";
+}
 
 // ---------------------------------------------------------------------------
 // Segment request: serve / wait / restart (V4_PLAN.md, "Heads")
