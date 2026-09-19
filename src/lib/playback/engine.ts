@@ -551,6 +551,24 @@ export function noteViewerLeft(playSessionId: string): boolean {
   return true;
 }
 
+/**
+ * Ownership check for the HTTP routes (phase 4's engine-routes.ts): whether
+ * `playSessionId` is a session THIS device started, and -- when `key` is
+ * given -- whether it is that session's own stream key. A route must not
+ * let one viewer's session read another device's segments, or a film
+ * route serve an episode's (or a different film's) key just because the
+ * caller can guess or replay a session id; this is the local engine's
+ * answer to what jellyfin-playback.ts's `lookupPlaybackSession` already
+ * checks for the Jellyfin proxy. A session belongs to exactly one stream
+ * key for its whole life -- a quality or audio switch starts a new session
+ * (startSession) rather than repointing an old one.
+ */
+export function sessionBelongsTo(playSessionId: string, deviceId: string, key?: string): boolean {
+  const session = state.sessions.get(playSessionId);
+  if (!session || session.deviceId !== deviceId) return false;
+  return key === undefined || session.key === key;
+}
+
 // ---------------------------------------------------------------------------
 // Playlists
 // ---------------------------------------------------------------------------
