@@ -9,6 +9,7 @@ import { JellyfinClientForm } from "@/components/admin/JellyfinClientForm";
 import { jellyfinConfigured } from "@/lib/jellyfin";
 import { isSpotifyConfigured } from "@/lib/spotify";
 import { playbackAvailable, playbackEngine } from "@/lib/playback/engine-flag";
+import { hwAccelStatus, resolveHwAccel } from "@/lib/playback/hwaccel";
 
 // DB-backed listing: must render per-request, not be frozen at build time
 // (the Docker image is built with no database present).
@@ -74,7 +75,7 @@ interface ApiStatusRow {
 // ones — read directly from process.env (server component, never sent to
 // the client). "Dormant" rows reflect src/lib/artist-bio.ts's
 // MusicBrainz-id gate, not a missing key — see that file's module comment.
-function apiStatusRows(): ApiStatusRow[] {
+async function apiStatusRows(): Promise<ApiStatusRow[]> {
   const tmdbSet = Boolean(process.env.TMDB_API_KEY);
   const theporndbSet = Boolean(process.env.THEPORNDB_API_KEY);
   const discogsTokenSet = Boolean(process.env.DISCOGS_TOKEN);
@@ -82,7 +83,17 @@ function apiStatusRows(): ApiStatusRow[] {
   const jellyfinSet = jellyfinConfigured();
   const engine = playbackEngine();
   const engineAvailable = playbackAvailable();
-  const hwaccel = process.env.PLAYBACK_HWACCEL || "none";
+  // The engine's own answer, not the env var: a configured-but-unusable
+  // render node falls back to software (hwaccel.ts), and this row is where
+  // that shows. The self-test runs once per process (~1 s) on first use.
+  const hw = engine === "local" ? (await resolveHwAccel(), hwAccelStatus()) : null;
+  const hwText = !hw
+    ? ""
+    : hw.configured === "none"
+      ? "software encoding"
+      : hw.effective === hw.configured
+        ? `hardware encoding (${hw.configured})`
+        : `software encoding — ${hw.configured} failed its self-test, see the server log`;
 
   return [
     {
@@ -140,11 +151,11 @@ function apiStatusRows(): ApiStatusRow[] {
       purpose: "In-app video playback (PLAYBACK_ENGINE)",
       status:
         engine === "local"
-          ? `Local — hardware: ${hwaccel}`
+          ? `Local — ${hwText}`
           : jellyfinSet
             ? "Jellyfin — brokered through the Jellyfin server"
             : "Jellyfin — not configured, in-app playback unavailable",
-      tone: engineAvailable ? "active" : "off",
+      tone: !engineAvailable ? "off" : hw && hw.effective !== hw.configured ? "reduced" : "active",
     },
     {
       name: "Jellyfin",
@@ -190,7 +201,7 @@ export default async function AdminPage() {
   ]);
   const userName = new Map(users.map((u) => [u.id, u.name || u.email || u.id]));
   const householdName = new Map(households.map((h) => [h.id, h.name]));
-  const apiStatus = apiStatusRows();
+  const apiStatus = await apiStatusRows();
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-8 px-4 py-10 sm:px-6">
