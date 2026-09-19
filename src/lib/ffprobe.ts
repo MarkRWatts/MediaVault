@@ -38,6 +38,19 @@ export interface ProbeResult {
   videoCodec: string | null;
   colorTransfer: string | null;
   hasDolbyVision: boolean;
+  /** Video frame rate from `avg_frame_rate`, as a number (ffprobe reports a
+   *  rational, "24000/1001"). null when the stream reports "0/0" — a
+   *  container that doesn't know, which the playback engine treats as "no
+   *  fps" rather than guessing (see SourceFacts in playback/types.ts). */
+  videoFps: number | null;
+  /** Video `pix_fmt` ("yuv420p", "yuv420p10le"…) — the engine reads "10" out
+   *  of it to decide the 10-bit software-decode fallback (V4_PLAN.md,
+   *  "Hardware switch"). */
+  videoPixFmt: string | null;
+  /** Video `field_order`. "progressive" / absent means progressive;
+   *  "tt"/"bb"/"tb"/"bt" are the interlaced field orders, which mean the
+   *  engine has to deinterlace. */
+  videoFieldOrder: string | null;
   durationSecs: number | null;
   sizeBytes: number | null;
   /** Year from the container's date/year tag (iTunes rips carry one) — the
@@ -59,8 +72,13 @@ export interface ProbeResult {
 // only the first audio stream's values are used — album art (mjpeg) streams
 // on .m4a files can carry their own bits_per_raw_sample (e.g. "8" for the
 // cover image), which is ignored by only reading audioTracks[0].
+// avg_frame_rate/pix_fmt/field_order are the v4 playback engine's
+// session-time facts (V4_PLAN.md, "Session-time probe"): fps sizes a
+// hardware encoder's GOP, pix_fmt picks the 10-bit fallback, field_order
+// decides deinterlacing. All three are container-header fields, so asking
+// for them costs nothing extra.
 const SHOW_ENTRIES =
-  "format=duration,size:format_tags=date,year:stream=index,codec_type,codec_name,profile,width,height,channels,channel_layout,color_transfer,side_data_list,sample_rate,bits_per_raw_sample:stream_tags=language,title:stream_disposition=default,comment,visual_impaired,hearing_impaired,descriptions";
+  "format=duration,size:format_tags=date,year:stream=index,codec_type,codec_name,profile,width,height,channels,channel_layout,color_transfer,side_data_list,sample_rate,bits_per_raw_sample,avg_frame_rate,pix_fmt,field_order:stream_tags=language,title:stream_disposition=default,comment,visual_impaired,hearing_impaired,descriptions";
 
 const FFPROBE_ARGS = ["-hide_banner", "-loglevel", "error", "-show_entries", SHOW_ENTRIES, "-of", "json"];
 
@@ -93,6 +111,9 @@ interface FfprobeStream {
   side_data_list?: FfprobeSideData[];
   sample_rate?: string;
   bits_per_raw_sample?: string;
+  avg_frame_rate?: string;
+  pix_fmt?: string;
+  field_order?: string;
   tags?: { language?: string; title?: string };
   disposition?: {
     default?: number;
@@ -114,6 +135,19 @@ interface FfprobeJson {
 // "DOVI configuration record".
 function hasDoviSideData(stream: FfprobeStream | undefined): boolean {
   return (stream?.side_data_list ?? []).some((sd) => sd.side_data_type === "DOVI configuration record");
+}
+
+/** ffprobe reports frame rates as a rational string ("25/1", "24000/1001").
+ *  "0/0" means the container doesn't state one — null, not 0, so callers
+ *  that need an fps (the hardware GOP calculation) fail loudly instead of
+ *  dividing by a made-up number. */
+export function parseFrameRate(raw: string | undefined): number | null {
+  if (!raw) return null;
+  const [numStr, denStr] = raw.split("/");
+  const num = Number(numStr);
+  const den = denStr === undefined ? 1 : Number(denStr);
+  if (!Number.isFinite(num) || !Number.isFinite(den) || den === 0 || num <= 0) return null;
+  return num / den;
 }
 
 export function parseFfprobeJson(stdout: string): ProbeResult {
@@ -151,6 +185,9 @@ export function parseFfprobeJson(stdout: string): ProbeResult {
     videoCodec: videoStream?.codec_name ?? null,
     colorTransfer: videoStream?.color_transfer ?? null,
     hasDolbyVision: hasDoviSideData(videoStream),
+    videoFps: parseFrameRate(videoStream?.avg_frame_rate),
+    videoPixFmt: videoStream?.pix_fmt ?? null,
+    videoFieldOrder: videoStream?.field_order ?? null,
     durationSecs: Number.isFinite(durationSecs) ? durationSecs : null,
     sizeBytes: Number.isFinite(sizeBytes) ? sizeBytes : null,
     tagYear: tagYear && tagYear >= 1900 && tagYear <= 2100 ? tagYear : null,
