@@ -78,6 +78,16 @@ export function maxSessions(): number {
   return 2;
 }
 
+/** How many streams one viewer may hold at once (PLAYBACK_MAX_SESSIONS_PER_USER,
+ *  default 2: the same person on a phone and a laptop). A viewer's identity
+ *  here is their deviceId, which jf-viewer.ts derives per USER, so this is
+ *  what lets one account play on two devices; each stream still counts
+ *  toward maxSessions(). */
+export function maxSessionsPerUser(): number {
+  const n = Number(process.env.PLAYBACK_MAX_SESSIONS_PER_USER);
+  return Number.isInteger(n) && n > 0 ? n : 2;
+}
+
 /** The 503 the clients already render verbatim -- kept character for
  *  character from jf-routes.ts so a viewer sees the same sentence before and
  *  after the cut-over. */
@@ -416,9 +426,12 @@ export interface StartSessionInput {
   variant: Variant;
   /** The player's Audio dropdown; omit or null for the planner's pick. */
   audioStreamIndex?: number | null;
-  /** The viewer's device, as the Jellyfin path already derives it
-   *  (jf-viewer.ts). One device holds at most one session. */
+  /** The viewer, as the Jellyfin path already derives it (jf-viewer.ts):
+   *  per user, not per physical device. Holds up to maxSessionsPerUser(). */
   deviceId: string;
+  /** The playSessionId this one supersedes (a quality/audio switch). Only
+   *  honoured when it belongs to the same deviceId. */
+  replaces?: string | null;
 }
 
 export interface StartedSession {
@@ -429,23 +442,21 @@ export interface StartedSession {
   audioTracks: PlaybackAudioTrack[];
 }
 
-/** Other devices currently streaming: a session touched within the live
- *  window, or one with a head still writing for it. Counted per device, not
- *  per session -- one person watching is one stream however many times their
- *  player re-negotiated. */
-function liveDeviceCount(excludeDeviceId: string, now: number): number {
-  const devices = new Set<string>();
-  for (const s of state.sessions.values()) {
-    if (s.deviceId === excludeDeviceId) continue;
-    if (now - s.touchedAtMs <= LIVE_WINDOW_MS) devices.add(s.deviceId);
-  }
-  for (const rt of state.streams.values()) {
-    for (const head of rt.heads.values()) {
-      const owner = state.sessions.get(head.sessionId);
-      if (owner && owner.deviceId !== excludeDeviceId) devices.add(owner.deviceId);
-    }
-  }
-  return devices.size;
+/** Session ids that own a head right now. */
+function sessionsWithHeads(): Set<string> {
+  const ids = new Set<string>();
+  for (const rt of state.streams.values()) for (const head of rt.heads.values()) ids.add(head.sessionId);
+  return ids;
+}
+
+/** Sessions that are actually streaming: touched within the live window, or
+ *  with a head still writing for them. A paused-and-forgotten session stays
+ *  resumable but holds no slot. Oldest touch first. */
+function liveSessions(now: number): Session[] {
+  const withHeads = sessionsWithHeads();
+  return [...state.sessions.values()]
+    .filter((s) => now - s.touchedAtMs <= LIVE_WINDOW_MS || withHeads.has(s.playSessionId))
+    .sort((x, y) => x.touchedAtMs - y.touchedAtMs);
 }
 
 function armIdleTimer(session: Session, ms: number): void {
@@ -467,10 +478,10 @@ function armIdleTimer(session: Session, ms: number): void {
  * hands back the same five fields the Jellyfin session returns today
  * (jf-routes.ts) so the HTTP contract is unchanged.
  *
- * A second session from the same device replaces the first -- a quality or
- * audio switch is one viewer, not two -- and a device beyond the cap is
- * refused with a typed error carrying the exact sentence the players
- * already display.
+ * A session that names the one it `replaces` (a quality or audio switch)
+ * takes its place; one viewer may hold maxSessionsPerUser() streams, and a
+ * stream beyond the global cap is refused with a typed error carrying the
+ * exact sentence the players already display.
  */
 export async function startSession(input: StartSessionInput): Promise<StartedSession> {
   await ensureInit();
@@ -478,12 +489,20 @@ export async function startSession(input: StartSessionInput): Promise<StartedSes
   const source = await resolveSource(input.kind, input.id, input.audioStreamIndex ?? null);
   if (!source) throw new PlaybackError("not-found", `no playable ${input.kind} ${input.id}`);
 
-  for (const existing of [...state.sessions.values()]) {
-    if (existing.deviceId === input.deviceId) await stopSession(existing.playSessionId);
-  }
+  // A quality or audio switch names the session it replaces, so the old
+  // one is gone before anything is counted -- the player's own POST /stop
+  // is fire-and-forget and may well arrive after this request.
+  if (input.replaces && sessionBelongsTo(input.replaces, input.deviceId)) await stopSession(input.replaces);
+
+  // One viewer, a bounded number of streams: beyond that the stalest of
+  // their own goes (a third device, or a client that never said what it
+  // was replacing), never someone else's.
+  const perUser = maxSessionsPerUser();
+  const own = liveSessions(Date.now()).filter((x) => x.deviceId === input.deviceId);
+  for (const stale of own.slice(0, Math.max(0, own.length - (perUser - 1)))) await stopSession(stale.playSessionId);
 
   const max = maxSessions();
-  if (liveDeviceCount(input.deviceId, Date.now()) >= max) {
+  if (liveSessions(Date.now()).length >= max) {
     throw new PlaybackError("session-cap", sessionCapMessage(max));
   }
 

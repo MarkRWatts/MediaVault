@@ -173,8 +173,14 @@ export async function engineSession(
     return NextResponse.json({ error: "invalid audio stream index" }, { status: 400 });
   }
 
+  // Optional: the session a quality/audio switch supersedes. Anything that
+  // isn't a session id is simply ignored -- it is a hint, not a credential
+  // (the engine checks ownership before acting on it).
+  const replacesParam = params.get("replaces");
+  const replaces = replacesParam && /^[0-9a-f]{32}$/i.test(replacesParam) ? replacesParam : null;
+
   try {
-    const session = await startSession({ kind, id, variant, audioStreamIndex, deviceId });
+    const session = await startSession({ kind, id, variant, audioStreamIndex, deviceId, replaces });
     return NextResponse.json({
       playlistUrl: `${basePath}/${id}/jf/e/${session.key}/master.m3u8?ps=${session.playSessionId}`,
       playSessionId: session.playSessionId,

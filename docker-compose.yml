@@ -64,10 +64,12 @@ services:
       # by docker-compose.prod.yml's device/group_add (see V4_PLAN.md
       # "Hardware switch"). No device on the Mac, so this stays "none" here.
       PLAYBACK_HWACCEL: ${PLAYBACK_HWACCEL:-none}
-      # How many people may stream through the local engine at once. Empty
-      # (default in code) leaves it uncapped for now — a later phase adds
-      # the actual session-limiting behind this variable.
+      # Simultaneous streams through the local engine, in total (default 2
+      # in code; falls back to JELLYFIN_MAX_SESSIONS) and per person
+      # (default 2 -- one account on two devices). Each of a person's
+      # streams counts toward the total.
       PLAYBACK_MAX_SESSIONS: ${PLAYBACK_MAX_SESSIONS:-}
+      PLAYBACK_MAX_SESSIONS_PER_USER: ${PLAYBACK_MAX_SESSIONS_PER_USER:-}
       # BetterAuth (see HOUSEHOLDS_PLAN.md) — session/cookie signing key.
       # Generate with `npx @better-auth/cli secret`; set in .env.docker on
       # the VM, never committed.

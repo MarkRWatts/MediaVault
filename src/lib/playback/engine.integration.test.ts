@@ -459,6 +459,49 @@ describe.skipIf(!hasFfmpeg)("playback engine (real ffmpeg)", () => {
     expect(engine.sessionBelongsTo(session.playSessionId, DEVICE)).toBe(false);
   }, 30_000);
 
+  it("lets one viewer hold two streams, replaces the stalest for a third, and honours `replaces`", async () => {
+    const start = (deviceId: string, replaces?: string) =>
+      engine.startSession({ kind: "film", id: mainVersionId, variant: "original", deviceId, replaces });
+    // A clean slate: earlier tests' sessions for DEVICE are still on the books.
+    const prevMax = process.env.PLAYBACK_MAX_SESSIONS;
+    process.env.PLAYBACK_MAX_SESSIONS = "3";
+    try {
+      const me = "device-two-streams";
+      const a = await start(me);
+      await new Promise((r) => setTimeout(r, 5));
+      const b = await start(me);
+      // Phone and laptop: both stay valid.
+      expect(engine.sessionBelongsTo(a.playSessionId, me)).toBe(true);
+      expect(engine.sessionBelongsTo(b.playSessionId, me)).toBe(true);
+
+      // A quality switch on one of them names what it replaces: that one
+      // goes, the other device is untouched.
+      const b2 = await start(me, b.playSessionId);
+      expect(engine.sessionBelongsTo(b.playSessionId, me)).toBe(false);
+      expect(engine.sessionBelongsTo(a.playSessionId, me)).toBe(true);
+      expect(engine.sessionBelongsTo(b2.playSessionId, me)).toBe(true);
+
+      // A third stream with no hint: the viewer's stalest goes, not the newest.
+      engine.touchSession(b2.playSessionId);
+      const c = await start(me);
+      expect(engine.sessionBelongsTo(a.playSessionId, me)).toBe(false);
+      expect(engine.sessionBelongsTo(b2.playSessionId, me)).toBe(true);
+      expect(engine.sessionBelongsTo(c.playSessionId, me)).toBe(true);
+
+      // `replaces` is a hint, not a credential: someone else's id is ignored.
+      const other = await start("device-someone-else", c.playSessionId);
+      expect(engine.sessionBelongsTo(c.playSessionId, me)).toBe(true);
+
+      // The global cap counts streams, whoever holds them: 2 + 1 = 3 = max.
+      await expect(start("device-one-too-many")).rejects.toMatchObject({ code: "session-cap" });
+
+      for (const id of [b2.playSessionId, c.playSessionId, other.playSessionId]) await engine.stopSession(id);
+    } finally {
+      if (prevMax === undefined) delete process.env.PLAYBACK_MAX_SESSIONS;
+      else process.env.PLAYBACK_MAX_SESSIONS = prevMax;
+    }
+  });
+
   it("falls back to software when the configured hardware encoder isn't there", async () => {
     // This Mac has no render node. V4_PLAN.md is explicit that a missing or
     // misconfigured device degrades playback rather than breaking it.
