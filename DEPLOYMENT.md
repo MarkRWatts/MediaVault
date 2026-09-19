@@ -239,7 +239,7 @@ commented per variable. The VM's real values live in the Ansible vault (see
 
 - `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL` are required; the prod overlay
   refuses to start without them.
-- `DATABASE_URL`, `POSTER_CACHE_DIR` and `VIDEO_CACHE_DIR` are fixed inside
+- `DATABASE_URL`, `POSTER_CACHE_DIR`, `VIDEO_CACHE_DIR` and `AUDIO_CACHE_DIR` are fixed inside
   the data volume by the base compose file.
 - `MOVIES_PATH`, `TVSHOWS_PATH` and `MUSIC_PATH` are overridden by the prod
   overlay to paths inside the CIFS volume.

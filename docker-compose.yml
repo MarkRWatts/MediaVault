@@ -10,6 +10,8 @@ services:
       # Cap on that cache's total size in bytes (oldest-played evicted first).
       # Defaults to 10 GiB in code if left unset.
       VIDEO_CACHE_MAX_BYTES: ${VIDEO_CACHE_MAX_BYTES:-}
+      AUDIO_CACHE_DIR: /app/data/audio-cache
+      AUDIO_CACHE_MAX_BYTES: ${AUDIO_CACHE_MAX_BYTES:-}
       # Root of the movie share (bind-mounted read-only from the host).
       MOVIES_PATH: /movies
       # Root of the TV share. No bind mount in this base compose file (that's

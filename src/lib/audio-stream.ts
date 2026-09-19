@@ -103,7 +103,7 @@ export function estimatePcmBytes(durationSecs: number | null, format: PcmStreamF
 }
 
 let hasLocalFfmpegPromise: Promise<boolean> | null = null;
-function detectLocalFfmpeg(): Promise<boolean> {
+export function detectLocalFfmpeg(): Promise<boolean> {
   if (!hasLocalFfmpegPromise) {
     hasLocalFfmpegPromise = execFileAsync("ffmpeg", ["-version"])
       .then(() => true)
@@ -191,7 +191,7 @@ type TrackForResolve = {
  * decision themselves (getTrackAudio needs the format for ffmpeg's output
  * args; resolveTrackFile just needs a yes/no).
  */
-async function resolveTrackPath(
+export async function resolveTrackPath(
   trackId: number,
 ): Promise<{ track: TrackForResolve; absPath: string; musicRoot: string } | null> {
   const track = await prisma.track.findUnique({

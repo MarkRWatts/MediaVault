@@ -11,7 +11,7 @@
 // own cache on that rather than re-fetching.
 
 import { NextResponse } from "next/server";
-import { resolveTrackFile } from "@/lib/audio-stream";
+import { TRANSCODE_BUSY, parseAudioQuality, resolveTrackFileForQuality } from "@/lib/audio-transcode";
 import { serveFile } from "@/lib/serve-file";
 import { requireMemberOrResponse } from "@/lib/require-member";
 
@@ -25,7 +25,38 @@ export async function GET(req: Request, ctx: { params: Promise<{ trackId: string
     return NextResponse.json({ error: "invalid track id" }, { status: 400 });
   }
 
-  const file = await resolveTrackFile(trackId);
+  // ?quality=aac — a smaller copy of a lossless track for mobile data,
+  // converted once and cached (src/lib/audio-transcode.ts). Anything
+  // already lossy comes back as the original either way.
+  const params = new URL(req.url).searchParams;
+  const quality = parseAudioQuality(params.get("quality"));
+  if (!quality) {
+    return NextResponse.json({ error: "invalid quality" }, { status: 400 });
+  }
+
+  // &probe=1 — "is the smaller copy ready?", asked by a client about to
+  // PLAY a track (not prefetch it). Answers at once with { ready } and, if
+  // it isn't, starts the conversion in the background; the client then
+  // streams quality=aac when ready and the original when not, so nobody
+  // waits on ffmpeg to hear music. A probe rather than "serve whichever
+  // exists": a player fetches one track in several range requests, and
+  // they must all be answered from the same file.
+  if (params.get("probe") === "1") {
+    const probed = await resolveTrackFileForQuality(trackId, quality, { wait: false });
+    if (probed === TRANSCODE_BUSY || !probed) {
+      return NextResponse.json({ error: "not found" }, { status: 404 });
+    }
+    // Ready also when no conversion applies (an AAC or MP3 source).
+    return NextResponse.json({ ready: quality === "original" || probed.transcoded || !probed.needsTranscode });
+  }
+
+  const file = await resolveTrackFileForQuality(trackId, quality);
+  if (file === TRANSCODE_BUSY) {
+    return NextResponse.json(
+      { error: "too many tracks are being converted right now — try again shortly" },
+      { status: 503, headers: { "Retry-After": "2" } },
+    );
+  }
   if (!file) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
