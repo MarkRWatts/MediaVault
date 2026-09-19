@@ -14,6 +14,21 @@ none of it can be lifted into a Next.js app. What is worth taking is the
 demand, ffmpeg restarted wherever the viewer seeks — and the ffmpeg build
 that design was tuned against.
 
+## Status (19 Sep 2026)
+
+On branch `v4`, not deployed. `PLAYBACK_ENGINE` defaults to `jellyfin`, so
+merging changes nothing until the flag is set.
+
+| Phase | State |
+|---|---|
+| 0 Hardware and binary | Done: iGPU in the VM, bookworm image with pinned jellyfin-ffmpeg, `FFMPEG_PATH`/`FFPROBE_PATH`, compose device wiring; the render-node support for the deploy playbook is on its own branch in `ansible-homelab` and must go out with (or before) the new compose file. |
+| 1 Keyframe index | Done: Cues reader, `KeyframeIndex`, scanner hook, `scripts/backfill-keyframes.ts`; measured against the whole library. |
+| 2 Engine | Done: `src/lib/playback/` — segment tables, playlists, head arguments, head processes, sessions, throttle, cache budget, hardware self-test. Real-ffmpeg integration tests pass on Homebrew ffmpeg and on jellyfin-ffmpeg 8.1.2. |
+| 3 Hardware pipeline | Done: the real VAAPI argument lines verified on the VM (382 segments, every boundary within a frame). |
+| 4 Routes and cut-over flag | The session routes (`/jf/session`, `/jf/stop`, `/jf/e/<key>/…`) serve from the engine when `PLAYBACK_ENGINE=local`, with the contract the web player and the native apps already speak; `playable` and `features.playback` follow the flag; the admin page shows the engine and its hardware self-test. The `play/*` names and the single-mode player come with phase 6, when the Jellyfin branch is deleted. |
+| 5 Verification on real hardware | Not started. |
+| 6 Remove Jellyfin, release | Not started. |
+
 ## Why the first local pipeline was parked, and what changes
 
 The pipeline behind `IN_APP_PLAYBACK=1` (`src/lib/video-cache.ts`,
