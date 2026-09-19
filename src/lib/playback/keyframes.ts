@@ -7,6 +7,7 @@
 import path from "node:path";
 import { runFfprobeRaw } from "@/lib/ffprobe";
 import { readMatroskaCues } from "./matroska-cues";
+import type { SegmentEntry } from "@/lib/playback/types";
 
 const MATROSKA_EXTENSIONS = new Set([".mkv", ".webm"]);
 
@@ -80,22 +81,17 @@ export async function getKeyframes(absPath: string): Promise<KeyframesResult | n
   return { keyframeSecs: ffprobeKeyframes, source: "ffprobe" };
 }
 
-export interface SegmentTableEntry {
-  index: number;
-  start: number;
-  duration: number;
-}
-
 /**
  * Copy-tier segment table (V4_PLAN.md): boundaries can only fall on source
  * keyframes, so a new segment starts at the first keyframe at or after
- * `targetSecs` past the previous cut — the same rule ffmpeg's own HLS muxer
- * applies, so the EXTINF values this produces match what ffmpeg will
- * actually write. The last segment always runs to `durationSecs`, and
+ * `targetSecs` past the previous cut. The table is dictated to ffmpeg as an
+ * explicit cut list (head-args.ts), not predicted from a muxer's own rule
+ * -- ffmpeg's HLS muxer cuts on a grid from the start of each run, which a
+ * restarted head doesn't share (V4_PLAN.md, "Heads"). The last segment always runs to `durationSecs`, and
  * segment 0 always starts at 0 regardless of whether 0 is itself a
  * keyframe (nearly always is, for a real encode).
  */
-export function segmentTableFromKeyframes(keyframes: number[], durationSecs: number, targetSecs = 6): SegmentTableEntry[] {
+export function segmentTableFromKeyframes(keyframes: number[], durationSecs: number, targetSecs = 6): SegmentEntry[] {
   if (!(durationSecs > 0)) return [];
 
   const sorted = [...new Set(keyframes)].filter((k) => k >= 0 && k < durationSecs).sort((a, b) => a - b);
@@ -120,10 +116,10 @@ export function segmentTableFromKeyframes(keyframes: number[], durationSecs: num
  * Transcoded-video segment table: fixed `targetSecs` boundaries, the last
  * segment taking whatever remainder is left of `durationSecs`.
  */
-export function fixedSegmentTable(durationSecs: number, targetSecs = 6): SegmentTableEntry[] {
+export function fixedSegmentTable(durationSecs: number, targetSecs = 6): SegmentEntry[] {
   if (!(durationSecs > 0)) return [];
 
-  const segments: SegmentTableEntry[] = [];
+  const segments: SegmentEntry[] = [];
   let start = 0;
   let index = 0;
   while (start < durationSecs) {
