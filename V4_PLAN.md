@@ -55,6 +55,10 @@ a frame-alignment or scaling difference in that pipeline rather than
 encoder quality; not investigated further because VAAPI matches it on
 speed with one less layer.
 
+With the real argument builder (phase 3): VAAPI heads run at 15× (VC-1 →
+720p), 12× (VC-1 → 1080p Original) and 40× / 29× (576p DVD → Original /
+Remote, deinterlaced) realtime, cold seeks included.
+
 **Decision: `PLAYBACK_HWACCEL=vaapi` in production.** The Remote ceiling
 stays at 3 Mbit/s.
 
@@ -193,6 +197,22 @@ from the keyframe index, does not survive a restart:
   ffmpeg subtracts 3/23 s from the seek target when the video has B-frames,
   so `-ss <keyframe>` itself lands one keyframe early (seen in the test);
   the offset is clamped below the following keyframe.
+- **`-segment_time_delta` differs by tier.** The muxer measures cut times
+  from the head's first video packet. A copied head's first packet *is*
+  the boundary keyframe, so the delta is tight (0.02 s — real keyframes can
+  be well under a second apart). A transcoded head's first frame is not
+  exactly on the boundary (a source starting at 0.063 s; an accurate seek
+  landing a frame late) while its forced keyframes are on the absolute
+  grid: with a tight delta the first cut is missed, segment N comes out
+  double length and every later file is numbered one too low. Found on the
+  VM with VAAPI; transcodes use 0.5 s, which is safe because their only
+  keyframes are the forced ones (`-sc_threshold 0` for libx264; a forced
+  IDR resets `h264_vaapi`'s GOP counter — 382 segments checked, one
+  keyframe each, all within a frame of the table).
+- **The engine verifies what ffmpeg reports.** Each finished segment's
+  start/end from the segment list is checked against the table before the
+  file is renamed into place; a mismatch fails the head rather than
+  caching wrong content under a right name.
 - **Audio seam:** a restarted head's audio begins ~80 ms after its first
   video frame. That is the point a player has just seeked to, so it is
   inaudible there; a viewer playing *across* a boundary between segments
