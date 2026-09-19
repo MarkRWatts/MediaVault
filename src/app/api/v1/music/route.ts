@@ -12,7 +12,7 @@
 
 import { NextResponse } from "next/server";
 import { requireMemberOrResponse } from "@/lib/require-member";
-import { getMusicIndex, getMusicFavourites } from "@/lib/queries-music";
+import { getMusicIndex, getMusicFavourites, getRecentAlbums } from "@/lib/queries-music";
 import { getUserPlaylists } from "@/lib/queries-playlists";
 import type { MusicIndexResponse } from "@/lib/api-v1-types";
 
@@ -20,12 +20,13 @@ export async function GET() {
   const gate = await requireMemberOrResponse();
   if (gate instanceof NextResponse) return gate;
 
-  const [index, favourites, playlists] = await Promise.all([
+  const [index, favourites, playlists, recentAlbums] = await Promise.all([
     getMusicIndex(),
     getMusicFavourites(gate.userId),
     getUserPlaylists(gate.userId),
+    getRecentAlbums(),
   ]);
 
-  const body: MusicIndexResponse = { ...index, favourites, playlists };
+  const body: MusicIndexResponse = { ...index, favourites, playlists, recentAlbums };
   return NextResponse.json(body);
 }

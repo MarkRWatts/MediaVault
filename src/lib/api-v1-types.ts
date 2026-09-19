@@ -27,6 +27,7 @@ import type {
   AlbumDetail,
   MusicFavourites,
   FavouriteTrackView,
+  FavouriteAlbumView,
 } from "@/lib/queries-music";
 import type { PlaylistSummary, PlaylistDetail } from "@/lib/queries-playlists";
 import type { QueueTrack } from "@/lib/player-types";
@@ -112,6 +113,9 @@ export interface ShowDetailResponse extends Omit<ShowDetail, "seasons"> {
 export interface MusicIndexResponse extends MusicIndexData {
   favourites: MusicFavourites;
   playlists: PlaylistSummary[];
+  /** The newest playable albums, for the app's home screen. Added after
+   *  the first app build shipped, so clients decode it as optional. */
+  recentAlbums: FavouriteAlbumView[];
 }
 
 /** GET /api/v1/music/artists/:id */

@@ -578,6 +578,36 @@ export async function getMusicFavourites(userId: string): Promise<MusicFavourite
   };
 }
 
+/** The newest albums with something to play — the native app's home
+ *  screen "New music" row. Owned with at least one track on disk, so a
+ *  catalogue gap or a vinyl-only entry never shows up as an addition. */
+export async function getRecentAlbums(limit = 12): Promise<FavouriteAlbumView[]> {
+  const rows = await prisma.album.findMany({
+    where: { owned: true, tracks: { some: {} } },
+    orderBy: { createdAt: "desc" },
+    take: limit,
+    select: {
+      id: true,
+      title: true,
+      year: true,
+      kind: true,
+      coverPath: true,
+      updatedAt: true,
+      artist: { select: { id: true, name: true } },
+    },
+  });
+  return rows.map((album) => ({
+    id: album.id,
+    title: album.title,
+    year: album.year,
+    kind: album.kind,
+    artistId: album.artist.id,
+    artistName: album.artist.name,
+    hasCover: album.coverPath != null,
+    coverVersion: album.coverPath != null ? album.updatedAt.getTime() : null,
+  }));
+}
+
 /** Newest first. Only playable tracks of owned albums — a favourite whose
  *  file has gone is cascaded away by the scanner, and a DRM'd one can't be
  *  hearted in the first place (see toggleTrackFavourite), so this filter

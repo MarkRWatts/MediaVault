@@ -582,6 +582,9 @@ export interface ShowSummary {
   ownedEpisodeCount: number;
   totalEpisodeCount: number;
   complete: boolean;
+  /** When the show first entered the library (ISO), for "recently added"
+   *  ordering — same role as LibraryFilm.createdAt. */
+  createdAt: string;
 }
 
 export async function getShows(): Promise<ShowSummary[]> {
@@ -608,6 +611,7 @@ export async function getShows(): Promise<ShowSummary[]> {
       ownedEpisodeCount,
       totalEpisodeCount,
       complete: totalEpisodeCount > 0 && ownedEpisodeCount === totalEpisodeCount,
+      createdAt: s.createdAt.toISOString(),
     };
   });
 }
