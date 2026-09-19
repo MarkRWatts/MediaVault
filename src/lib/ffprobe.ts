@@ -7,6 +7,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
+import { ffprobePath } from "@/lib/ffmpeg-bin";
 
 const execFileAsync = promisify(execFile);
 
@@ -68,7 +69,7 @@ let hasLocalFfprobePromise: Promise<boolean> | null = null;
 
 function detectLocalFfprobe(): Promise<boolean> {
   if (!hasLocalFfprobePromise) {
-    hasLocalFfprobePromise = execFileAsync("ffprobe", ["-version"])
+    hasLocalFfprobePromise = execFileAsync(ffprobePath(), ["-version"])
       .then(() => true)
       .catch(() => false);
   }
@@ -167,7 +168,7 @@ export async function probe(absPath: string): Promise<ProbeResult> {
   const hasLocal = await detectLocalFfprobe();
 
   if (hasLocal) {
-    const { stdout } = await execFileAsync("ffprobe", [...FFPROBE_ARGS, absPath], {
+    const { stdout } = await execFileAsync(ffprobePath(), [...FFPROBE_ARGS, absPath], {
       maxBuffer: 1024 * 1024 * 32,
     });
     return parseFfprobeJson(stdout);

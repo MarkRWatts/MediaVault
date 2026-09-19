@@ -22,8 +22,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createTempTestDb } from "@/lib/test-temp-db";
 import type { PrismaClient } from "@/generated/prisma/client";
+import { ffmpegPath } from "@/lib/ffmpeg-bin";
 
-const hasFfmpeg = spawnSync("ffmpeg", ["-version"], { stdio: "ignore" }).status === 0;
+const hasFfmpeg = spawnSync(ffmpegPath(), ["-version"], { stdio: "ignore" }).status === 0;
 
 let testPrisma: PrismaClient;
 let cleanupDb: () => Promise<void>;
@@ -66,7 +67,7 @@ describe.skipIf(!hasFfmpeg)("video-cache prepare pipeline (real ffmpeg, HLS)", (
     // both streams copied), the most common real case in this library.
     // 14 seconds so the 6s segmenting yields three segments.
     execFileSync(
-      "ffmpeg",
+      ffmpegPath(),
       [
         "-y", "-loglevel", "error",
         "-f", "lavfi", "-i", "testsrc=duration=14:size=160x120:rate=10",
