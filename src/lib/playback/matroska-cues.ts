@@ -47,7 +47,9 @@ const ID = {
 const TRACK_TYPE_VIDEO = 1;
 
 // Matroska default when Info has no TimestampScale of its own: 1ms ticks.
-const DEFAULT_TIMESTAMP_SCALE_NS = 1_000_000n;
+// BigInt(...) rather than a `1000000n` literal — this repo's tsconfig
+// targets ES2017, which TypeScript refuses BigInt literal syntax under.
+const DEFAULT_TIMESTAMP_SCALE_NS = BigInt(1_000_000);
 
 // Big enough for the worst case (an 8-byte id vint + an 8-byte size vint);
 // real files only ever use 1-4 byte ids, but the format allows up to 8.
@@ -61,6 +63,17 @@ const MAX_TOP_LEVEL_ELEMENTS = 200_000;
 
 interface ByteTracker {
   bytesRead: number;
+}
+
+// @types/node's FileHandle.read only accepts a `number` position (Node
+// itself accepts bigint at runtime, but the types don't say so) — this is
+// the one place a BigInt file offset is narrowed back down, with an actual
+// safety check rather than a silent truncation.
+function toReadPosition(pos: bigint): number {
+  if (pos > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error(`Matroska file offset ${pos} exceeds Number.MAX_SAFE_INTEGER`);
+  }
+  return Number(pos);
 }
 
 interface ElementHeader {
@@ -96,8 +109,9 @@ function readVint(buf: Buffer, offset: number, stripMarker: boolean): Vint | nul
   if (length > 8 || offset + length > buf.length) return null;
 
   let value = BigInt(stripMarker ? first & (marker - 1) : first);
+  const byteShift = BigInt(8);
   for (let i = 1; i < length; i++) {
-    value = (value << 8n) | BigInt(buf[offset + i]);
+    value = (value << byteShift) | BigInt(buf[offset + i]);
   }
   return { value, length };
 }
@@ -112,17 +126,17 @@ async function readElementHeader(
   tracker: ByteTracker,
 ): Promise<ElementHeader | null> {
   const buf = Buffer.alloc(HEADER_WINDOW);
-  const { bytesRead } = await fh.read(buf, 0, HEADER_WINDOW, pos);
+  const { bytesRead } = await fh.read(buf, 0, HEADER_WINDOW, toReadPosition(pos));
   tracker.bytesRead += bytesRead;
   if (bytesRead === 0) return null;
 
   const window = buf.subarray(0, bytesRead);
   const idVint = readVint(window, 0, false);
-  if (!idVint || idVint.value > 0xffffffff) return null;
+  if (!idVint || idVint.value > BigInt(0xffffffff)) return null;
   const sizeVint = readVint(window, idVint.length, true);
   if (!sizeVint) return null;
 
-  const unknownAllOnes = (1n << BigInt(7 * sizeVint.length)) - 1n;
+  const unknownAllOnes = (BigInt(1) << BigInt(7 * sizeVint.length)) - BigInt(1);
   const size = sizeVint.value === unknownAllOnes ? null : sizeVint.value;
   const dataStart = pos + BigInt(idVint.length + sizeVint.length);
   return { id: Number(idVint.value), size, dataStart };
@@ -153,13 +167,14 @@ async function* children(
  *  4-byte binary SeekID, which is just the target element's id encoded the
  *  same way). Capped at 8 bytes — no real EBML uint is wider. */
 async function readUintElement(fh: fs.FileHandle, header: ElementHeader, tracker: ByteTracker): Promise<bigint> {
-  if (header.size === null || header.size === 0n) return 0n;
+  if (header.size === null || header.size === BigInt(0)) return BigInt(0);
   const len = Math.min(Number(header.size), 8);
   const buf = Buffer.alloc(len);
-  const { bytesRead } = await fh.read(buf, 0, len, header.dataStart);
+  const { bytesRead } = await fh.read(buf, 0, len, toReadPosition(header.dataStart));
   tracker.bytesRead += bytesRead;
-  let value = 0n;
-  for (let i = 0; i < bytesRead; i++) value = (value << 8n) | BigInt(buf[i]);
+  const byteShift = BigInt(8);
+  let value = BigInt(0);
+  for (let i = 0; i < bytesRead; i++) value = (value << byteShift) | BigInt(buf[i]);
   return value;
 }
 
@@ -271,7 +286,7 @@ export async function readMatroskaCues(absPath: string): Promise<MatroskaCuesRes
     // EBML header, then skip forward (tolerating stray Void/CRC-32 before
     // Segment, though every real muxer puts Segment right after it) to find
     // Segment itself.
-    const ebml = await readElementHeader(fh, 0n, tracker);
+    const ebml = await readElementHeader(fh, BigInt(0), tracker);
     if (!ebml || ebml.id !== ID.Ebml) return { keyframeSecs: null, bytesRead: tracker.bytesRead };
 
     let pos = ebml.size !== null ? ebml.dataStart + ebml.size : ebml.dataStart;
