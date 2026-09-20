@@ -21,7 +21,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 import { NextRequest, NextResponse } from "next/server";
-import { type CoverSize, parseCoverSize, resizedCoverPath, scaleFilter } from "@/lib/cover-size";
+import { type CoverSize, parseCoverSize, resizeArgs, resizedCoverPath } from "@/lib/cover-size";
 import { prisma } from "@/lib/db";
 import { ffmpegPath } from "@/lib/ffmpeg-bin";
 import { requireMemberOrResponse } from "@/lib/require-member";
@@ -119,15 +119,17 @@ async function resizedOrOriginal(
   const tmp = `${dest}.${process.pid}-${Date.now()}.tmp`;
   try {
     await fs.mkdir(path.dirname(dest), { recursive: true });
-    await execFileAsync(
-      ffmpegPath(),
-      ["-y", "-i", source, "-vf", scaleFilter(size), "-frames:v", "1", "-q:v", "3", tmp],
-      { maxBuffer: 1024 * 1024 * 32 },
-    );
+    await execFileAsync(ffmpegPath(), resizeArgs(source, size, tmp), {
+      maxBuffer: 1024 * 1024 * 32,
+    });
     await fs.rename(tmp, dest);
     return dest;
-  } catch {
+  } catch (err) {
     await fs.rm(tmp, { force: true }).catch(() => {});
+    // Falling back is right — an oversized cover beats a broken image —
+    // but doing it silently is how a resize that never once succeeded
+    // went unnoticed while every client downloaded full-size files.
+    console.error(`[api/cover] resize to ${size} failed for ${coverPath}:`, err);
     return source;
   }
 }

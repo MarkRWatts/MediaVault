@@ -44,3 +44,32 @@ export function resizedCoverPath(coverPath: string, size: CoverSize): string {
 export function scaleFilter(size: CoverSize): string {
   return `scale='min(${size},iw)':'min(${size},ih)':force_original_aspect_ratio=decrease`;
 }
+
+/// The whole ffmpeg invocation, as an argument list, so the thing that
+/// actually runs in production is the thing a test can assert on.
+///
+/// `-f image2 -c:v mjpeg` is not decoration. The route writes to a
+/// uniquely-named temporary before renaming it into place, and that name
+/// ends in `.tmp` — from which ffmpeg cannot infer an output format, so
+/// it exits with "Error initializing the muxer" and the route falls back
+/// to the stored cover. Which is exactly what it did the first time this
+/// shipped: resized/ filled with nothing at all and every client kept
+/// getting the full-size file, silently.
+export function resizeArgs(source: string, size: CoverSize, dest: string): string[] {
+  return [
+    "-y",
+    "-i",
+    source,
+    "-vf",
+    scaleFilter(size),
+    "-frames:v",
+    "1",
+    "-q:v",
+    "3",
+    "-f",
+    "image2",
+    "-c:v",
+    "mjpeg",
+    dest,
+  ];
+}
