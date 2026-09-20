@@ -745,6 +745,8 @@ export interface EpisodeView {
   overview: string | null;
   stillPath: string | null;
   airDate: string | null;
+  /** TMDB's runtime for the episode, for the row's "1h 06m · Ends at …". */
+  runtimeMins: number | null;
   owned: boolean;
   files: EpisodeFileView[];
 }
@@ -812,6 +814,7 @@ export async function getShowDetail(id: number, limit: AgeLimit): Promise<ShowDe
       overview: e.overview,
       stillPath: e.stillPath,
       airDate: e.airDate ? e.airDate.toISOString() : null,
+      runtimeMins: e.runtimeMins,
       owned: e.owned,
       files: e.files.map((f) => ({
         id: f.id,
