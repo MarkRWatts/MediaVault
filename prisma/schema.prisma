@@ -215,14 +215,41 @@ model EpisodeFile {
   container    String?
   sizeBytes    BigInt?
   durationSecs Float?
+  // The pre-structured-audio form of `audioTracks`, kept as the fallback for
+  // files last probed before EpisodeAudioTrack existed — episode rows fall
+  // back to this string until a forced TV scan fills the tracks in.
   audioSummary String? // e.g. "DTS-HD MA 5.1 ENG; AC3 2.0 ENG"
   mtimeMs      Float?
   probedAt     DateTime?
   jellyfinId   String?
   watchProgress WatchProgress[]
+  audioTracks   EpisodeAudioTrack[]
 
   @@unique([filePath, episodeId])
   @@index([episodeId])
+}
+
+// The episode-side twin of AudioTrack. TV files used to keep their audio as
+// one pre-rendered display string (EpisodeFile.audioSummary), which meant the
+// show pages could never draw the Dolby/DTS marks the film pages draw — the
+// scanner probed the tracks and then threw the structure away. Same columns as
+// AudioTrack; separate table because EpisodeFile and Version are separate
+// identities with their own autoincrement sequences.
+model EpisodeAudioTrack {
+  id            Int         @id @default(autoincrement())
+  episodeFileId Int
+  episodeFile   EpisodeFile @relation(fields: [episodeFileId], references: [id], onDelete: Cascade)
+  streamIdx     Int
+  codec         String?
+  profile       String? // e.g. "DTS-HD MA + DTS:X", "Dolby TrueHD + Dolby Atmos"
+  language      String?
+  channels      Int?
+  layout        String?
+  title         String?
+  isDefault     Boolean @default(false)
+  isDescriptive Boolean @default(false)
+
+  @@index([episodeFileId])
 }
 
 // V4_PLAN.md "The engine" -> "Keyframe index": cached video keyframe

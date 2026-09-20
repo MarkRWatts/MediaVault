@@ -290,7 +290,7 @@ interface EpisodeFileData {
 // tracks. Episode rows render this string rather than badges, so the
 // object-audio rider has to be spelled out here; existing rows pick it up on
 // the next re-probe.
-function buildAudioSummary(tracks: ProbedAudioTrack[]): string | null {
+export function buildAudioSummary(tracks: ProbedAudioTrack[]): string | null {
   if (tracks.length === 0) return null;
   return tracks
     .map((t) => {
@@ -397,6 +397,29 @@ async function processEpisodeFile(
       audioSummary: buildAudioSummary(result.audioTracks),
       probedAt: new Date(),
     });
+
+    // One EpisodeFile row per episode the file covers (multi-episode rips), so
+    // the tracks are written per row — same shape the film side writes for a
+    // Version. audioSummary above stays in step for anything still reading it.
+    await prisma.episodeAudioTrack.deleteMany({ where: { episodeFileId: { in: fileIds } } });
+    if (result.audioTracks.length > 0) {
+      await prisma.episodeAudioTrack.createMany({
+        data: fileIds.flatMap((episodeFileId) =>
+          result.audioTracks.map((a) => ({
+            episodeFileId,
+            streamIdx: a.streamIdx,
+            codec: a.codec,
+            profile: a.profile,
+            language: a.language,
+            channels: a.channels,
+            layout: a.layout,
+            title: a.title,
+            isDefault: a.isDefault,
+            isDescriptive: a.isDescriptive,
+          })),
+        ),
+      });
+    }
 
     await indexKeyframes("episode", fileIds, absPath, { mtimeMs, sizeBytes }, log);
   } catch (err) {

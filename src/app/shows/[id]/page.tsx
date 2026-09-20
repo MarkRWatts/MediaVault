@@ -2,6 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import PosterImage from "@/components/PosterImage";
 import SeasonSection from "@/components/SeasonSection";
+import SpecLine from "@/components/SpecLine";
+import { sharedSpec, showFiles } from "@/lib/episode-specs";
 import { getShowDetail } from "@/lib/queries";
 import { playbackAvailable } from "@/lib/playback/engine-flag";
 import FilmActions from "@/components/FilmActions";
@@ -32,6 +34,11 @@ export default async function ShowPage({
   ]);
 
   const complete = show.totalEpisodeCount > 0 && show.ownedEpisodeCount === show.totalEpisodeCount;
+
+  // A show ripped from boxed sets is one format end to end, so it gets said
+  // once here and nowhere else. Null when the seasons disagree, and each
+  // season header answers for itself instead (SeasonSection).
+  const spec = sharedSpec(showFiles(show.seasons));
 
   return (
     <div className="flex flex-1 flex-col">
@@ -113,6 +120,8 @@ export default async function ShowPage({
                 )}
               </div>
 
+              {spec && <SpecLine spec={spec} />}
+
               {show.genres.length > 0 && (
                 <div className="flex flex-wrap gap-1.5">
                   {show.genres.map((g) => (
@@ -163,7 +172,13 @@ export default async function ShowPage({
           </p>
         ) : (
           show.seasons.map((season) => (
-            <SeasonSection key={season.id} season={season} playable={playable} showTitle={show.title} />
+            <SeasonSection
+              key={season.id}
+              season={season}
+              playable={playable}
+              showTitle={show.title}
+              specHoisted={spec !== null}
+            />
           ))
         )}
       </div>

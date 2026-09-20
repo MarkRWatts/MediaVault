@@ -708,6 +708,16 @@ export async function getShows(limit: AgeLimit): Promise<ShowSummary[]> {
     });
 }
 
+export interface EpisodeAudioTrackView {
+  id: number;
+  codec: string | null;
+  profile: string | null;
+  channels: number | null;
+  layout: string | null;
+  language: string | null;
+  title: string | null;
+}
+
 export interface EpisodeFileView {
   id: number;
   format: Format;
@@ -716,6 +726,10 @@ export interface EpisodeFileView {
   resolution: string;
   tier: ResolutionTier;
   videoRange: string | null;
+  /** Structured audio, so TV can draw the same marks films do. Empty for a
+   *  file last probed before EpisodeAudioTrack existed — `audioSummary` is
+   *  the fallback for those until a forced TV scan. */
+  audioTracks: EpisodeAudioTrackView[];
   audioSummary: string | null;
   sizeLabel: string;
   jellyfinId: string | null;
@@ -777,7 +791,11 @@ export async function getShowDetail(id: number, limit: AgeLimit): Promise<ShowDe
           // production/disc order, so airDate must never be used here.
           episodes: {
             orderBy: { episodeNumber: "asc" },
-            include: { files: true },
+            include: {
+              files: {
+                include: { audioTracks: { orderBy: { streamIdx: "asc" } } },
+              },
+            },
           },
         },
       },
@@ -803,6 +821,15 @@ export async function getShowDetail(id: number, limit: AgeLimit): Promise<ShowDe
         resolution: resolutionLabel(f.width, f.height),
         tier: resolutionTier(f.width, f.height),
         videoRange: f.videoRange,
+        audioTracks: f.audioTracks.map((a) => ({
+          id: a.id,
+          codec: a.codec,
+          profile: a.profile,
+          channels: a.channels,
+          layout: a.layout,
+          language: a.language,
+          title: a.title,
+        })),
         audioSummary: f.audioSummary,
         sizeLabel: formatBytes(f.sizeBytes === null ? null : Number(f.sizeBytes)),
         jellyfinId: f.jellyfinId,

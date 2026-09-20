@@ -1,28 +1,38 @@
 import FormatBadge from "@/components/FormatBadge";
-import ResolutionBadge from "@/components/ResolutionBadge";
-import HdrBadge from "@/components/HdrBadge";
 import PlayButton from "@/components/PlayButton";
+import SpecLine from "@/components/SpecLine";
+import { fileSpec } from "@/lib/episode-specs";
 import type { EpisodeFileView, EpisodeView } from "@/lib/queries";
 import { isFilePlayable } from "@/lib/playback/engine-flag";
 
-// One file's specs on an owned episode row — badges + audio summary + size +
-// an in-app Play button (/api/tv-video, "jellyfin" being the player's
-// session-based protocol name regardless of which engine actually serves
-// it) when the file is playable through whichever engine is active. An
-// episode normally has a single file, but multi-cut episodes (theatrical +
-// extended rips of the same episode) render one FileLine per file, stacked,
-// so nothing gets silently dropped.
-function FileLine({ file, playable, playTitle }: { file: EpisodeFileView; playable: boolean; playTitle: string }) {
+// One file's specs on an owned episode row — size and an in-app Play button
+// (/api/tv-video, "jellyfin" being the player's session-based protocol name
+// regardless of which engine actually serves it) when the file is playable
+// through whichever engine is active. An episode normally has a single file,
+// but multi-cut episodes (theatrical + extended rips of the same episode)
+// render one FileLine per file, stacked, so nothing gets silently dropped.
+//
+// `hoisted` means the header above already states this file's format,
+// resolution, range and audio because every file under it matches — so the
+// row shows none of it. It's false whenever the files disagree (a half-DVD,
+// half-Blu-ray show, or a multi-cut episode), and then the badges come back
+// here, which is the only place that can tell them apart.
+function FileLine({
+  file,
+  playable,
+  playTitle,
+  hoisted,
+}: {
+  file: EpisodeFileView;
+  playable: boolean;
+  playTitle: string;
+  hoisted: boolean;
+}) {
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      <FormatBadge kind={file.format} />
-      <ResolutionBadge tier={file.tier} />
-      <HdrBadge videoRange={file.videoRange} />
-      {file.audioSummary && (
-        <span className="max-w-[55vw] truncate font-mono text-[11px] text-text-faint sm:max-w-xs">
-          {file.audioSummary}
-        </span>
-      )}
+    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+      {/* The same line the headers draw, so a file that has to state its own
+          specs states them the same way — only the place differs. */}
+      {!hoisted && <SpecLine spec={fileSpec(file)} />}
       <span className="font-mono text-[11px] text-text-faint">{file.sizeLabel}</span>
       {playable && isFilePlayable(file) && (
         <PlayButton versionId={file.id} title={playTitle} source="jellyfin" basePath="/api/tv-video" />
@@ -36,6 +46,7 @@ export default function EpisodeRow({
   playable,
   showTitle,
   seasonNumber,
+  hoisted = false,
 }: {
   episode: EpisodeView;
   /** playbackAvailable() — playback is possible at all right now, so
@@ -43,6 +54,8 @@ export default function EpisodeRow({
   playable: boolean;
   showTitle: string;
   seasonNumber: number;
+  /** A header above already states these files' specs — see FileLine. */
+  hoisted?: boolean;
 }) {
   const { episodeNumber, name, stillPath, owned, files } = episode;
   const playTitle = `${showTitle} S${padded(seasonNumber)}E${padded(episodeNumber)}${name ? ` · ${name}` : ""}`;
@@ -75,7 +88,7 @@ export default function EpisodeRow({
           files.length > 0 ? (
             <div className="flex flex-col gap-1">
               {files.map((f) => (
-                <FileLine key={f.id} file={f} playable={playable} playTitle={playTitle} />
+                <FileLine key={f.id} file={f} playable={playable} playTitle={playTitle} hoisted={hoisted} />
               ))}
             </div>
           ) : (
