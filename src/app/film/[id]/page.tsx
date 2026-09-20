@@ -17,12 +17,14 @@ export default async function FilmPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const { userId } = await requireMemberOrRedirect();
+  const { userId, ageLimit } = await requireMemberOrRedirect();
   const { id } = await params;
   const filmId = Number(id);
   if (!Number.isInteger(filmId)) notFound();
 
-  const film = await getFilmDetail(filmId);
+  // Null here is either "no such film" or "above this viewer's age limit";
+  // both are a 404, deliberately indistinguishable.
+  const film = await getFilmDetail(filmId, ageLimit);
   if (!film) notFound();
 
   // In-app Play: the OLD, parked event-playlist pipeline shown only when

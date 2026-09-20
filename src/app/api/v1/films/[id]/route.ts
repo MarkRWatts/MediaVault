@@ -23,7 +23,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     return NextResponse.json({ error: "invalid film id" }, { status: 400 });
   }
 
-  const film = await getFilmDetail(id);
+  const film = await getFilmDetail(id, gate.ageLimit);
   if (!film) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }

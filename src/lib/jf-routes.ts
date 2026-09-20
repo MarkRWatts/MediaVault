@@ -23,16 +23,25 @@ import {
 } from "@/lib/jellyfin-playback";
 import { parseVariant } from "@/lib/video-playback";
 import { currentViewer } from "@/lib/jf-viewer";
+import { ageGateForUser } from "@/lib/age-gate";
 import { playbackEngine } from "@/lib/playback/engine-flag";
 import { engineProxy, engineSession, engineStop } from "@/lib/playback/engine-routes";
 import type { MediaKind } from "@/lib/playback/types";
 
 type ResolveItem = (id: number) => Promise<string | null>;
 
+// The age-rating gate (src/lib/age-gate.ts) sits inside each branch below
+// rather than above the playbackEngine() check, so the Jellyfin path keeps
+// the response precedence it always had (an unconfigured server still
+// answers 503 before anything else). Free for an unrestricted viewer, which
+// is everyone without a date of birth on their Member row.
+
 export async function jfSession(req: Request, idParam: string, resolveItem: ResolveItem, basePath: string, kind: MediaKind) {
   if (playbackEngine() === "local") {
     const viewer = await currentViewer();
     if (!viewer) return NextResponse.json({ error: "not signed in" }, { status: 401 });
+    const blocked = await ageGateForUser(viewer.userId, kind, Number(idParam));
+    if (blocked) return blocked;
     return engineSession(req, idParam, kind, basePath, viewer.deviceId);
   }
 
@@ -41,6 +50,8 @@ export async function jfSession(req: Request, idParam: string, resolveItem: Reso
   if (!viewer) return NextResponse.json({ error: "not signed in" }, { status: 401 });
 
   const id = Number(idParam);
+  const blocked = await ageGateForUser(viewer.userId, kind, id);
+  if (blocked) return blocked;
   const itemId = await resolveItem(id);
   if (!itemId) return NextResponse.json({ error: "not found" }, { status: 404 });
   const params = new URL(req.url).searchParams;
@@ -87,6 +98,8 @@ export async function jfSession(req: Request, idParam: string, resolveItem: Reso
   }
 }
 
+// No age gate here: stop takes a playSessionId, not a media id, and ending
+// a transcode is the safe direction — a restricted viewer can't start one.
 export async function jfStop(req: Request) {
   if (playbackEngine() === "local") {
     const viewer = await currentViewer();
@@ -109,12 +122,18 @@ export async function jfProxy(req: Request, idParam: string, path: string[], res
     if (!viewer) return NextResponse.json({ error: "not signed in" }, { status: 401 });
     const id = Number(idParam);
     if (!Number.isInteger(id) || id <= 0) return new NextResponse("not found", { status: 404 });
+    // Every playlist and segment, not just the session start: a segment URL
+    // must not outlive the viewer's permission to watch it.
+    const blocked = await ageGateForUser(viewer.userId, kind, id);
+    if (blocked) return blocked;
     return engineProxy(req, path.join("/"), kind, id, viewer.deviceId);
   }
 
   if (!jellyfinConfigured()) return NextResponse.json({ error: "Jellyfin is not configured" }, { status: 503 });
   const viewer = await currentViewer();
   if (!viewer) return NextResponse.json({ error: "not signed in" }, { status: 401 });
+  const blocked = await ageGateForUser(viewer.userId, kind, Number(idParam));
+  if (blocked) return blocked;
   const itemId = await resolveItem(Number(idParam));
   if (!itemId) return NextResponse.json({ error: "not found" }, { status: 404 });
   return proxyJellyfinHls(itemId, path.join("/"), new URL(req.url).searchParams, viewer.deviceId);

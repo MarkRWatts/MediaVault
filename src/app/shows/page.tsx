@@ -13,11 +13,11 @@ import { requireMemberOrRedirect } from "@/lib/require-member";
 import { getShowIdsState } from "@/lib/film-user-state";
 
 export default async function ShowsPage() {
-  const { userId } = await requireMemberOrRedirect();
-  const shows = await getShows();
+  const { userId, ageLimit } = await requireMemberOrRedirect();
+  const shows = await getShows(ageLimit);
   const [ids, continueEpisodes] = await Promise.all([
     getShowIdsState(userId),
-    getContinueWatchingEpisodes(userId),
+    getContinueWatchingEpisodes(userId, ageLimit),
   ]);
   const playable = playbackAvailable();
   const favouriteSet = new Set(ids?.favouriteIds ?? []);

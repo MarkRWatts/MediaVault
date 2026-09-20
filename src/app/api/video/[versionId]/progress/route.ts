@@ -24,6 +24,7 @@ import { prisma } from "@/lib/db";
 import { WATCH_COMPLETED_RATIO } from "@/lib/constants";
 import { logPlaybackStart } from "@/lib/audit";
 import { logPlay } from "@/lib/play-log";
+import { ageGateForUser } from "@/lib/age-gate";
 
 async function currentUserId(): Promise<string | null> {
   const session = await auth.api.getSession({ headers: await headers() });
@@ -46,6 +47,14 @@ export async function GET(_req: Request, ctx: { params: Promise<{ versionId: str
   if (!userId) {
     return NextResponse.json({ error: "not signed in" }, { status: 401 });
   }
+
+  // Playback itself is gated (src/lib/age-gate.ts), so a restricted viewer
+  // can't reach a position worth reporting — but this route writes a row
+  // keyed on an id from the request body's URL, and refusing it here keeps
+  // a stale client (or a replayed request) from seeding resume state for
+  // something they may no longer watch.
+  const blocked = await ageGateForUser(userId, "film", versionId);
+  if (blocked) return blocked;
 
   const row = await prisma.watchProgress.findUnique({
     where: { userId_versionId: { userId, versionId } },
@@ -94,6 +103,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ versionId: str
   // and surface as a generic 500), same as the episode twin.
   const exists = await prisma.version.findUnique({ where: { id: versionId }, select: { id: true } });
   if (!exists) return NextResponse.json({ error: "not found" }, { status: 404 });
+
+  const blocked = await ageGateForUser(userId, "film", versionId);
+  if (blocked) return blocked;
 
   // See WATCH_COMPLETED_RATIO's doc comment for why 95%.
   const completed = positionSecs >= durationSecs * WATCH_COMPLETED_RATIO;
