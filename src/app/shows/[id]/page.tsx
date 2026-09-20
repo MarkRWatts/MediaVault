@@ -14,12 +14,13 @@ export default async function ShowPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const { userId } = await requireMemberOrRedirect();
+  const { userId, ageLimit } = await requireMemberOrRedirect();
   const { id } = await params;
   const showId = Number(id);
   if (!Number.isInteger(showId)) notFound();
 
-  const show = await getShowDetail(showId);
+  // See the film page: a withheld show 404s exactly like a missing one.
+  const show = await getShowDetail(showId, ageLimit);
   if (!show) notFound();
 
   // Only build deep links when playback is actually available — no error

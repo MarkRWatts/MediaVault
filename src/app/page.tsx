@@ -15,15 +15,15 @@ export default async function LibraryPage() {
   // person still a member). Membership is what vouches someone into the
   // web of trust, so the library requires it; a signed-in non-member is
   // sent to /onboarding, same as every other library page.
-  const { userId } = await requireMemberOrRedirect();
+  const { userId, ageLimit } = await requireMemberOrRedirect();
   // Set by an email-code sign-in (see verifyOTP); the strip itself decides
   // whether this device can make a passkey and whether it's been dismissed.
   const nudgePasskey = (await cookies()).has(PASSKEY_NUDGE_COOKIE);
 
   const [{ films, filmCount, discCount }, continueWatching, favourites, watchedIds] = await Promise.all([
-    getLibraryFilms(),
-    userId ? getContinueWatchingFilms(userId) : Promise.resolve([]),
-    userId ? getFavouriteFilms(userId) : Promise.resolve([]),
+    getLibraryFilms(ageLimit),
+    userId ? getContinueWatchingFilms(userId, ageLimit) : Promise.resolve([]),
+    userId ? getFavouriteFilms(userId, ageLimit) : Promise.resolve([]),
     userId ? getWatchedFilmIds(userId) : Promise.resolve([]),
   ]);
 

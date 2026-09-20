@@ -77,7 +77,14 @@ export async function AppShell({ children }: { children: React.ReactNode }) {
     },
   });
   const shellUser: ShellUser = { name: user.name, email: user.email, image: user.image };
-  const flags = { isOwner: user.isAppOwner, hasAdultAccess: user.adultLibraryAccess };
+  // An age-restricted member (a date of birth on their Member row — see
+  // src/lib/age-rating.ts) never sees the Adult row, whatever their own
+  // opt-in says; requireAdultAccessOrRedirect refuses them regardless, this
+  // just stops the nav offering a door that only 404s.
+  const flags = {
+    isOwner: user.isAppOwner,
+    hasAdultAccess: user.adultLibraryAccess && member.dateOfBirth === null,
+  };
   // The rail's pinned "Favourite tracks" row, the mobile sheet's playlists
   // panel, and the rail's own visibility check all need these; read once
   // here rather than in each client component (they can't read it

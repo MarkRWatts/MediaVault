@@ -92,8 +92,77 @@ describe("every page names a real session guard (or is a known pre-auth page)", 
   }
 });
 
+// ---------------------------------------------------------------------------
+// The age-rating gate (src/lib/age-rating.ts), same regression posture as
+// the session guards above: a source-text check that makes forgetting loud.
+//
+// Two separate obligations, because they fail differently. A listing that
+// forgets the limit shows a child an 18's poster and title; a playback route
+// that forgets it hands over the bytes to anyone who knows the id. Both are
+// easy to reintroduce by copying a neighbouring file.
+// ---------------------------------------------------------------------------
+
+/** Everything under these directories streams or describes one media file by
+ *  id, so every handler in them must age-gate — either directly (ageGate /
+ *  ageGateForUser) or by delegating wholesale to src/lib/jf-routes.ts, whose
+ *  jfSession/jfProxy do it in both engine branches (jfStop takes a
+ *  playSessionId, not a media id — see its comment there). */
+const PLAYBACK_DIRS = ["api/video/", "api/tv-video/"];
+const AGE_GATES = ["ageGate(", "ageGateForUser(", "jfSession(", "jfProxy(", "jfStop("];
+
+/** Reading the library means calling into src/lib/queries.ts, whose
+ *  content functions all take an AgeLimit — so naming it is the check. */
+const QUERIES_IMPORT = 'from "@/lib/queries"';
+const NAMES_LIMIT = ["ageLimit", '"unrestricted"'];
+
+// Library readers that legitimately don't take a viewer's limit. Keep this
+// list short and explained — each entry is a place a restricted member's
+// data could leak if the reasoning ever stops holding.
+const UNGATED_LIBRARY_READERS = new Set([
+  // Owner-only pages (requireOwnerOrRedirect). An age restriction can only
+  // be set on a role="member" row (setMemberDateOfBirth), and these are
+  // gated on User.isAppOwner besides — a restricted member can't reach them.
+  "report/page.tsx",
+  "scan/page.tsx",
+  // Per-user watch history: every row in it is something this person
+  // actually watched, which the playback gate already governs. Filtering it
+  // again would only hide their own past from them.
+  "stats/page.tsx",
+]);
+
+describe("every playback route age-gates the media it serves", () => {
+  const routes = findFiles("route.ts").filter((f) => PLAYBACK_DIRS.some((d) => rel(f).startsWith(d)));
+  it("found the playback routes", () => {
+    expect(routes.length).toBeGreaterThan(8);
+  });
+  for (const file of routes) {
+    const name = rel(file);
+    it(name, () => {
+      const src = readFileSync(file, "utf8");
+      expect(AGE_GATES.some((g) => src.includes(g)), `${name} has no age gate`).toBe(true);
+    });
+  }
+});
+
+describe("every library reader names the viewer's age limit", () => {
+  const files = [...findFiles("route.ts"), ...findFiles("page.tsx")].filter((f) =>
+    readFileSync(f, "utf8").includes(QUERIES_IMPORT),
+  );
+  it("found the library readers", () => {
+    expect(files.length).toBeGreaterThan(8);
+  });
+  for (const file of files) {
+    const name = rel(file);
+    if (UNGATED_LIBRARY_READERS.has(name)) continue;
+    it(name, () => {
+      const src = readFileSync(file, "utf8");
+      expect(NAMES_LIMIT.some((g) => src.includes(g)), `${name} reads the library without an age limit`).toBe(true);
+    });
+  }
+});
+
 describe("the public lists only name files that exist", () => {
-  for (const name of [...PUBLIC_ROUTES, ...SELF_MANAGED_PAGES]) {
+  for (const name of [...PUBLIC_ROUTES, ...SELF_MANAGED_PAGES, ...UNGATED_LIBRARY_READERS]) {
     it(name, () => {
       expect(() => readFileSync(path.join(APP_DIR, name))).not.toThrow();
     });

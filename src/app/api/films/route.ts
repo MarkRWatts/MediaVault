@@ -18,7 +18,7 @@ export async function GET() {
   const gate = await requireMemberOrResponse();
   if (gate instanceof NextResponse) return gate;
 
-  const { films } = await getLibraryFilms();
+  const { films } = await getLibraryFilms(gate.ageLimit);
   return NextResponse.json({
     films: films.map((f) => ({
       id: f.id,

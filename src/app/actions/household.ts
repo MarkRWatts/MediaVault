@@ -26,6 +26,9 @@
 //     User.isAppOwner, which is a separate, app-wide concept (see
 //     src/lib/require-member.ts's Owner type doc comment). A household's
 //     own manager doesn't need to be the product owner.
+//   - setMemberDateOfBirth has no counterpart in either source app: it is
+//     MediaVault's age-rating gate (src/lib/age-rating.ts), owner-only like
+//     the four above and additionally restricted to plain members.
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
@@ -426,6 +429,77 @@ export async function demoteToMember(
   await logAudit({ userId, householdId, action: "member.demote", entityId: memberId });
 
   revalidatePath("/account");
+  return null;
+}
+
+/** Set (or clear) a member's date of birth — the age-rating restriction
+ *  (src/lib/age-rating.ts). Owner-only, and only on a role="member" row.
+ *
+ *  Owners are excluded deliberately, not incidentally: a restricted owner
+ *  could simply call this action on themselves and clear it, so "restricted"
+ *  and "can manage the household" have to be mutually exclusive for the gate
+ *  to mean anything. To restrict a co-owner, demote them first — which is
+ *  also the honest description of what's happening.
+ *
+ *  Stored as UTC midnight of the submitted day. The column is a DateTime
+ *  because SQLite has no date type, but the value is a date: parsing the
+ *  YYYY-MM-DD from the form in UTC and comparing it in UTC (ageInYears)
+ *  keeps a birthday on the right day regardless of where the server sits.
+ *
+ *  Clearing it (an empty field) lifts the restriction entirely. Note this
+ *  does NOT re-grant the Adult media type — that stays behind its own
+ *  self-service opt-in, which the member can turn back on themselves. */
+export async function setMemberDateOfBirth(
+  _prevState: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const { userId, householdId, role } = await requireMember();
+  if (role !== "owner") return { error: "Only a household owner can set that." };
+
+  const memberId = String(formData.get("memberId") ?? "").trim();
+  if (!memberId) return { error: "Missing member." };
+
+  const target = await prisma.member.findFirst({
+    where: { id: memberId, householdId },
+    select: { id: true, role: true, userId: true },
+  });
+  if (!target) return { error: "That member wasn't found." };
+  if (target.role !== "member") {
+    return { error: "Owners can't be age-restricted — demote them to a member first." };
+  }
+
+  const raw = String(formData.get("dateOfBirth") ?? "").trim();
+  let dateOfBirth: Date | null = null;
+  if (raw) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return { error: "Enter a date of birth as YYYY-MM-DD." };
+    const parsed = new Date(`${raw}T00:00:00.000Z`);
+    // Number.isNaN on the timestamp catches both an unparseable string and a
+    // real-looking-but-impossible one ("2026-02-31" round-trips to March,
+    // which the round-trip check below rejects).
+    if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== raw) {
+      return { error: "That isn't a real date." };
+    }
+    if (parsed.getTime() > Date.now()) return { error: "That date is in the future." };
+    // ~150 years. Not a correctness concern — a typo'd year ("0202") would
+    // otherwise read as a very old, unrestricted-in-practice member.
+    if (parsed.getUTCFullYear() < new Date().getUTCFullYear() - 150) {
+      return { error: "That date is too long ago — check the year." };
+    }
+    dateOfBirth = parsed;
+  }
+
+  await prisma.member.update({ where: { id: memberId }, data: { dateOfBirth } });
+  await logAudit({
+    userId,
+    householdId,
+    action: dateOfBirth ? "member.age-restrict" : "member.age-unrestrict",
+    entityId: memberId,
+  });
+
+  // Their library shrinks or grows the moment this lands, and every film,
+  // show and collection listing is derived from it — so the whole tree, not
+  // just /account.
+  revalidatePath("/", "layout");
   return null;
 }
 

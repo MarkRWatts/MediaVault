@@ -9,12 +9,14 @@ export default async function CollectionPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await requireMemberOrRedirect();
+  const { ageLimit } = await requireMemberOrRedirect();
   const { id } = await params;
   const collectionId = Number(id);
   if (!Number.isInteger(collectionId)) notFound();
 
-  const collection = await getCollectionDetail(collectionId);
+  // Null when the collection is missing, or when the age limit leaves it
+  // with no films — the wrapper goes with its contents.
+  const collection = await getCollectionDetail(collectionId, ageLimit);
   if (!collection) notFound();
 
   const pct =

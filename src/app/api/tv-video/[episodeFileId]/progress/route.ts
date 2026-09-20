@@ -10,6 +10,7 @@ import { prisma } from "@/lib/db";
 import { WATCH_COMPLETED_RATIO } from "@/lib/constants";
 import { logPlaybackStart } from "@/lib/audit";
 import { logPlay } from "@/lib/play-log";
+import { ageGateForUser } from "@/lib/age-gate";
 
 async function currentUserId(): Promise<string | null> {
   const session = await auth.api.getSession({ headers: await headers() });
@@ -27,6 +28,14 @@ export async function GET(_req: Request, ctx: { params: Promise<{ episodeFileId:
   if (episodeFileId === null) return NextResponse.json({ error: "invalid episode file id" }, { status: 400 });
   const userId = await currentUserId();
   if (!userId) return NextResponse.json({ error: "not signed in" }, { status: 401 });
+  // Playback itself is gated (src/lib/age-gate.ts), so a restricted viewer
+  // can't reach a position worth reporting — but this route writes a row
+  // keyed on an id from the request body's URL, and refusing it here keeps
+  // a stale client (or a replayed request) from seeding resume state for
+  // something they may no longer watch.
+  const blocked = await ageGateForUser(userId, "episode", episodeFileId);
+  if (blocked) return blocked;
+
   const row = await prisma.watchProgress.findUnique({
     where: { userId_episodeFileId: { userId, episodeFileId } },
     select: { positionSecs: true, completed: true, playCount: true },
@@ -53,6 +62,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ episodeFileId:
   }
   const exists = await prisma.episodeFile.findUnique({ where: { id: episodeFileId }, select: { id: true } });
   if (!exists) return NextResponse.json({ error: "not found" }, { status: 404 });
+
+  const blocked = await ageGateForUser(userId, "episode", episodeFileId);
+  if (blocked) return blocked;
 
   const completed = positionSecs >= durationSecs * WATCH_COMPLETED_RATIO;
   const row = await prisma.watchProgress.upsert({

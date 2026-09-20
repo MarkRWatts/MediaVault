@@ -145,7 +145,7 @@ describe("getContinueWatchingEpisodes", () => {
       data: { userId: "continue-jf-user", episodeFileId: withoutItem.episodeFileId, positionSecs: 100, completed: false },
     });
 
-    const rows = await getContinueWatchingEpisodes("continue-jf-user");
+    const rows = await getContinueWatchingEpisodes("continue-jf-user", "unrestricted");
     const byShow = new Map(rows.map((r) => [r.show.id, r.playable]));
     expect(byShow.get(withItem.showId)).toBe(true);
     expect(byShow.get(withoutItem.showId)).toBe(false);
@@ -163,7 +163,7 @@ describe("getContinueWatchingEpisodes", () => {
       data: { userId: "continue-local-user", episodeFileId: unprobed.episodeFileId, positionSecs: 100, completed: false },
     });
 
-    const rows = await getContinueWatchingEpisodes("continue-local-user");
+    const rows = await getContinueWatchingEpisodes("continue-local-user", "unrestricted");
     const byShow = new Map(rows.map((r) => [r.show.id, r.playable]));
     // Probed (has videoCodec) is playable even with no jellyfinId at all.
     expect(byShow.get(probed.showId)).toBe(true);

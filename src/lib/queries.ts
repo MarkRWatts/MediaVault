@@ -2,8 +2,18 @@
 // directly — every caller is a Server Component). Anything handed to a
 // Client Component is plain data: BigInt sizeBytes is converted to a number
 // here, Dates are ISO strings, so nothing needs re-shaping downstream.
+//
+// Every function that returns film or show CONTENT takes an AgeLimit as its
+// last argument (src/lib/age-rating.ts). It is required, never optional or
+// defaulted: a new call site has to say `"unrestricted"` out loud rather
+// than get an unfiltered library by forgetting an argument. The filtering
+// happens here, in one place, rather than in each page — a listing simply
+// never contains a title the viewer may not see, so nothing downstream
+// (cards, counts, shelves, the native API's DTOs) has to know the gate
+// exists. See src/lib/age-gate.ts for the playback-route half.
 
 import { prisma } from "@/lib/db";
+import { allowsCertificate, type AgeLimit } from "@/lib/age-rating";
 import {
   resolutionTier,
   videoCodecLabel,
@@ -173,7 +183,7 @@ function shapeLibraryFilm(f: FilmCardSource): LibraryFilm {
   };
 }
 
-export async function getLibraryFilms(): Promise<LibraryData> {
+export async function getLibraryFilms(limit: AgeLimit): Promise<LibraryData> {
   const films = await prisma.film.findMany({
     // Digitally owned films, plus physical-only films (owned=false but a
     // disc is logged) — otherwise a scanned-but-unripped disc is invisible
@@ -183,7 +193,9 @@ export async function getLibraryFilms(): Promise<LibraryData> {
     select: FILM_CARD_SELECT,
   });
 
-  const shaped: LibraryFilm[] = films.map(shapeLibraryFilm);
+  const shaped: LibraryFilm[] = films
+    .filter((f) => allowsCertificate(limit, f.certification))
+    .map(shapeLibraryFilm);
 
   return {
     films: shaped,
@@ -207,7 +219,7 @@ export async function getLibraryFilms(): Promise<LibraryData> {
 // Per-user, not per-household: two members of the same household watching
 // the same shared-library film independently get their own row and their
 // own "continue watching" entry for it.
-export async function getContinueWatchingFilms(userId: string): Promise<LibraryFilm[]> {
+export async function getContinueWatchingFilms(userId: string, limit: AgeLimit): Promise<LibraryFilm[]> {
   const rows = await prisma.watchProgress.findMany({
     where: {
       userId,
@@ -229,6 +241,10 @@ export async function getContinueWatchingFilms(userId: string): Promise<LibraryF
   for (const row of rows) {
     const film = row.version?.film;
     if (!film || seenFilmIds.has(film.id)) continue;
+    // A restriction applied after someone started watching retroactively
+    // takes the half-watched film off their shelf too — progress rows
+    // outlive the certificate check that let them start.
+    if (!allowsCertificate(limit, film.certification)) continue;
     seenFilmIds.add(film.id);
     films.push(shapeLibraryFilm(film));
   }
@@ -239,13 +255,15 @@ export async function getContinueWatchingFilms(userId: string): Promise<LibraryF
 // Favourites ("/" — signed-in user's hearted films, newest first)
 // ---------------------------------------------------------------------------
 
-export async function getFavouriteFilms(userId: string): Promise<LibraryFilm[]> {
+export async function getFavouriteFilms(userId: string, limit: AgeLimit): Promise<LibraryFilm[]> {
   const rows = await prisma.filmFavourite.findMany({
     where: { userId, film: { owned: true } },
     orderBy: { createdAt: "desc" },
     select: { film: { select: FILM_CARD_SELECT } },
   });
-  return rows.map((r) => shapeLibraryFilm(r.film));
+  return rows
+    .filter((r) => allowsCertificate(limit, r.film.certification))
+    .map((r) => shapeLibraryFilm(r.film));
 }
 
 /** Ids of the films this person has any watch record for (in progress or
@@ -275,7 +293,7 @@ export interface ContinueEpisode {
   playable: boolean;
 }
 
-export async function getContinueWatchingEpisodes(userId: string): Promise<ContinueEpisode[]> {
+export async function getContinueWatchingEpisodes(userId: string, limit: AgeLimit): Promise<ContinueEpisode[]> {
   const rows = await prisma.watchProgress.findMany({
     where: { userId, episodeFileId: { not: null }, completed: false, positionSecs: { gte: WATCH_PROGRESS_MIN_SECS } },
     orderBy: { updatedAt: "desc" },
@@ -292,7 +310,14 @@ export async function getContinueWatchingEpisodes(userId: string): Promise<Conti
               episodeNumber: true,
               name: true,
               stillPath: true,
-              season: { select: { seasonNumber: true, show: { select: { id: true, title: true, posterPath: true } } } },
+              season: {
+                select: {
+                  seasonNumber: true,
+                  // certification for the age gate below — an episode has no
+                  // certificate of its own, so the show's is what rates it.
+                  show: { select: { id: true, title: true, posterPath: true, certification: true } },
+                },
+              },
             },
           },
         },
@@ -306,6 +331,7 @@ export async function getContinueWatchingEpisodes(userId: string): Promise<Conti
     if (!f) continue;
     const show = f.episode.season.show;
     if (seen.has(show.id)) continue;
+    if (!allowsCertificate(limit, show.certification)) continue;
     seen.add(show.id);
     out.push({
       episodeFileId: f.id,
@@ -391,7 +417,11 @@ export interface FilmDetail {
   collection: { id: number; name: string; members: CollectionMemberView[] } | null;
 }
 
-export async function getFilmDetail(id: number): Promise<FilmDetail | null> {
+/** Null when the film doesn't exist OR the viewer's age limit doesn't reach
+ *  its certificate — the caller's 404/notFound() path is the same either
+ *  way, which is exactly the point: a restricted viewer can't tell a
+ *  withheld film from an absent one by poking at ids. */
+export async function getFilmDetail(id: number, limit: AgeLimit): Promise<FilmDetail | null> {
   const film = await prisma.film.findUnique({
     where: { id },
     include: {
@@ -408,6 +438,7 @@ export async function getFilmDetail(id: number): Promise<FilmDetail | null> {
     },
   });
   if (!film) return null;
+  if (!allowsCertificate(limit, film.certification)) return null;
 
   const versions: VersionView[] = film.versions.map((v) => ({
     id: v.id,
@@ -459,15 +490,19 @@ export async function getFilmDetail(id: number): Promise<FilmDetail | null> {
       ? {
           id: film.collection.id,
           name: film.collection.name,
-          members: film.collection.films.map((m) => ({
-            id: m.id,
-            title: m.title,
-            year: m.year,
-            posterPath: m.posterPath,
-            owned: m.owned,
-            releaseDate: m.releaseDate ? m.releaseDate.toISOString() : null,
-            bestTier: bestResolutionTier(m.versions),
-          })),
+          // The strip shows sibling titles and posters, so it needs the
+          // same filter as the collection page itself.
+          members: film.collection.films
+            .filter((m) => allowsCertificate(limit, m.certification))
+            .map((m) => ({
+              id: m.id,
+              title: m.title,
+              year: m.year,
+              posterPath: m.posterPath,
+              owned: m.owned,
+              releaseDate: m.releaseDate ? m.releaseDate.toISOString() : null,
+              bestTier: bestResolutionTier(m.versions),
+            })),
         }
       : null,
   };
@@ -487,13 +522,19 @@ export interface CollectionSummary {
   complete: boolean;
 }
 
-export async function getCollections(): Promise<CollectionSummary[]> {
+export async function getCollections(limit: AgeLimit): Promise<CollectionSummary[]> {
   const collections = await prisma.collection.findMany({
     orderBy: { name: "asc" },
     include: { films: { orderBy: { releaseDate: "asc" } } },
   });
 
   return collections
+    .map((c) => ({ ...c, films: c.films.filter((f) => allowsCertificate(limit, f.certification)) }))
+    // A collection with nothing left in it disappears entirely, wrapper and
+    // all — the name and poster of an 18-rated franchise are themselves the
+    // thing being withheld. The counts below are then counts of what this
+    // viewer can see, so "complete" means "complete as far as they know"
+    // rather than advertising films they can't open.
     .filter((c) => c.films.length > 0)
     .map((c) => {
       const ownedCount = c.films.filter((f) => f.owned).length;
@@ -535,7 +576,7 @@ export interface PlayableCollection {
   filmIds: number[];
 }
 
-export async function getPlayableCollections(): Promise<PlayableCollection[]> {
+export async function getPlayableCollections(limit: AgeLimit): Promise<PlayableCollection[]> {
   const collections = await prisma.collection.findMany({
     orderBy: { name: "asc" },
     select: {
@@ -543,10 +584,18 @@ export async function getPlayableCollections(): Promise<PlayableCollection[]> {
       name: true,
       overview: true,
       posterPath: true,
-      films: { where: { owned: true }, orderBy: [{ releaseDate: "asc" }, { year: "asc" }], select: { id: true } },
+      films: {
+        where: { owned: true },
+        orderBy: [{ releaseDate: "asc" }, { year: "asc" }],
+        select: { id: true, certification: true },
+      },
     },
   });
   return collections
+    .map((c) => ({ ...c, films: c.films.filter((f) => allowsCertificate(limit, f.certification)) }))
+    // Same two-film threshold as before, now counted after the gate: a
+    // franchise whose only visible entries are one U and three 18s stops
+    // being a collection for this viewer rather than becoming a one-item one.
     .filter((c) => c.films.length >= 2)
     .map((c) => ({ id: c.id, name: c.name, overview: c.overview, posterPath: c.posterPath, filmIds: c.films.map((f) => f.id) }));
 }
@@ -561,7 +610,9 @@ export interface CollectionDetail {
   films: TimelineFilm[];
 }
 
-export async function getCollectionDetail(id: number): Promise<CollectionDetail | null> {
+/** Null when the collection doesn't exist, or when the age limit leaves it
+ *  with no films at all — the wrapper goes with its contents. */
+export async function getCollectionDetail(id: number, limit: AgeLimit): Promise<CollectionDetail | null> {
   const collection = await prisma.collection.findUnique({
     where: { id },
     include: {
@@ -576,17 +627,20 @@ export async function getCollectionDetail(id: number): Promise<CollectionDetail 
   });
   if (!collection) return null;
 
-  const films: TimelineFilm[] = collection.films.map((f) => ({
-    id: f.id,
-    title: f.title,
-    year: f.year,
-    posterPath: f.posterPath,
-    owned: f.owned,
-    releaseDate: f.releaseDate ? f.releaseDate.toISOString() : null,
-    formats: Array.from(new Set(f.versions.map((v) => v.format as Format))),
-    bestTier: bestResolutionTier(f.versions),
-    physicalMedia: f.physicalCopies.map((c) => c.medium as Format),
-  }));
+  const films: TimelineFilm[] = collection.films
+    .filter((f) => allowsCertificate(limit, f.certification))
+    .map((f) => ({
+      id: f.id,
+      title: f.title,
+      year: f.year,
+      posterPath: f.posterPath,
+      owned: f.owned,
+      releaseDate: f.releaseDate ? f.releaseDate.toISOString() : null,
+      formats: Array.from(new Set(f.versions.map((v) => v.format as Format))),
+      bestTier: bestResolutionTier(f.versions),
+      physicalMedia: f.physicalCopies.map((c) => c.medium as Format),
+    }));
+  if (films.length === 0) return null;
 
   return {
     id: collection.id,
@@ -618,7 +672,12 @@ export interface ShowSummary {
   createdAt: string;
 }
 
-export async function getShows(): Promise<ShowSummary[]> {
+/** A show is rated by its own Show.certification — episodes carry none of
+ *  their own (TMDB has no per-episode GB certificate, see src/lib/tmdb.ts),
+ *  so that one value is what every episode under it inherits. Above the
+ *  limit, or missing, and the whole show goes: card, seasons, episodes and
+ *  all. */
+export async function getShows(limit: AgeLimit): Promise<ShowSummary[]> {
   const shows = await prisma.show.findMany({
     orderBy: { sortTitle: "asc" },
     include: {
@@ -628,23 +687,25 @@ export async function getShows(): Promise<ShowSummary[]> {
     },
   });
 
-  return shows.map((s) => {
-    const episodes = s.seasons.flatMap((se) => se.episodes);
-    const ownedEpisodeCount = episodes.filter((e) => e.owned).length;
-    const totalEpisodeCount = episodes.length;
-    return {
-      id: s.id,
-      title: s.title,
-      sortTitle: s.sortTitle,
-      year: s.year,
-      posterPath: s.posterPath,
-      certification: s.certification,
-      ownedEpisodeCount,
-      totalEpisodeCount,
-      complete: totalEpisodeCount > 0 && ownedEpisodeCount === totalEpisodeCount,
-      createdAt: s.createdAt.toISOString(),
-    };
-  });
+  return shows
+    .filter((s) => allowsCertificate(limit, s.certification))
+    .map((s) => {
+      const episodes = s.seasons.flatMap((se) => se.episodes);
+      const ownedEpisodeCount = episodes.filter((e) => e.owned).length;
+      const totalEpisodeCount = episodes.length;
+      return {
+        id: s.id,
+        title: s.title,
+        sortTitle: s.sortTitle,
+        year: s.year,
+        posterPath: s.posterPath,
+        certification: s.certification,
+        ownedEpisodeCount,
+        totalEpisodeCount,
+        complete: totalEpisodeCount > 0 && ownedEpisodeCount === totalEpisodeCount,
+        createdAt: s.createdAt.toISOString(),
+      };
+    });
 }
 
 export interface EpisodeFileView {
@@ -702,7 +763,9 @@ export interface ShowDetail {
   seasons: SeasonView[];
 }
 
-export async function getShowDetail(id: number): Promise<ShowDetail | null> {
+/** Null when the show doesn't exist or is above the viewer's limit — same
+ *  indistinguishable-404 posture as getFilmDetail. */
+export async function getShowDetail(id: number, limit: AgeLimit): Promise<ShowDetail | null> {
   const show = await prisma.show.findUnique({
     where: { id },
     include: {
@@ -721,6 +784,7 @@ export async function getShowDetail(id: number): Promise<ShowDetail | null> {
     },
   });
   if (!show) return null;
+  if (!allowsCertificate(limit, show.certification)) return null;
 
   const seasons: SeasonView[] = show.seasons.map((se) => {
     const episodes: EpisodeView[] = se.episodes.map((e) => ({

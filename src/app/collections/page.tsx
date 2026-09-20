@@ -7,8 +7,8 @@ import { getCollections } from "@/lib/queries";
 import { requireMemberOrRedirect } from "@/lib/require-member";
 
 export default async function CollectionsPage() {
-  await requireMemberOrRedirect();
-  const collections = await getCollections();
+  const { ageLimit } = await requireMemberOrRedirect();
+  const collections = await getCollections(ageLimit);
 
   return (
     <div className="flex flex-1 flex-col">

@@ -8,12 +8,14 @@ import { PromoteButton } from "@/components/household/PromoteButton";
 import { DemoteButton } from "@/components/household/DemoteButton";
 import { RemoveMemberButton } from "@/components/household/RemoveMemberButton";
 import { RenameHouseholdForm } from "@/components/household/RenameHouseholdForm";
+import { MemberAgeForm } from "@/components/household/MemberAgeForm";
 import { getAuthenticatorName } from "@better-auth/passkey";
 import { DeleteAccountButton } from "@/components/account/DeleteAccountButton";
 import { EditNameForm } from "@/components/account/EditNameForm";
 import { UserAvatar } from "@/components/UserAvatar";
 import { AdultAccessToggle } from "@/components/account/AdultAccessToggle";
 import { PasskeyManager } from "@/components/account/PasskeyManager";
+import { ageLimitFor, ageLimitLabel } from "@/lib/age-rating";
 
 // DB-backed, per-user page — must render per-request, not be frozen at
 // build time (the Docker image is built with no database present).
@@ -31,8 +33,12 @@ export const dynamic = "force-dynamic";
 // access concept (no monetization here), so that badge from the template
 // isn't ported.
 export default async function AccountPage() {
-  const { userId, householdId, role } = await requireMemberOrRedirect();
+  const { userId, householdId, role, ageLimit } = await requireMemberOrRedirect();
   const isOwner = role === "owner";
+  // Both formatted server-side so the age-rating control renders nothing
+  // that depends on the browser's clock or locale — see MemberAgeForm.
+  const today = new Date().toISOString().slice(0, 10);
+  const restricted = ageLimit !== "unrestricted";
 
   const [user, passkeys, household] = await Promise.all([
     prisma.user.findUniqueOrThrow({
@@ -55,7 +61,13 @@ export default async function AccountPage() {
       select: {
         name: true,
         members: {
-          select: { id: true, role: true, userId: true, user: { select: { name: true, email: true } } },
+          select: {
+            id: true,
+            role: true,
+            userId: true,
+            dateOfBirth: true,
+            user: { select: { name: true, email: true } },
+          },
           orderBy: { createdAt: "asc" },
         },
         invitations: isOwner
@@ -112,7 +124,19 @@ export default async function AccountPage() {
 
       <section className="flex flex-col gap-4">
         <h2 className="font-display text-xl tracking-wide text-text">Preferences</h2>
-        <AdultAccessToggle initialEnabled={user.adultLibraryAccess} initiallyLinked={user.jellyfinUserId !== null} />
+        {/* An age-restricted member doesn't get the opt-in at all — the
+            Adult media type is R18 wholesale. Hiding it is the courtesy;
+            requireAdultAccessOrRedirect and toggleAdultLibraryAccess are
+            what actually refuse them (src/lib/require-member.ts). */}
+        {restricted ? (
+          <p className="rounded-lg border border-border bg-bg-elevated p-4 text-sm text-text-muted">
+            A household owner has set an age rating on your account:{" "}
+            <span className="text-text">{ageLimitLabel(ageLimit)}</span>. Titles above it, and
+            anything without a BBFC certificate, don&rsquo;t appear in your library.
+          </p>
+        ) : (
+          <AdultAccessToggle initialEnabled={user.adultLibraryAccess} initiallyLinked={user.jellyfinUserId !== null} />
+        )}
       </section>
 
       <section className="flex flex-col gap-4">
@@ -131,6 +155,11 @@ export default async function AccountPage() {
           {household.members.map((member) => {
             const name = member.user.name || member.user.email || "This member";
             const canManage = isOwner && member.userId !== userId;
+            const memberLimit = ageLimitFor(member.dateOfBirth);
+            // Owners are never age-restricted (setMemberDateOfBirth refuses
+            // it — a restricted owner could just clear their own), so the
+            // control only appears on plain members.
+            const canRestrict = canManage && member.role === "member";
             return (
               <div key={member.id} className="flex items-center justify-between gap-3">
                 <div className="flex flex-col">
@@ -144,10 +173,25 @@ export default async function AccountPage() {
                     <span className="text-xs text-text-faint">{member.user.email}</span>
                   )}
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center justify-end gap-2">
                   <span className="rounded-full border border-border px-2.5 py-0.5 text-xs text-text-muted">
                     {member.role}
                   </span>
+                  {canRestrict ? (
+                    <MemberAgeForm
+                      memberId={member.id}
+                      name={name}
+                      dateOfBirth={member.dateOfBirth ? member.dateOfBirth.toISOString().slice(0, 10) : ""}
+                      summary={memberLimit === "unrestricted" ? null : ageLimitLabel(memberLimit)}
+                      today={today}
+                    />
+                  ) : (
+                    memberLimit !== "unrestricted" && (
+                      <span className="rounded-full border border-accent/60 px-2.5 py-0.5 text-xs text-accent">
+                        {ageLimitLabel(memberLimit)}
+                      </span>
+                    )
+                  )}
                   {canManage &&
                     (member.role === "owner" ? (
                       <DemoteButton memberId={member.id} name={name} />

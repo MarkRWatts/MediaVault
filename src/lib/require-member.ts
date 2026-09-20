@@ -3,6 +3,7 @@ import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { ageLimitFor, type AgeLimit } from "@/lib/age-rating";
 
 // App-owner gating (media scan/enrich/report, /admin). Deliberately
 // separate from ALLOWED_EMAILS (the sign-in web-of-trust root) and from
@@ -28,7 +29,35 @@ async function currentOwner(): Promise<Owner | null> {
 // Ported from jinglejotter.com's lib/require-member.ts. MediaVault has no
 // per-household currency concept (that app's money-tracking feature doesn't
 // apply here), so that field is dropped entirely — otherwise same shape.
-export type Member = { userId: string; householdId: string; role: string };
+export type Member = {
+  userId: string;
+  householdId: string;
+  role: string;
+  /** What this member is allowed to see (src/lib/age-rating.ts), derived
+   *  from Member.dateOfBirth on every request so it relaxes on their
+   *  birthday by itself. `"unrestricted"` for everyone without a date of
+   *  birth, which is the default and covers every existing member.
+   *
+   *  Every query that returns film/show content takes this as a REQUIRED
+   *  argument (see src/lib/queries.ts) rather than reading the session
+   *  itself, so a new caller has to decide what to pass instead of
+   *  silently defaulting to "show everything". */
+  ageLimit: AgeLimit;
+};
+
+/** The one place a Member row becomes a Member: keeps the age-limit
+ *  derivation off the three copies of this lookup below. */
+function toMember(
+  userId: string,
+  row: { householdId: string; role: string; dateOfBirth: Date | null },
+): Member {
+  return {
+    userId,
+    householdId: row.householdId,
+    role: row.role,
+    ageLimit: ageLimitFor(row.dateOfBirth),
+  };
+}
 
 /** Every server action's first call: resolves the signed-in user's
  *  household membership from the session. Single membership is enforced at
@@ -45,7 +74,7 @@ export async function requireMember(): Promise<Member> {
   const member = await prisma.member.findFirst({ where: { userId } });
   if (!member) throw new Error("You're not part of a household yet.");
 
-  return { userId, householdId: member.householdId, role: member.role };
+  return toMember(userId, member);
 }
 
 /** Page-load variant of requireMember(): redirects instead of throwing,
@@ -60,7 +89,7 @@ export async function requireMemberOrRedirect(): Promise<Member> {
   const member = await prisma.member.findFirst({ where: { userId } });
   if (!member) redirect("/onboarding");
 
-  return { userId, householdId: member.householdId, role: member.role };
+  return toMember(userId, member);
 }
 
 /** Route-handler variant of requireMember(): the floor every library API
@@ -86,7 +115,7 @@ export async function requireMemberOrResponse(): Promise<Member | NextResponse> 
     return NextResponse.json({ error: "Not a household member" }, { status: 403 });
   }
 
-  return { userId, householdId: member.householdId, role: member.role };
+  return toMember(userId, member);
 }
 
 /** Route-handler variant: gates an owner-only API route (media
@@ -140,12 +169,34 @@ export async function requireOwner(): Promise<Owner> {
   return owner;
 }
 
+/** Is this person age-restricted at all? Any date of birth on their Member
+ *  row means yes, whatever their age — an 18-year-old with a date of birth
+ *  set is still someone the household owner is managing, and R18 is the one
+ *  thing this app has no certificate data for beyond the media type itself.
+ *
+ *  The two other places that ask this question answer it themselves rather
+ *  than calling in here: app-shell.tsx already holds the Member row it
+ *  would re-read, and app/actions/adult.ts needs to throw its own message
+ *  for the toggle's error state. */
+async function isAgeRestricted(userId: string): Promise<boolean> {
+  const member = await prisma.member.findFirst({ where: { userId }, select: { dateOfBirth: true } });
+  return member?.dateOfBirth != null;
+}
+
 async function currentAdultAccessUserId(): Promise<string | null> {
   const session = await auth.api.getSession({ headers: await headers() });
   const userId = session?.user?.id;
   if (!userId) return null;
   const user = await prisma.user.findUnique({ where: { id: userId }, select: { adultLibraryAccess: true } });
-  return user?.adultLibraryAccess ? userId : null;
+  if (!user?.adultLibraryAccess) return null;
+  // The Adult media type is R18 by definition (see the fixed CertificationBadge
+  // in app/adult), and its opt-in is self-service — so an age-restricted
+  // member must be refused here even if the flag on their User row is
+  // somehow true. This is the boundary; app/actions/adult.ts refuses the
+  // toggle and app-shell.tsx hides the nav row, but neither is what stops
+  // a direct request.
+  if (await isAgeRestricted(userId)) return null;
+  return userId;
 }
 
 /** Gates the Adult media type — /adult pages and its streaming routes.

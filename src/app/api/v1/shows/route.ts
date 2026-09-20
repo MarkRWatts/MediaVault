@@ -13,8 +13,8 @@ export async function GET() {
   if (gate instanceof NextResponse) return gate;
 
   const [shows, continueWatching, favourites] = await Promise.all([
-    getShows(),
-    getContinueWatchingEpisodes(gate.userId),
+    getShows(gate.ageLimit),
+    getContinueWatchingEpisodes(gate.userId, gate.ageLimit),
     // Ids only: the app already has every show's card in `shows`.
     prisma.showFavourite.findMany({ where: { userId: gate.userId }, orderBy: { createdAt: "desc" }, select: { showId: true } }),
   ]);

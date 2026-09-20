@@ -45,6 +45,16 @@ async function currentUserOrThrow(): Promise<{ id: string; email: string; jellyf
     select: { id: true, email: true, jellyfinUserId: true },
   });
   if (!user) throw new Error("Not signed in");
+  // The Adult media type is R18 wholesale, and this opt-in is self-service —
+  // so an age-restricted member (any date of birth on their Member row, see
+  // src/lib/age-rating.ts) must not be able to flip it on for themselves.
+  // /account already hides the control; this is what stops a direct POST to
+  // the action, which is reachable without the UI.
+  const member = await prisma.member.findFirst({
+    where: { userId: user.id },
+    select: { dateOfBirth: true },
+  });
+  if (member?.dateOfBirth != null) throw new Error("A household owner has age-restricted this account.");
   return user;
 }
 

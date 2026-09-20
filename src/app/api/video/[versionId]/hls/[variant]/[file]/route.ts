@@ -12,6 +12,7 @@ import { promises as fs } from "node:fs";
 import { PLAYLIST_NAME, parseVariant, resolveHlsFile, resolveHlsPlaylist } from "@/lib/video-cache";
 import { serveFile } from "@/lib/serve-file";
 import { requireMemberOrResponse } from "@/lib/require-member";
+import { ageGate } from "@/lib/age-gate";
 
 export async function GET(
   req: Request,
@@ -29,6 +30,12 @@ export async function GET(
   }
   const variant = parseVariant(variantParam);
   if (!variant) return NextResponse.json({ error: "invalid variant" }, { status: 400 });
+
+  // Checked on every request, segments included — same reasoning as the
+  // membership check above: a segment URL must not outlive the viewer's
+  // permission to watch the film it belongs to.
+  const blocked = await ageGate(gate.ageLimit, "film", versionId);
+  if (blocked) return blocked;
 
   if (file === PLAYLIST_NAME) {
     const resolved = await resolveHlsPlaylist("film", versionId, variant);

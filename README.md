@@ -72,6 +72,14 @@ collection, show and back catalogue.
   and an owner-only admin area for access codes, the audit log, scan and
   enrich runs and integrations. Members can also sign into Jellyfin itself
   with their MediaVault account.
+- **Age ratings** — a household owner can give any member a date of birth,
+  and that member then sees only what their age allows on the BBFC scale
+  (U and PG at any age, 12 and 12A from 12, 15 from 15, 18 and R18 from 18).
+  The ceiling is worked out from their age on the day, so it lifts by itself
+  on a birthday. Anything without a BBFC certificate stays hidden, as does
+  a show or collection whose every entry is above the line — the wrapper
+  goes with its contents. The restriction covers browsing and playback
+  alike, on the web and in the native apps.
 
 ## Screenshots
 
@@ -224,7 +232,7 @@ points at. On the server, run them inside the container (see
 | --- | --- |
 | `gen-access-code.ts` | Mint an access code for a new household. |
 | `grant-app-owner.ts` | Give an existing user the app-owner role. |
-| `backfill-certifications.ts` | Fetch BBFC certificates for films and shows enriched before certificates existed. |
+| `backfill-certifications.ts` | Fetch BBFC certificates for films and shows enriched before certificates existed. Worth running before age-restricting anyone: an uncertificated title is hidden from a restricted member. |
 | `reprobe-audio-tracks.ts` | Refresh audio-track dispositions so the main soundtrack, not an audio-description track, is picked. |
 | `attach-cd-discogs-releases.ts`, `backfill-album-discogs-url.ts`, `backfill-digital-cover-from-cd.ts` | One-off music backfills from the Discogs cutover. |
 | `export-discogs-snapshot.ts`, `apply-discogs-snapshot.ts` | Copy a verified set of Discogs matches from one database to another. |

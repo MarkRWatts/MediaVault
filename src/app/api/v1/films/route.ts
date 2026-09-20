@@ -15,10 +15,10 @@ export async function GET() {
   if (gate instanceof NextResponse) return gate;
 
   const [{ films }, continueWatching, favourites, collections] = await Promise.all([
-    getLibraryFilms(),
-    getContinueWatchingFilms(gate.userId),
-    getFavouriteFilms(gate.userId),
-    getPlayableCollections(),
+    getLibraryFilms(gate.ageLimit),
+    getContinueWatchingFilms(gate.userId, gate.ageLimit),
+    getFavouriteFilms(gate.userId, gate.ageLimit),
+    getPlayableCollections(gate.ageLimit),
   ]);
 
   const body: FilmsResponse = { shelves: { continueWatching, favourites }, films, collections };

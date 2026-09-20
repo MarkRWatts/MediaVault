@@ -893,6 +893,15 @@ model Member {
   role        String    @default("member")
   createdAt   DateTime
 
+  // Age-rating gate (src/lib/age-rating.ts). Null — the default — means no
+  // restriction at all: the member sees the whole library. A date here turns
+  // this member into a restricted viewer whose BBFC ceiling is derived from
+  // their age on the day of the request, so it relaxes on their birthday
+  // with no owner action. Stored at UTC midnight and compared in UTC (a
+  // date, not an instant). Only a household owner can set it, and only on a
+  // role="member" row — see app/actions/household.ts's setMemberDateOfBirth.
+  dateOfBirth DateTime?
+
   @@index([householdId])
   @@index([userId])
   @@map("Member")

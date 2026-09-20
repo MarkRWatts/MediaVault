@@ -21,7 +21,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     return NextResponse.json({ error: "invalid show id" }, { status: 400 });
   }
 
-  const show = await getShowDetail(id);
+  const show = await getShowDetail(id, gate.ageLimit);
   if (!show) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
