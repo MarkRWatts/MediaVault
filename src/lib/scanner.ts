@@ -285,14 +285,18 @@ interface EpisodeFileData {
 }
 
 // Build the human-readable audio track summary stored on EpisodeFile, e.g.
-// "DTS-HD MA · 5.1 · ENG; Dolby Digital · Stereo · ENG" — reuses the same
-// audioBadge() labelling the movie UI uses for Version audio tracks.
+// "DTS-HD MA · DTS:X · 5.1 · ENG; Dolby TrueHD · Atmos · 7.1 · ENG" — reuses
+// the same audioBadge() labelling the movie UI uses for Version audio
+// tracks. Episode rows render this string rather than badges, so the
+// object-audio rider has to be spelled out here; existing rows pick it up on
+// the next re-probe.
 function buildAudioSummary(tracks: ProbedAudioTrack[]): string | null {
   if (tracks.length === 0) return null;
   return tracks
     .map((t) => {
-      const { label, sublabel } = audioBadge(t.codec, t.profile, t.channels, t.layout);
+      const { label, sublabel, objectAudio } = audioBadge(t.codec, t.profile, t.channels, t.layout);
       const parts = [label];
+      if (objectAudio) parts.push(objectAudio === "atmos" ? "Atmos" : "DTS:X");
       if (sublabel) parts.push(sublabel);
       if (t.language) parts.push(t.language.toUpperCase());
       return parts.join(" · ");

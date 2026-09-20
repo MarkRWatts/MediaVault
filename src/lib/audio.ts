@@ -3,9 +3,21 @@
 // say exactly what's on disk: DTS-HD MA vs plain DTS, Dolby Digital vs Plus,
 // not just "dts"/"ac3" verbatim from ffprobe.
 
+/** The two object-audio formats, each layered on a lossless base codec:
+ *  Atmos on TrueHD or DD+, DTS:X on DTS-HD MA. */
+export type ObjectAudio = "atmos" | "dtsx";
+
 export interface AudioBadgeInfo {
   label: string;
   sublabel: string | null;
+  /** Object audio riding on top of the codec in `label`. ffprobe reports it
+   *  in the profile, not the codec name ("Dolby TrueHD + Dolby Atmos",
+   *  "DTS-HD MA + DTS:X"), and it's an addition to the base track rather
+   *  than a replacement for it — a TrueHD Atmos track is still a TrueHD
+   *  track to anything that can't decode the objects. So it stays separate
+   *  from `label`, and the UI draws its mark *beside* the codec badge
+   *  instead of relabelling it. */
+  objectAudio: ObjectAudio | null;
 }
 
 const CODEC_LABELS: Record<string, string> = {
@@ -65,18 +77,31 @@ function normalizeLayout(layout: string | null): string | null {
   }
 }
 
+// "DTS:X" as ffprobe spells it, tolerating the "DTS-X" / "DTS X" variants.
+// Deliberately not a bare "X" test: the DTS Express profile would match one.
+const DTS_X = /DTS[:\-\s]?X\b/;
+
+function objectAudioIn(profile: string | null): ObjectAudio | null {
+  const p = (profile ?? "").toUpperCase();
+  if (p.includes("ATMOS")) return "atmos";
+  if (DTS_X.test(p)) return "dtsx";
+  return null;
+}
+
+// The base codec under a DTS profile. A DTS:X track names its core here too
+// ("DTS-HD MA + DTS:X"), and that core is what this returns — the X rides
+// alongside as objectAudio, so there's no "DTS:X" case to match.
 function dtsLabel(profile: string | null): string {
   const p = (profile ?? "").toUpperCase();
   if (p.includes("MA")) return "DTS-HD MA";
   if (p.includes("HRA")) return "DTS-HD HRA";
   if (p.includes("ES")) return "DTS-ES";
-  if (p.includes("X")) return "DTS:X";
   return "DTS";
 }
 
 /**
  * Map a raw ffprobe (codec, profile, channels, layout) tuple to a badge
- * label + channel-layout sublabel for display.
+ * label + channel-layout sublabel + object-audio rider for display.
  */
 export function audioBadge(
   codec: string | null,
@@ -85,27 +110,28 @@ export function audioBadge(
   layout: string | null,
 ): AudioBadgeInfo {
   const sublabel = normalizeLayout(layout) ?? layoutFromChannelCount(channels);
+  const objectAudio = objectAudioIn(profile);
 
   if (!codec) {
-    return { label: "Unknown", sublabel };
+    return { label: "Unknown", sublabel, objectAudio: null };
   }
 
   const c = codec.toLowerCase();
 
   if (c === "dts") {
-    return { label: dtsLabel(profile), sublabel };
+    return { label: dtsLabel(profile), sublabel, objectAudio };
   }
 
   if (c.startsWith("pcm")) {
-    return { label: "PCM", sublabel };
+    return { label: "PCM", sublabel, objectAudio: null };
   }
 
   const known = CODEC_LABELS[c];
   if (known) {
-    return { label: known, sublabel };
+    return { label: known, sublabel, objectAudio };
   }
 
-  return { label: codec.toUpperCase(), sublabel };
+  return { label: codec.toUpperCase(), sublabel, objectAudio };
 }
 
 // Which visual "family" a badge label belongs to, for the quiet Dolby-tint

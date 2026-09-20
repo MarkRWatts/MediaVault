@@ -1,20 +1,10 @@
+import AudioBadge from "@/components/AudioBadge";
 import FormatBadge from "@/components/FormatBadge";
-import ResolutionBadge from "@/components/ResolutionBadge";
 import HdrBadge from "@/components/HdrBadge";
 import PlayButton from "@/components/PlayButton";
 import type { PlaybackSource } from "@/components/VideoPlayer";
-import { audioBadge, audioFamily } from "@/lib/audio";
+import { audioBadge } from "@/lib/audio";
 import type { VersionView } from "@/lib/queries";
-
-// Quiet family tints for the audio codec chip — same visual register as
-// FormatBadge/ResolutionBadge (small, uppercase, mono, 1px translucent
-// border) but its own two hues so Dolby vs DTS is legible at a glance
-// without shouting. Everything else (AAC, FLAC, PCM…) stays neutral.
-const AUDIO_FAMILY_STYLES: Record<"dolby" | "dts" | "neutral", string> = {
-  dolby: "border-audio-dolby-border bg-audio-dolby-bg text-audio-dolby",
-  dts: "border-audio-dts-border bg-audio-dts-bg text-audio-dts",
-  neutral: "border-border bg-bg-hover text-text-muted",
-};
 
 export default function VersionCard({
   version,
@@ -38,12 +28,15 @@ export default function VersionCard({
     { label: "Duration", value: version.durationLabel },
   ];
 
+  // No resolution chip in this row: the spec grid below spells the real
+  // resolution out ("1920×1080"), so the tier chip was saying the same thing
+  // twice in a row that now carries disc and HDR marks. The poster tiles and
+  // episode rows keep theirs — those have nowhere else to show it.
   return (
     <div className="rounded-lg border border-border bg-bg-elevated p-4">
       <div className="flex flex-wrap items-center gap-2.5">
         <FormatBadge kind={version.format} className="px-2 py-1 text-[11px]" logoHeight={18} />
-        <ResolutionBadge tier={version.tier} className="px-2 py-1 text-[11px]" />
-        <HdrBadge videoRange={version.videoRange} className="px-2 py-1 text-[11px]" />
+        <HdrBadge videoRange={version.videoRange} className="px-2 py-1 text-[11px]" logoHeight={18} />
         {version.edition && (
           <span className="text-sm italic text-text-muted">{version.edition}</span>
         )}
@@ -70,15 +63,11 @@ export default function VersionCard({
           </p>
           <ul className="flex flex-col gap-1.5">
             {version.audioTracks.map((a) => {
-              const { label, sublabel } = audioBadge(a.codec, a.profile, a.channels, a.layout);
-              const family = audioFamily(label);
+              const badge = audioBadge(a.codec, a.profile, a.channels, a.layout);
+              const { sublabel } = badge;
               return (
                 <li key={a.id} className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <span
-                    className={`inline-flex items-center rounded border px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-widest leading-none ${AUDIO_FAMILY_STYLES[family]}`}
-                  >
-                    {label}
-                  </span>
+                  <AudioBadge badge={badge} />
                   {sublabel && (
                     <span className="font-mono text-[11px] text-text-muted">{sublabel}</span>
                   )}

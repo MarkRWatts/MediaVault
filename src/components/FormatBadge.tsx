@@ -1,3 +1,4 @@
+import BrandMark, { type MarkSpec } from "@/components/BrandMark";
 import { formatLabel, type Format } from "@/lib/constants";
 
 export type BadgeKind = Format | "MISSING";
@@ -11,10 +12,10 @@ export type BadgeKind = Format | "MISSING";
 // the marks out optically: the DVD wordmark fills its box, but the
 // Blu-ray marks carry the disc swoosh above the lettering, so at equal box
 // height their text would come out much smaller.
-const LOGOS: Partial<Record<BadgeKind, { src: string; alt: string; invert: boolean; scale: number }>> = {
-  DVD: { src: "/format-logos/dvd.svg", alt: "DVD", invert: true, scale: 1 },
-  BLURAY: { src: "/format-logos/bluray.svg", alt: "Blu-ray", invert: false, scale: 1.5 },
-  UHD: { src: "/format-logos/uhd-bluray.svg", alt: "Ultra HD Blu-ray", invert: false, scale: 1.3 },
+const LOGOS: Partial<Record<BadgeKind, MarkSpec>> = {
+  DVD: { src: "/format-logos/dvd.svg", alt: "DVD", invert: true },
+  BLURAY: { src: "/format-logos/bluray.svg", alt: "Blu-ray", scale: 1.5 },
+  UHD: { src: "/format-logos/uhd-bluray.svg", alt: "Ultra HD Blu-ray", scale: 1.3 },
 };
 
 /** Base height in CSS px of a logo on a card (the DVD mark's); the others
@@ -47,18 +48,7 @@ export default function FormatBadge({
   logoHeight?: number;
 }) {
   const logo = LOGOS[kind];
-  if (logo) {
-    const px = Math.round(logoHeight * logo.scale);
-    return (
-      <img
-        src={logo.src}
-        alt={logo.alt}
-        title={logo.alt}
-        className={`inline-block w-auto shrink-0 ${logo.invert ? "invert" : ""} opacity-90`}
-        style={{ height: px }}
-      />
-    );
-  }
+  if (logo) return <BrandMark mark={logo} height={logoHeight} />;
   const label = kind === "MISSING" ? "Missing" : formatLabel(kind);
   return (
     <span
