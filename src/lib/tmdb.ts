@@ -755,7 +755,39 @@ async function doEnrichTv(runId: number): Promise<void> {
     }
   }
 
-  await finishRun(runId, log, `Enriched ${total} show(s)`);
+  // Specials backfill. Season 0 used to be skipped entirely, so a show
+  // matched before that fix owns specials with no name, overview or still
+  // and the loop above never revisits it — it only looks at UNMATCHED/LOW.
+  //
+  // Call enrichSeason directly rather than enrichOneShow: that re-runs the
+  // TMDB search from scratch and rewrites matchConfidence, so using it here
+  // would risk re-matching shows that are already correct just to fill in a
+  // special. This touches season 0 and nothing else, and is self-limiting —
+  // once the rows have a name they stop matching.
+  const needSpecials = await prisma.show.findMany({
+    where: {
+      tmdbId: { not: null },
+      matchConfidence: { notIn: ["UNMATCHED", "LOW"] },
+      seasons: { some: { seasonNumber: 0, episodes: { some: { owned: true, name: null } } } },
+    },
+    select: { id: true, title: true, tmdbId: true },
+  });
+  for (const show of needSpecials) {
+    try {
+      await enrichSeason(show.id, show.tmdbId!, 0, log, undefined, true);
+      log.push(`Backfilled specials metadata for "${show.title}"`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log.push(`Failed to backfill specials for "${show.title}": ${message}`);
+    }
+  }
+
+  const backfilled = needSpecials.length;
+  await finishRun(
+    runId,
+    log,
+    `Enriched ${total} show(s)${backfilled ? `, backfilled specials for ${backfilled}` : ""}`,
+  );
 }
 
 export type EnrichMediaType = "FILM" | "TV";
