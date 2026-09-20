@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { COVER_SIZES, parseCoverSize, resizedCoverPath, scaleFilter } from "./cover-size";
+import { COVER_SIZES, parseCoverSize, resizeArgs, resizedCoverPath, scaleFilter } from "./cover-size";
 
 describe("parseCoverSize", () => {
   it("accepts every allowed size", () => {
@@ -52,5 +52,34 @@ describe("scaleFilter", () => {
     expect(scaleFilter(512)).toBe(
       "scale='min(512,iw)':'min(512,ih)':force_original_aspect_ratio=decrease",
     );
+  });
+});
+
+describe("resizeArgs", () => {
+  it("states the output format, because the temporary's name can't imply it", () => {
+    // Without these, ffmpeg fails on a `.tmp` output and the route
+    // silently serves the full-size cover instead — which is how this
+    // shipped broken the first time.
+    const args = resizeArgs("/covers/42.jpg", 256, "/covers/resized/42-256.jpg.pid.tmp");
+    expect(args).toContain("-f");
+    expect(args[args.indexOf("-f") + 1]).toBe("image2");
+    expect(args).toContain("-c:v");
+    expect(args[args.indexOf("-c:v") + 1]).toBe("mjpeg");
+  });
+
+  it("reads the source and writes the destination last", () => {
+    const args = resizeArgs("/covers/42.jpg", 512, "/out.tmp");
+    expect(args[args.indexOf("-i") + 1]).toBe("/covers/42.jpg");
+    expect(args[args.length - 1]).toBe("/out.tmp");
+  });
+
+  it("carries the scale filter for the size asked for", () => {
+    const args = resizeArgs("/covers/42.jpg", 128, "/out.tmp");
+    expect(args[args.indexOf("-vf") + 1]).toBe(scaleFilter(128));
+  });
+
+  it("takes one frame, so an animated source can't write a sequence", () => {
+    const args = resizeArgs("/covers/42.gif", 128, "/out.tmp");
+    expect(args[args.indexOf("-frames:v") + 1]).toBe("1");
   });
 });
