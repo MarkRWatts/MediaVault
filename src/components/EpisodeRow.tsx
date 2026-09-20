@@ -113,7 +113,6 @@ export default function EpisodeRow({
 
       <div className="flex min-w-0 flex-1 flex-col gap-1 pt-0.5">
         <span className={`text-sm ${owned ? "text-text" : "text-text-muted"}`}>
-          <span className="text-text-faint">{episodeNumber}.</span>{" "}
           {name || `Episode ${episodeNumber}`}
         </span>
 
