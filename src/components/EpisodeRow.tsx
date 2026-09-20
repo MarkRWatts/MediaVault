@@ -1,23 +1,53 @@
+import EndsAt from "@/components/EndsAt";
 import FormatBadge from "@/components/FormatBadge";
 import PlayButton from "@/components/PlayButton";
 import SpecLine from "@/components/SpecLine";
 import { fileSpec } from "@/lib/episode-specs";
-import type { EpisodeFileView, EpisodeView } from "@/lib/queries";
+import { formatRuntimeMins, type EpisodeFileView, type EpisodeView } from "@/lib/queries";
 import { isFilePlayable } from "@/lib/playback/engine-flag";
 
-// One file's specs on an owned episode row — size and an in-app Play button
-// (/api/tv-video, "jellyfin" being the player's session-based protocol name
-// regardless of which engine actually serves it) when the file is playable
-// through whichever engine is active. An episode normally has a single file,
-// but multi-cut episodes (theatrical + extended rips of the same episode)
-// render one FileLine per file, stacked, so nothing gets silently dropped.
+// One episode: a still you press to play, the title, how long it runs and
+// when it would finish, and what it's about. Deliberately not the file's
+// specs — a season ripped from one boxed set has one spec, said once in the
+// header above (SpecLine / episode-specs.ts), and not the file size, which
+// says nothing you'd choose an episode on.
 //
-// `hoisted` means the header above already states this file's format,
-// resolution, range and audio because every file under it matches — so the
-// row shows none of it. It's false whenever the files disagree (a half-DVD,
-// half-Blu-ray show, or a multi-cut episode), and then the badges come back
-// here, which is the only place that can tell them apart.
-function FileLine({
+// The play control sits on the still rather than beside the title: it's the
+// largest target in the row, it's where the eye already is, and it leaves
+// the text column to read as text.
+
+/** Reserved even with no artwork, so the text columns line up down the list
+ *  and a missing still doesn't reflow the row. */
+function Still({
+  stillPath,
+  dimmed,
+  children,
+}: {
+  stillPath: string | null;
+  dimmed: boolean;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className="relative aspect-video w-28 shrink-0 overflow-hidden rounded-md border border-border bg-bg-elevated-2 sm:w-40">
+      {stillPath && (
+        <img
+          src={`/api/poster/w300${stillPath}`}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          className={`absolute inset-0 h-full w-full object-cover ${dimmed ? "opacity-45 grayscale" : ""}`}
+        />
+      )}
+      {children}
+    </div>
+  );
+}
+
+// A multi-cut episode (theatrical + extended rips of the same episode) keeps
+// a line per extra file: the still's play button can only stand for one of
+// them, so the rest need their own, and the size is the one thing that tells
+// two rips of the same episode apart at a glance.
+function ExtraFile({
   file,
   playable,
   playTitle,
@@ -30,8 +60,6 @@ function FileLine({
 }) {
   return (
     <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
-      {/* The same line the headers draw, so a file that has to state its own
-          specs states them the same way — only the place differs. */}
       {!hoisted && <SpecLine spec={fileSpec(file)} />}
       <span className="font-mono text-[11px] text-text-faint">{file.sizeLabel}</span>
       {playable && isFilePlayable(file) && (
@@ -54,48 +82,76 @@ export default function EpisodeRow({
   playable: boolean;
   showTitle: string;
   seasonNumber: number;
-  /** A header above already states these files' specs — see FileLine. */
+  /** A header above already states these files' specs, so the row says
+   *  nothing about them. False when the files disagree and the row is the
+   *  only place they can be told apart. */
   hoisted?: boolean;
 }) {
-  const { episodeNumber, name, stillPath, owned, files } = episode;
+  const { episodeNumber, name, overview, stillPath, runtimeMins, owned, files } = episode;
   const playTitle = `${showTitle} S${padded(seasonNumber)}E${padded(episodeNumber)}${name ? ` · ${name}` : ""}`;
 
+  // The still stands for one file, so it plays the one that can be played —
+  // for the ordinary single-file episode that's simply the file.
+  const primary = files.find((f) => isFilePlayable(f)) ?? null;
+  const canPlay = playable && primary !== null;
+  const extras = files.filter((f) => f !== primary);
+
   return (
-    <li className="flex items-start gap-3 p-2.5 sm:p-3">
-      <span className="w-7 shrink-0 pt-0.5 text-right font-mono text-xs text-text-faint">
-        {padded(episodeNumber)}
-      </span>
-      {stillPath && (
-        <div
-          className={`relative hidden h-9 w-16 shrink-0 overflow-hidden rounded border border-border sm:block ${
-            owned ? "" : "grayscale opacity-45"
-          }`}
-        >
-          <img
-            src={`/api/poster/w300${stillPath}`}
-            alt=""
-            loading="lazy"
-            decoding="async"
-            className="absolute inset-0 h-full w-full object-cover"
+    <li className="flex items-start gap-3 p-3 sm:gap-4">
+      <Still stillPath={stillPath} dimmed={!owned}>
+        {canPlay && (
+          <PlayButton
+            versionId={primary.id}
+            title={playTitle}
+            source="jellyfin"
+            basePath="/api/tv-video"
+            size="overlay"
+            label={`Play ${playTitle}`}
           />
-        </div>
-      )}
-      <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <span className={`truncate text-sm ${owned ? "text-text" : "text-text-muted"}`}>
+        )}
+      </Still>
+
+      <div className="flex min-w-0 flex-1 flex-col gap-1 pt-0.5">
+        <span className={`text-sm ${owned ? "text-text" : "text-text-muted"}`}>
+          <span className="text-text-faint">{episodeNumber}.</span>{" "}
           {name || `Episode ${episodeNumber}`}
         </span>
-        {owned ? (
-          files.length > 0 ? (
-            <div className="flex flex-col gap-1">
-              {files.map((f) => (
-                <FileLine key={f.id} file={f} playable={playable} playTitle={playTitle} hoisted={hoisted} />
-              ))}
-            </div>
+
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[11px] text-text-faint">
+          {runtimeMins !== null && <span>{formatRuntimeMins(runtimeMins)}</span>}
+          {canPlay && runtimeMins !== null && (
+            <>
+              <span aria-hidden className="text-text-faint/50">·</span>
+              <EndsAt mins={runtimeMins} />
+            </>
+          )}
+          {owned ? (
+            files.length === 0 ? (
+              <span>No file info</span>
+            ) : (
+              !hoisted && primary !== null && <SpecLine spec={fileSpec(primary)} />
+            )
           ) : (
-            <span className="text-xs text-text-faint">No file info</span>
-          )
-        ) : (
-          <FormatBadge kind="MISSING" />
+            <FormatBadge kind="MISSING" />
+          )}
+        </div>
+
+        {overview && (
+          <p className="line-clamp-2 text-xs leading-relaxed text-text-muted">{overview}</p>
+        )}
+
+        {extras.length > 0 && (
+          <div className="mt-0.5 flex flex-col gap-1">
+            {extras.map((f) => (
+              <ExtraFile
+                key={f.id}
+                file={f}
+                playable={playable}
+                playTitle={playTitle}
+                hoisted={hoisted}
+              />
+            ))}
+          </div>
         )}
       </div>
     </li>
