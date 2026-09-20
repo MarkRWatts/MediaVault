@@ -1,4 +1,12 @@
-// Serves cached album cover art, e.g. /api/cover/42. Unlike /api/poster
+// Serves cached album cover art, e.g. /api/cover/42, optionally resized:
+// /api/cover/42?size=256 fits the cover inside a 256px box (see
+// cover-size.ts for why the sizes are an allowlist, and why a smaller
+// cover is never enlarged to meet one). A resized copy is made once, with
+// ffmpeg, and kept next to the original; a request for a size this box
+// can't produce falls back to the stored cover rather than failing, so a
+// client asking for one never has to handle a missing image.
+//
+// Unlike /api/poster
 // (which receives the cache-relative path directly, since that IS the TMDB
 // path), this route only receives the numeric Album id, so it looks up
 // Album.coverPath first — covers are fetched/cached during enrichment
@@ -8,11 +16,17 @@
 // <img> tags now (no next/image optimizer, which fetched server-side
 // without cookies), so the browser's session cookie arrives here.
 
+import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { promisify } from "node:util";
 import { NextRequest, NextResponse } from "next/server";
+import { type CoverSize, parseCoverSize, resizedCoverPath, scaleFilter } from "@/lib/cover-size";
 import { prisma } from "@/lib/db";
+import { ffmpegPath } from "@/lib/ffmpeg-bin";
 import { requireMemberOrResponse } from "@/lib/require-member";
+
+const execFileAsync = promisify(execFile);
 
 const POSTER_CACHE_DIR = process.env.POSTER_CACHE_DIR ?? "./data/posters";
 const COVERS_DIR = path.resolve(POSTER_CACHE_DIR, "covers");
@@ -32,10 +46,22 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ albumId: s
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
 
-  const dest = path.resolve(COVERS_DIR, album.coverPath);
-  if (dest !== COVERS_DIR && !dest.startsWith(COVERS_DIR + path.sep)) {
+  const source = path.resolve(COVERS_DIR, album.coverPath);
+  if (source !== COVERS_DIR && !source.startsWith(COVERS_DIR + path.sep)) {
     return NextResponse.json({ error: "invalid path" }, { status: 400 });
   }
+
+  let sourceStat: { mtimeMs: number };
+  try {
+    sourceStat = await fs.stat(source);
+  } catch {
+    return NextResponse.json({ error: "not found" }, { status: 404 });
+  }
+
+  // Anything other than a size this box can make lands on the stored
+  // cover: too big is a waste, but it is still the right picture.
+  const size = parseCoverSize(_req.nextUrl.searchParams.get("size"));
+  const dest = size ? await resizedOrOriginal(album.coverPath, size, source, sourceStat.mtimeMs) : source;
 
   let buf: Buffer;
   let stat: { mtimeMs: number; size: number };
@@ -50,7 +76,10 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ albumId: s
   // replacing an online fetch), so `immutable` here left browsers showing
   // stale art for up to a year. Serve with an mtime+size ETag and always
   // revalidate: LAN 304s are cheap, cover swaps show up on the next load.
-  const etag = `"${stat.size.toString(16)}-${Math.trunc(stat.mtimeMs).toString(16)}"`;
+  //
+  // The requested size is part of the tag: two sizes sharing one would
+  // let a 304 hand a client the bytes of the other.
+  const etag = `"${size ?? 0}-${stat.size.toString(16)}-${Math.trunc(stat.mtimeMs).toString(16)}"`;
   if (_req.headers.get("if-none-match") === etag) {
     return new NextResponse(null, { status: 304, headers: { ETag: etag } });
   }
@@ -62,4 +91,43 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ albumId: s
       ETag: etag,
     },
   });
+}
+
+/// The resized copy, made if it isn't there yet (or is older than the
+/// cover it came from). Returns the original's path if this box has no
+/// working ffmpeg, or if the resize fails for any other reason — an
+/// oversized cover beats a broken image.
+async function resizedOrOriginal(
+  coverPath: string,
+  size: CoverSize,
+  source: string,
+  sourceMtimeMs: number,
+): Promise<string> {
+  const dest = path.resolve(COVERS_DIR, resizedCoverPath(coverPath, size));
+  if (!dest.startsWith(COVERS_DIR + path.sep)) return source;
+
+  try {
+    const existing = await fs.stat(dest);
+    if (existing.mtimeMs >= sourceMtimeMs) return dest;
+  } catch {
+    // Not made yet — fall through and make it.
+  }
+
+  // Into a uniquely-named temporary first, then renamed: two requests for
+  // the same new size arrive together often (a grid drawing twelve tiles),
+  // and a half-written JPEG must never be servable.
+  const tmp = `${dest}.${process.pid}-${Date.now()}.tmp`;
+  try {
+    await fs.mkdir(path.dirname(dest), { recursive: true });
+    await execFileAsync(
+      ffmpegPath(),
+      ["-y", "-i", source, "-vf", scaleFilter(size), "-frames:v", "1", "-q:v", "3", tmp],
+      { maxBuffer: 1024 * 1024 * 32 },
+    );
+    await fs.rename(tmp, dest);
+    return dest;
+  } catch {
+    await fs.rm(tmp, { force: true }).catch(() => {});
+    return source;
+  }
 }
