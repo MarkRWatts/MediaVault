@@ -791,25 +791,45 @@ async function doScanTv(runId: number, force: boolean): Promise<void> {
   }
 
   // Owned episodes left with zero files: revert to a TMDB manifest
-  // placeholder (owned=false) if the show is TMDB-matched — that row is
-  // what the missing-episode report is built from — otherwise drop it.
+  // placeholder (owned=false) if the show is TMDB-matched AND this episode
+  // actually came from the manifest — that row is what the missing-episode
+  // report is built from — otherwise drop it.
+  //
+  // `name` is the manifest tell: enrichSeason always writes it, while rows
+  // the scanner invents from a filename leave it null. Without that check a
+  // file named for an episode TMDB doesn't have (a special numbered into the
+  // parent season, say) would revert to a "missing" row nothing can ever
+  // fill, leaving a permanently blank card in the list.
   const emptyOwnedEpisodes = await prisma.episode.findMany({
     where: { owned: true, files: { none: {} } },
     select: {
       id: true,
       episodeNumber: true,
+      name: true,
       season: { select: { seasonNumber: true, show: { select: { title: true, tmdbId: true } } } },
     },
   });
   for (const ep of emptyOwnedEpisodes) {
     const label = `"${ep.season.show.title}" S${ep.season.seasonNumber}E${ep.episodeNumber}`;
-    if (ep.season.show.tmdbId != null) {
+    if (ep.season.show.tmdbId != null && ep.name != null) {
       await prisma.episode.update({ where: { id: ep.id }, data: { owned: false } });
       log.push(`${label} has no files left — reverted to missing (show is TMDB-matched)`);
     } else {
       await prisma.episode.delete({ where: { id: ep.id } });
-      log.push(`Deleted ${label} — no files left, show not TMDB-matched`);
+      log.push(`Deleted ${label} — no files left, not in the TMDB manifest`);
     }
+  }
+
+  // Sweep ghosts left by the older revert path: unowned (so no file) and
+  // with no manifest data (so nothing will ever fill them). Such a row can
+  // only render as a blank card, and enrichment can't rescue it because
+  // TMDB has no episode at that number. Placeholders from the manifest are
+  // untouched — they always carry a name.
+  const ghosts = await prisma.episode.deleteMany({
+    where: { owned: false, name: null, files: { none: {} } },
+  });
+  if (ghosts.count > 0) {
+    log.push(`Removed ${ghosts.count} empty episode row(s) with no file and no TMDB data`);
   }
 
   // Shows whose top-level folder vanished from disk.

@@ -503,6 +503,16 @@ async function fetchDvdEpisodeOrder(tmdbId: number, showTitle: string, log: stri
   }
 }
 
+/**
+ * Pull one season's manifest from TMDB onto our ShowSeason/Episode rows.
+ *
+ * `updateOnly` refreshes episodes we already hold without creating
+ * placeholders for the rest. Used for season 0, where the manifest is a
+ * grab-bag of specials, featurettes, retrospectives and films that nobody
+ * expects to own — listing them all as "missing" would bury the one or two
+ * specials actually on the shelf. Real seasons still create placeholders,
+ * since that is what the missing-episode report is built from.
+ */
 async function enrichSeason(
   showId: number,
   tmdbId: number,
@@ -510,6 +520,7 @@ async function enrichSeason(
   log: string[],
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   overrideEpisodes?: any[],
+  updateOnly = false,
 ): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const season: any = await tmdbFetch(`/tv/${tmdbId}/season/${seasonNumber}`);
@@ -542,27 +553,30 @@ async function enrichSeason(
     const episodeNumber = overrideEpisodes ? i + 1 : ep.episode_number;
     if (episodeNumber == null) continue;
 
-    await prisma.episode.upsert({
-      where: { seasonId_episodeNumber: { seasonId: showSeason.id, episodeNumber } },
-      create: {
-        seasonId: showSeason.id,
-        episodeNumber,
-        name: ep.name ?? null,
-        overview: ep.overview ?? null,
-        stillPath: ep.still_path ?? null,
-        airDate: ep.air_date ? new Date(ep.air_date) : null,
-        runtimeMins: ep.runtime ?? null,
-        // owned defaults false — flipped to true only by the scanner.
-      },
-      update: {
-        name: ep.name ?? null,
-        overview: ep.overview ?? null,
-        stillPath: ep.still_path ?? null,
-        airDate: ep.air_date ? new Date(ep.air_date) : null,
-        runtimeMins: ep.runtime ?? null,
-        // owned intentionally omitted — never touched by enrichment.
-      },
-    });
+    const episodeData = {
+      name: ep.name ?? null,
+      overview: ep.overview ?? null,
+      stillPath: ep.still_path ?? null,
+      airDate: ep.air_date ? new Date(ep.air_date) : null,
+      runtimeMins: ep.runtime ?? null,
+      // owned intentionally omitted — never touched by enrichment.
+    };
+
+    if (updateOnly) {
+      // updateMany is a no-op when the row is absent, so nothing is created.
+      const { count } = await prisma.episode.updateMany({
+        where: { seasonId: showSeason.id, episodeNumber },
+        data: episodeData,
+      });
+      if (count === 0) continue; // not owned — skip the still cache too
+    } else {
+      await prisma.episode.upsert({
+        where: { seasonId_episodeNumber: { seasonId: showSeason.id, episodeNumber } },
+        // owned defaults false on create — flipped to true only by the scanner.
+        create: { seasonId: showSeason.id, episodeNumber, ...episodeData },
+        update: episodeData,
+      });
+    }
     await cachePoster(ep.still_path, "w300");
   }
 
@@ -656,6 +670,23 @@ async function enrichOneShow(show: Show, log: string[]): Promise<void> {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log.push(`Failed to fetch season ${seasonNumber} for "${show.title}": ${message}`);
+    }
+  }
+
+  // Specials (season 0) sit outside number_of_seasons, so the loop above
+  // never reaches them and any special on disk keeps a blank card. Fetch it
+  // only when we hold one — in updateOnly mode, so the rest of the manifest
+  // doesn't arrive as a wall of unowned rows.
+  const hasSpecials = await prisma.showSeason.findUnique({
+    where: { showId_seasonNumber: { showId: show.id, seasonNumber: 0 } },
+    select: { id: true },
+  });
+  if (hasSpecials) {
+    try {
+      await enrichSeason(show.id, tmdbId, 0, log, undefined, true);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log.push(`Failed to fetch specials for "${show.title}": ${message}`);
     }
   }
 }
