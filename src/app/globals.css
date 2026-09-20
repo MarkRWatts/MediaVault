@@ -19,17 +19,35 @@
  * brief for rationale. All colors defined on :root; no light mode.
  * ------------------------------------------------------------------------ */
 :root {
-  --bg: #14110d;
-  --bg-elevated: #1b1712;
-  --bg-elevated-2: #221c15;
-  --bg-hover: #262019;
+  /* The brown ramp every neutral is taken from, lightest to darkest. Shared
+     verbatim with the iOS app (MediaVaultiOS, MediaVault/Theme.swift
+     `ramp`), which derived it from this file's original hand-picked values —
+     the two are now the same seven steps rather than two sets that drift.
+     Nothing outside this block should name a neutral hex: surfaces and text
+     are steps of (or `color-mix`es between steps of) this ramp, so the app
+     reads as one hue with the amber accent on top. */
+  --ramp-0: #e9e0d4;
+  --ramp-1: #cab79e;
+  --ramp-2: #a2937e;
+  --ramp-3: #7f7262;
+  --ramp-4: #5a5145;
+  --ramp-5: #352f27;
+  --ramp-6: #14110d;
+
+  /* The ramp's own jump from its darkest step to the next is too big for
+     "slightly raised", so the surfaces sit between the two — the same
+     fractions Theme.swift mixes. */
+  --bg: var(--ramp-6);
+  --bg-elevated: color-mix(in srgb, var(--ramp-5) 22%, var(--ramp-6));
+  --bg-elevated-2: color-mix(in srgb, var(--ramp-5) 42%, var(--ramp-6));
+  --bg-hover: color-mix(in srgb, var(--ramp-5) 60%, var(--ramp-6));
 
   --border: rgba(255, 255, 255, 0.08);
   --border-strong: rgba(255, 255, 255, 0.16);
 
-  --text: #f3ede2;
-  --text-muted: #a89a86;
-  --text-faint: #6f6353;
+  --text: var(--ramp-0);
+  --text-muted: var(--ramp-2);
+  --text-faint: var(--ramp-3);
 
   --accent: #e2a545;
   --accent-bright: #f3c168;

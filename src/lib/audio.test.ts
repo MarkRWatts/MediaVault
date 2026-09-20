@@ -8,6 +8,31 @@ describe("audioBadge", () => {
     expect(audioBadge("truehd", null, 8, "7.1")).toMatchObject({ label: "Dolby TrueHD", sublabel: "7.1" });
   });
 
+  it("flags object audio from the profile without losing the base codec", () => {
+    // Real probe data off the share: ffprobe puts Atmos and DTS:X in the
+    // profile, alongside the core codec that's actually carrying them, and
+    // the badge keeps naming that core.
+    expect(audioBadge("truehd", "Dolby TrueHD + Dolby Atmos", 8, "7.1")).toMatchObject({
+      label: "Dolby TrueHD",
+      sublabel: "7.1",
+      objectAudio: "atmos",
+    });
+    expect(audioBadge("eac3", "Dolby Digital Plus + Dolby Atmos", 6, "5.1(side)")).toMatchObject({
+      label: "Dolby Digital Plus",
+      objectAudio: "atmos",
+    });
+    // Fast & Furious 8's Blu-ray — the library's only DTS:X disc.
+    expect(audioBadge("dts", "DTS-HD MA + DTS:X", 8, "7.1")).toMatchObject({
+      label: "DTS-HD MA",
+      objectAudio: "dtsx",
+    });
+    expect(audioBadge("truehd", null, 8, "7.1").objectAudio).toBeNull();
+    expect(audioBadge("ac3", null, 6, "5.1(side)").objectAudio).toBeNull();
+    expect(audioBadge("dts", "DTS-HD MA", 6, "5.1(side)").objectAudio).toBeNull();
+    // DTS Express carries an X in its name and is not DTS:X.
+    expect(audioBadge("dts", "DTS Express", 2, "stereo").objectAudio).toBeNull();
+  });
+
   it("distinguishes DTS profiles — the whole point of this module", () => {
     // Real Die Hard (1988) probe data: two DTS tracks, one HD MA, one plain.
     expect(audioBadge("dts", "DTS-HD MA", 6, "5.1(side)")).toMatchObject({ label: "DTS-HD MA" });
