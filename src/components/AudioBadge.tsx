@@ -19,13 +19,17 @@ import { audioFamily, type AudioBadgeInfo, type ObjectAudio } from "@/lib/audio"
 // height before that second line is readable at all; the 2012 Dolby marks
 // are single-line and four times as wide as they are tall, so the same box
 // height would make their lettering twice the size; and the DTS 2020 mark is
-// one bold wordmark edge to edge, which shouts at any of the above.
+// one bold wordmark edge to edge, which shouts at any of the above. The AAC
+// mark is the opposite problem: taller than it is wide, with the lettering
+// only the bottom fifth under the swoosh, so it needs the most height of all.
+// It keeps its own blue/teal, like the DTS marks.
 const MARKS: Record<string, MarkSpec> = {
   "Dolby Digital": { src: "/format-logos/dolby-digital.webp", alt: "Dolby Digital", invert: true, scale: 1.35 },
   "Dolby Digital Plus": { src: "/format-logos/dolby-digital-plus.svg", alt: "Dolby Digital Plus", invert: true, scale: 0.85 },
   "Dolby TrueHD": { src: "/format-logos/dolby-truehd.svg", alt: "Dolby TrueHD", invert: true, scale: 0.85 },
   DTS: { src: "/format-logos/dts.svg", alt: "DTS", scale: 0.9 },
   "DTS-HD MA": { src: "/format-logos/dts-hd.webp", alt: "DTS-HD Master Audio", scale: 0.85 },
+  AAC: { src: "/format-logos/aac.webp", alt: "AAC", scale: 1.8 },
 };
 
 // Object audio rides alongside the codec mark rather than replacing it —
@@ -38,7 +42,7 @@ const OBJECT_MARKS: Record<ObjectAudio, MarkSpec> = {
 // Quiet family tints for the text-chip fallback — same visual register as
 // FormatBadge/ResolutionBadge (small, uppercase, mono, 1px translucent
 // border) but its own two hues so Dolby vs DTS is legible at a glance
-// without shouting. Everything else (AAC, FLAC, PCM…) stays neutral.
+// without shouting. Everything else (FLAC, PCM…) stays neutral.
 const FAMILY_STYLES: Record<"dolby" | "dts" | "neutral", string> = {
   dolby: "border-audio-dolby-border bg-audio-dolby-bg text-audio-dolby",
   dts: "border-audio-dts-border bg-audio-dts-bg text-audio-dts",
