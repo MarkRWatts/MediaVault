@@ -119,6 +119,7 @@ export default function ScanControls() {
   const [runs, setRuns] = useState<RunsResponse>(EMPTY);
   const [reachable, setReachable] = useState(true);
   const [pending, setPending] = useState<OpKey | null>(null);
+  const [force, setForce] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [, forceTick] = useState(0);
 
@@ -179,10 +180,15 @@ export default function ScanControls() {
   }, []);
 
   const trigger = useCallback(
-    async (op: OpKey) => {
+    async (op: OpKey, body?: Record<string, unknown>) => {
       setPending(op);
       try {
-        await fetch(OP_ENDPOINT[op], { method: "POST" });
+        await fetch(OP_ENDPOINT[op], {
+          method: "POST",
+          ...(body
+            ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
+            : {}),
+        });
       } catch {
         // ignored — next poll reflects reality either way
       } finally {
@@ -211,6 +217,16 @@ export default function ScanControls() {
         <p className="text-sm text-accent/80">Add THEPORNDB_API_KEY to your environment to enable Adult metadata fetching.</p>
       )}
 
+      <label className="flex items-center gap-1.5 self-start text-xs text-text-faint">
+        <input
+          type="checkbox"
+          checked={force}
+          onChange={(e) => setForce(e.target.checked)}
+          className="h-3.5 w-3.5 rounded border-border accent-accent"
+        />
+        Force full re-probe (ignores the size/mtime cache — slow)
+      </label>
+
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         {SECTIONS.map((section) => {
           const scanRun = runs[OP_RUN_KEY[section.scan]];
@@ -227,7 +243,7 @@ export default function ScanControls() {
                   <span className="text-sm text-text">Rescan library</span>
                   <button
                     type="button"
-                    onClick={() => trigger(section.scan)}
+                    onClick={() => trigger(section.scan, { force })}
                     disabled={scanRunning || pending === section.scan}
                     className="inline-flex min-h-9 items-center justify-center rounded-md border border-border px-3 py-1.5 text-xs font-medium tracking-wide text-text-muted transition-colors hover:border-border-strong hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
                   >
