@@ -14,7 +14,7 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
-const { guardAndCreateRun, finishRun } = await import("@/lib/runs");
+const { guardAndCreateRun, finishRun, getLatestRuns } = await import("@/lib/runs");
 
 beforeAll(async () => {
   const db = await createTempTestDb();
@@ -64,5 +64,17 @@ describe("guardAndCreateRun", () => {
     const next = await guardAndCreateRun("JELLYFIN");
     expect(next.started).toBe(true);
     expect((await testPrisma.scanRun.findUniqueOrThrow({ where: { id: stale.id } })).status).toBe("FAILED");
+  });
+});
+
+describe("getLatestRuns", () => {
+  it("returns only the tail of a long log — /admin polls this every 3 seconds", async () => {
+    const { run } = await guardAndCreateRun("SCAN_FILM");
+    await finishRun(run.id, Array.from({ length: 500 }, (_, i) => `line ${i}`));
+
+    const log = (await getLatestRuns()).latestScanFilm?.log;
+    expect(log).toHaveLength(200);
+    expect(log?.at(0)).toBe("line 300");
+    expect(log?.at(-1)).toBe("line 499");
   });
 });

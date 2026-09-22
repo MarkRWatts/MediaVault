@@ -7,6 +7,11 @@ import type { ScanRun } from "@/generated/prisma/client";
 
 const STALE_RUN_MS = 30 * 60 * 1000; // 30 minutes
 
+// A full-library scan logs a line per unparseable/failed file, so a bad
+// rename spree can leave thousands behind. The admin page only ever shows
+// the tail, and shipping the rest down a 3s poll is pure weight.
+const LOG_TAIL_LINES = 200;
+
 export type RunKind =
   | "SCAN_FILM"
   | "SCAN_TV"
@@ -132,7 +137,7 @@ function toSummary(run: ScanRun | null): RunSummary | null {
   if (run.log) {
     try {
       const parsed = JSON.parse(run.log);
-      if (Array.isArray(parsed)) log = parsed;
+      if (Array.isArray(parsed)) log = parsed.slice(-LOG_TAIL_LINES);
     } catch {
       // ignore malformed log JSON
     }

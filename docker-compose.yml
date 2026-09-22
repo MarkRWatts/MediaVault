@@ -32,6 +32,10 @@ services:
       # default, which skips the concert scan/enrich phases entirely.
       CONCERTS_PATH: ${CONCERTS_PATH:-}
       ADULT_IMAGE_CACHE_DIR: /app/data/adult-images
+      # How often the app rescans every library, fetches metadata and
+      # relinks Jellyfin on its own (src/lib/scheduler.ts). Fractions are
+      # allowed; 0 switches it off. Defaults to 4 hours in code if unset.
+      SYNC_INTERVAL_HOURS: ${SYNC_INTERVAL_HOURS:-}
       # TMDB API key (optional, free) — enables posters, metadata, and
       # collection/missing-film detection. Leave blank to scan-only.
       TMDB_API_KEY: ${TMDB_API_KEY:-}

@@ -1191,7 +1191,12 @@ async function doScanScenes(runId: number, force: boolean): Promise<void> {
   await finishRun(runId, log, `Scanned ${total} file(s)`);
 }
 
-export type ScanMediaType = "FILM" | "TV" | "MUSIC" | "SCENE" | "CONCERT";
+// The single list every "do this for each library" caller walks (the
+// periodic sync in src/lib/scheduler.ts, for one), so adding a media type
+// here is enough to have it picked up.
+export const SCAN_MEDIA_TYPES = ["FILM", "TV", "MUSIC", "SCENE", "CONCERT"] as const;
+
+export type ScanMediaType = (typeof SCAN_MEDIA_TYPES)[number];
 
 const SCAN_KIND: Record<ScanMediaType, RunKind> = {
   FILM: "SCAN_FILM",
@@ -1209,7 +1214,7 @@ const SCAN_RUNNER: Record<ScanMediaType, (runId: number, force: boolean) => Prom
   CONCERT: (runId, force) => doScanFilmLibrary(runId, force, "CONCERT"),
 };
 
-const SCAN_PATH_ENV: Record<ScanMediaType, string> = {
+export const SCAN_PATH_ENV: Record<ScanMediaType, string> = {
   FILM: "MOVIES_PATH",
   TV: "TVSHOWS_PATH",
   MUSIC: "MUSIC_PATH",

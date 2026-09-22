@@ -123,6 +123,19 @@ HTTPS name, `jellyfin.markrwatts.com`, whose certificate the VM's Caddy
 provides (see [HTTPS on the LAN](#https-on-the-lan-the-vms-caddy)). See
 README → Jellyfin.
 
+### Periodic sync
+
+The container keeps itself up to date on its own. A scheduler started at
+boot (`src/instrumentation.ts` → `src/lib/scheduler.ts`) rescans every
+configured library, fetches metadata for each, then relinks Jellyfin —
+each step in turn, waiting for the previous one to finish, and each
+recorded in the runs list on `/admin` exactly as the buttons there are. A
+kind already running is skipped for that pass rather than queued, a
+library with no `*_PATH` set is left out, and one step failing costs only
+that step. `SYNC_INTERVAL_HOURS` sets the gap (default 4 hours, `0` to
+switch it off); the first pass comes one whole interval after boot, so a
+redeploy never starts a library walk.
+
 ### Verify
 
 The playbook already checks both sites. By hand:
@@ -271,6 +284,8 @@ commented per variable. The VM's real values live in the Ansible vault (see
 - `JELLYFIN_MAX_SESSIONS`, `PREPARE_CONCURRENCY`, `PREPARE_QUEUE` and
   `AUDIO_CONCURRENCY` cap concurrent transcodes and decodes; the defaults
   suit a 4-core VM.
+- `SYNC_INTERVAL_HOURS` sets how often the container syncs itself — see
+  [Periodic sync](#periodic-sync). Left blank, it is every 4 hours.
 - No `FFPROBE_DOCKER_IMAGE`: the image installs ffmpeg.
 - `RENDER_GID` (the VM's `render` group id) and `PLAYBACK_HWACCEL` (`qsv` |
   `vaapi` | `none`) drive the iGPU pass-through — see

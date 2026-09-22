@@ -11,6 +11,7 @@ interface RunInfo {
   progress: number;
   total: number;
   message: string | null;
+  log: string[];
 }
 
 interface RunsResponse {
@@ -26,6 +27,9 @@ interface RunsResponse {
   latestScanConcert: RunInfo | null;
   latestEnrichConcert: RunInfo | null;
   running: boolean;
+  // When the periodic sync next fires, or null when it's off — see
+  // src/lib/scheduler.ts.
+  nextSyncAt: string | null;
 }
 
 const EMPTY: RunsResponse = {
@@ -41,6 +45,7 @@ const EMPTY: RunsResponse = {
   latestScanConcert: null,
   latestEnrichConcert: null,
   running: false,
+  nextSyncAt: null,
 };
 
 type OpKey =
@@ -70,7 +75,7 @@ const OP_ENDPOINT: Record<OpKey, string> = {
   jellyfinSync: "/api/jellyfin-sync",
 };
 
-const OP_RUN_KEY: Record<OpKey, Exclude<keyof RunsResponse, "running">> = {
+const OP_RUN_KEY: Record<OpKey, Exclude<keyof RunsResponse, "running" | "nextSyncAt">> = {
   scanFilm: "latestScanFilm",
   scanTv: "latestScanTv",
   scanMusic: "latestScanMusic",
@@ -107,6 +112,27 @@ function relativeTime(iso: string | null): string {
   return `${days}d ago`;
 }
 
+function elapsed(startedAt: string, finishedAt: string | null): string {
+  if (!finishedAt) return "";
+  const ms = new Date(finishedAt).getTime() - new Date(startedAt).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return "";
+  const secs = Math.round(ms / 1000);
+  if (secs < 60) return `${secs}s`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ${secs % 60}s`;
+  return `${Math.floor(mins / 60)}h ${mins % 60}m`;
+}
+
+function nextSyncLabel(iso: string | null): string {
+  if (!iso) return "Automatic sync is off.";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "Automatic sync is off.";
+  const mins = Math.max(0, Math.round((then - Date.now()) / 60_000));
+  const when = mins < 1 ? "any moment" : mins < 60 ? `in ${mins}m` : `in ${Math.floor(mins / 60)}h ${mins % 60}m`;
+  const clock = new Date(then).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return `Next automatic sync: ${when} (${clock}).`;
+}
+
 function StatusLine({ run, activeLabel }: { run: RunInfo | null; activeLabel: string }) {
   if (!run) return <span className="text-text-faint">Never run</span>;
   if (run.status === "RUNNING") {
@@ -114,15 +140,48 @@ function StatusLine({ run, activeLabel }: { run: RunInfo | null; activeLabel: st
       <span className="text-text-muted">
         {activeLabel}
         {run.total > 0 ? ` ${run.progress}/${run.total}…` : "…"}
+        {run.message ? ` — ${run.message}` : ""}
       </span>
     );
   }
+  const took = elapsed(run.startedAt, run.finishedAt);
   return (
     <span className="text-text-faint">
       {run.status === "FAILED" ? <span className="text-missing">Failed</span> : "Done"} ·{" "}
       {relativeTime(run.finishedAt ?? run.startedAt)}
-      {run.status === "FAILED" && run.message ? ` — ${run.message}` : ""}
+      {took ? ` · took ${took}` : ""}
+      {run.message ? ` — ${run.message}` : ""}
     </span>
+  );
+}
+
+// The scan/enrichment jobs write their log in one go when the run ends, so
+// the lines land as a block on whichever poll follows; the status line above
+// is what moves while a run is still going.
+function RunLog({ run }: { run: RunInfo | null }) {
+  const boxRef = useRef<HTMLPreElement>(null);
+  const lines = run?.log ?? [];
+
+  // Newest line at the bottom, so keep the view pinned there as a poll
+  // lengthens the log.
+  useEffect(() => {
+    const box = boxRef.current;
+    if (box) box.scrollTop = box.scrollHeight;
+  }, [lines.length]);
+
+  if (lines.length === 0) return null;
+  return (
+    <details className="text-xs">
+      <summary className="cursor-pointer select-none text-text-faint transition-colors hover:text-text-muted">
+        Log ({lines.length} line{lines.length === 1 ? "" : "s"})
+      </summary>
+      <pre
+        ref={boxRef}
+        className="mt-1.5 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border/60 bg-bg p-2 font-mono text-[11px] leading-relaxed text-text-muted"
+      >
+        {lines.join("\n")}
+      </pre>
+    </details>
   );
 }
 
@@ -130,6 +189,7 @@ export default function ScanControls() {
   const [runs, setRuns] = useState<RunsResponse>(EMPTY);
   const [reachable, setReachable] = useState(true);
   const [pending, setPending] = useState<OpKey | null>(null);
+  const [force, setForce] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [, forceTick] = useState(0);
 
@@ -190,10 +250,15 @@ export default function ScanControls() {
   }, []);
 
   const trigger = useCallback(
-    async (op: OpKey) => {
+    async (op: OpKey, body?: Record<string, unknown>) => {
       setPending(op);
       try {
-        await fetch(OP_ENDPOINT[op], { method: "POST" });
+        await fetch(OP_ENDPOINT[op], {
+          method: "POST",
+          ...(body
+            ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
+            : {}),
+        });
       } catch {
         // ignored — next poll reflects reality either way
       } finally {
@@ -222,6 +287,18 @@ export default function ScanControls() {
         <p className="text-sm text-accent/80">Add THEPORNDB_API_KEY to your environment to enable Adult metadata fetching.</p>
       )}
 
+      <p className="text-xs text-text-faint">{nextSyncLabel(runs.nextSyncAt)}</p>
+
+      <label className="flex items-center gap-1.5 self-start text-xs text-text-faint">
+        <input
+          type="checkbox"
+          checked={force}
+          onChange={(e) => setForce(e.target.checked)}
+          className="h-3.5 w-3.5 rounded border-border accent-accent"
+        />
+        Force full re-probe (ignores the size/mtime cache — slow)
+      </label>
+
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         {SECTIONS.map((section) => {
           const scanRun = runs[OP_RUN_KEY[section.scan]];
@@ -238,7 +315,7 @@ export default function ScanControls() {
                   <span className="text-sm text-text">Rescan library</span>
                   <button
                     type="button"
-                    onClick={() => trigger(section.scan)}
+                    onClick={() => trigger(section.scan, { force })}
                     disabled={scanRunning || pending === section.scan}
                     className="inline-flex min-h-9 items-center justify-center rounded-md border border-border px-3 py-1.5 text-xs font-medium tracking-wide text-text-muted transition-colors hover:border-border-strong hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
                   >
@@ -248,6 +325,7 @@ export default function ScanControls() {
                 <div className="text-xs" aria-live="polite">
                   <StatusLine run={scanRun} activeLabel="Scanning" />
                 </div>
+                <RunLog run={scanRun} />
               </div>
 
               <div className="flex flex-col gap-2 border-t border-border/60 pt-3">
@@ -265,6 +343,7 @@ export default function ScanControls() {
                 <div className="text-xs" aria-live="polite">
                   <StatusLine run={enrichRun} activeLabel="Fetching metadata" />
                 </div>
+                <RunLog run={enrichRun} />
               </div>
             </div>
           );
@@ -293,6 +372,7 @@ export default function ScanControls() {
         <div className="text-xs" aria-live="polite">
           <StatusLine run={runs.latestJellyfin} activeLabel="Syncing" />
         </div>
+        <RunLog run={runs.latestJellyfin} />
       </div>
     </div>
   );
