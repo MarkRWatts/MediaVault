@@ -39,9 +39,9 @@ export default async function ShowPage({
 
   const complete = show.totalEpisodeCount > 0 && show.ownedEpisodeCount === show.totalEpisodeCount;
 
-  // A show ripped from boxed sets is one format end to end, so it gets said
-  // once here and nowhere else. Null when the seasons disagree, and each
-  // season header answers for itself instead (SeasonSection).
+  // What every file in the show agrees on, said once here and nowhere else.
+  // The fields the seasons disagree about are missing from it, and each
+  // season header answers for those itself (SeasonSection).
   const spec = sharedSpec(showFiles(show.seasons));
 
   // Seasons fold, and a first visit leaves one of them open (season-collapse.ts).
@@ -130,7 +130,7 @@ export default async function ShowPage({
                 )}
               </div>
 
-              {spec && <SpecLine spec={spec} />}
+              <SpecLine spec={spec} />
 
               {show.genres.length > 0 && (
                 <div className="flex flex-wrap gap-1.5">
@@ -188,7 +188,7 @@ export default async function ShowPage({
               showId={show.id}
               playable={playable}
               showTitle={show.title}
-              specHoisted={spec !== null}
+              hoistedSpec={spec}
               defaultCollapsed={season.seasonNumber !== openSeason}
             />
           ))

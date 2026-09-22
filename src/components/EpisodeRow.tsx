@@ -2,15 +2,16 @@ import EndsAt from "@/components/EndsAt";
 import FormatBadge from "@/components/FormatBadge";
 import PlayButton from "@/components/PlayButton";
 import SpecLine from "@/components/SpecLine";
-import { fileSpec } from "@/lib/episode-specs";
+import { fileSpec, specExcept, type Spec } from "@/lib/episode-specs";
 import { formatRuntimeMins, type EpisodeFileView, type EpisodeView } from "@/lib/queries";
 import { isFilePlayable } from "@/lib/playback/engine-flag";
 
 // One episode: a still you press to play, the title, how long it runs and
-// when it would finish, and what it's about. Deliberately not the file's
-// specs — a season ripped from one boxed set has one spec, said once in the
-// header above (SpecLine / episode-specs.ts), and not the file size, which
-// says nothing you'd choose an episode on.
+// when it would finish, and what it's about. Deliberately not the specs the
+// header above already states — a season ripped from one boxed set says its
+// format and resolution once (SpecLine / episode-specs.ts), and the row is
+// left with only the fields its files disagree about, often none. Not the
+// file size either, which says nothing you'd choose an episode on.
 //
 // The play control sits on the still rather than beside the title: it's the
 // largest target in the row, it's where the eye already is, and it leaves
@@ -56,11 +57,11 @@ function ExtraFile({
   file: EpisodeFileView;
   playable: boolean;
   playTitle: string;
-  hoisted: boolean;
+  hoisted: Spec | null;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
-      {!hoisted && <SpecLine spec={fileSpec(file)} />}
+      <SpecLine spec={specExcept(fileSpec(file), hoisted)} />
       <span className="font-mono text-[11px] text-text-faint">{file.sizeLabel}</span>
       {playable && isFilePlayable(file) && (
         <PlayButton versionId={file.id} title={playTitle} source="jellyfin" basePath="/api/tv-video" />
@@ -74,7 +75,7 @@ export default function EpisodeRow({
   playable,
   showTitle,
   seasonNumber,
-  hoisted = false,
+  hoisted = null,
 }: {
   episode: EpisodeView;
   /** playbackAvailable() — playback is possible at all right now, so
@@ -82,10 +83,10 @@ export default function EpisodeRow({
   playable: boolean;
   showTitle: string;
   seasonNumber: number;
-  /** A header above already states these files' specs, so the row says
-   *  nothing about them. False when the files disagree and the row is the
-   *  only place they can be told apart. */
-  hoisted?: boolean;
+  /** The fields a header above already states, which the row therefore
+   *  leaves out. Whatever isn't in here the files disagree about, and the
+   *  row is the only place they can be told apart. */
+  hoisted?: Spec | null;
 }) {
   const { episodeNumber, name, overview, stillPath, runtimeMins, owned, files } = episode;
   const playTitle = `${showTitle} S${padded(seasonNumber)}E${padded(episodeNumber)}${name ? ` · ${name}` : ""}`;
@@ -128,7 +129,7 @@ export default function EpisodeRow({
             files.length === 0 ? (
               <span>No file info</span>
             ) : (
-              !hoisted && primary !== null && <SpecLine spec={fileSpec(primary)} />
+              primary !== null && <SpecLine spec={specExcept(fileSpec(primary), hoisted)} />
             )
           ) : (
             <FormatBadge kind="MISSING" />

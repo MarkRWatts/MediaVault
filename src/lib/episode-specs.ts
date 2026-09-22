@@ -5,52 +5,85 @@
 //
 // "Is it actually the same?" has to be asked of the data rather than assumed,
 // though — a show can be half DVD and half Blu-ray, and a multi-cut episode
-// puts two different rips under one episode. When the files disagree there is
-// no honest summary to hoist, so these return null and the rows keep showing
-// their own badges.
+// puts two different rips under one episode. It's asked field by field: each
+// of format, resolution, HDR range and audio is hoisted when every file
+// agrees on it, and left on the rows when they don't. Sharpe is why —
+// eighteen DVD files at one resolution, sixteen of them stereo and two 5.1,
+// so the header honestly says DVD and 720×576 and only the audio mark has to
+// repeat down the page. All or nothing would have cost that show its whole
+// header line over two files.
 
 import { audioBadge, type AudioBadgeInfo } from "@/lib/audio";
 import type { EpisodeFileView, SeasonView } from "@/lib/queries";
 import type { Format } from "@/lib/constants";
 
-export interface FileSpec {
-  format: Format;
-  resolution: string;
-  videoRange: string | null;
-  /** One per audio track, in stream order. Empty for a file probed before
-   *  EpisodeAudioTrack existed, which is what `audioSummary` covers. */
-  audio: AudioBadgeInfo[];
-  /** The legacy pre-rendered string, shown only when `audio` is empty. */
-  audioSummary: string | null;
+/** A file's audio in both its renderings: one badge per track in stream
+ *  order, and `summary`, the legacy pre-rendered string that stands in when
+ *  there are no tracks (a file probed before EpisodeAudioTrack existed).
+ *  They travel together because they are one field — what hoists one hoists
+ *  the other. */
+export interface SpecAudio {
+  tracks: AudioBadgeInfo[];
+  summary: string | null;
 }
 
-export function fileSpec(file: EpisodeFileView): FileSpec {
+/** What a spec line says. A header's line and whatever a row has left to add
+ *  are the same shape: a null field is one this line doesn't draw, either
+ *  because a line above it already did or because there is nothing to draw
+ *  (an SDR rip has no HDR mark whoever states it). */
+export interface Spec {
+  format: Format | null;
+  resolution: string | null;
+  videoRange: string | null;
+  audio: SpecAudio | null;
+}
+
+export function fileSpec(file: EpisodeFileView): Spec {
   return {
     format: file.format,
     resolution: file.resolution,
     videoRange: file.videoRange,
-    audio: file.audioTracks.map((a) => audioBadge(a.codec, a.profile, a.channels, a.layout)),
-    audioSummary: file.audioSummary,
+    audio: {
+      tracks: file.audioTracks.map((a) => audioBadge(a.codec, a.profile, a.channels, a.layout)),
+      summary: file.audioSummary,
+    },
   };
 }
 
-/** Everything the summary line draws, so two files only count as matching
- *  when nothing visible about them differs. */
-function specKey(spec: FileSpec): string {
-  const audio = spec.audio.length
-    ? spec.audio.map((a) => `${a.label}/${a.sublabel ?? ""}/${a.objectAudio ?? ""}`).join("+")
-    : `summary:${spec.audioSummary ?? ""}`;
-  return [spec.format, spec.resolution, spec.videoRange ?? "", audio].join("|");
+/** Everything the audio marks draw, so two files' audio only counts as
+ *  matching when nothing visible about it differs. */
+function audioKey(audio: SpecAudio | null): string {
+  if (!audio) return "";
+  return audio.tracks.length
+    ? audio.tracks.map((a) => `${a.label}/${a.sublabel ?? ""}/${a.objectAudio ?? ""}`).join("+")
+    : `summary:${audio.summary ?? ""}`;
 }
 
-/** The one spec every file here shares, or null if they differ (or there are
- *  none). Callers treat null as "leave the badges on the rows". */
-export function sharedSpec(files: EpisodeFileView[]): FileSpec | null {
+/** The fields every one of these files agrees on, for a show or season
+ *  header to state once; the fields they differ on come back null and stay
+ *  on the rows. Null when there are no files to summarise at all. */
+export function sharedSpec(files: EpisodeFileView[]): Spec | null {
   if (files.length === 0) return null;
   const specs = files.map(fileSpec);
   const first = specs[0];
-  const key = specKey(first);
-  return specs.every((s) => specKey(s) === key) ? first : null;
+  const agree = (read: (s: Spec) => string | null) => specs.every((s) => read(s) === read(first));
+  return {
+    format: agree((s) => s.format) ? first.format : null,
+    resolution: agree((s) => s.resolution) ? first.resolution : null,
+    videoRange: agree((s) => s.videoRange) ? first.videoRange : null,
+    audio: agree((s) => audioKey(s.audio)) ? first.audio : null,
+  };
+}
+
+/** `spec` minus every field `hoisted` has already said: what a season header
+ *  adds to the show's line, and what a row still has to add to both. */
+export function specExcept(spec: Spec, hoisted: Spec | null): Spec {
+  return {
+    format: hoisted?.format ? null : spec.format,
+    resolution: hoisted?.resolution ? null : spec.resolution,
+    videoRange: hoisted?.videoRange ? null : spec.videoRange,
+    audio: hoisted?.audio ? null : spec.audio,
+  };
 }
 
 export function seasonFiles(season: SeasonView): EpisodeFileView[] {

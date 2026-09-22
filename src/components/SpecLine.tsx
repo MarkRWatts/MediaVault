@@ -1,13 +1,14 @@
 import AudioBadge from "@/components/AudioBadge";
 import FormatBadge from "@/components/FormatBadge";
 import HdrBadge from "@/components/HdrBadge";
-import type { FileSpec } from "@/lib/episode-specs";
+import type { Spec } from "@/lib/episode-specs";
 
-// The one line a show or season header carries when every file under it is
-// the same rip — the disc mark, the real resolution, the HDR mark, and each
-// audio track's mark. Same marks and the same reading order as a film's
-// version card, so a show page and a film page say the same things the same
-// way; it's only the place that differs.
+// The line a show or season header carries for whatever every file under it
+// agrees on — the disc mark, the real resolution, the HDR mark, and each
+// audio track's mark — and, on an episode row, whatever that header couldn't
+// say. Same marks and the same reading order as a film's version card, so a
+// show page and a film page say the same things the same way; it's only the
+// place that differs.
 //
 // This is the only place a disc mark and an audio mark sit side by side, and
 // their default heights were each tuned among their own kind, so they don't
@@ -23,30 +24,44 @@ export default function SpecLine({
   spec,
   className = "",
 }: {
-  spec: FileSpec;
+  spec: Spec | null;
   className?: string;
 }) {
+  // Nothing left to say — every field hoisted into a line above, or no file
+  // to say it about. Drawing an empty row would still cost its parent's gap.
+  if (!spec || !drawsAnything(spec)) return null;
+
+  const { format, resolution, videoRange, audio } = spec;
   return (
     <div className={`flex flex-wrap items-center gap-x-3 gap-y-1.5 ${className}`}>
-      <FormatBadge kind={spec.format} logoHeight={DISC_MARK_HEIGHT} />
-      <span className="font-mono text-xs text-text-muted">{spec.resolution}</span>
-      <HdrBadge videoRange={spec.videoRange} logoHeight={DISC_MARK_HEIGHT} />
-      {spec.audio.length > 0 ? (
-        spec.audio.map((badge, i) => (
-          <span key={i} className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
-            <AudioBadge badge={badge} />
-            {badge.sublabel && (
-              <span className="font-mono text-xs text-text-muted">{badge.sublabel}</span>
-            )}
-          </span>
-        ))
-      ) : (
-        // Probed before EpisodeAudioTrack existed; a forced TV scan replaces
-        // this string with real marks.
-        spec.audioSummary && (
-          <span className="font-mono text-xs text-text-faint">{spec.audioSummary}</span>
-        )
-      )}
+      {format && <FormatBadge kind={format} logoHeight={DISC_MARK_HEIGHT} />}
+      {resolution && <span className="font-mono text-xs text-text-muted">{resolution}</span>}
+      <HdrBadge videoRange={videoRange} logoHeight={DISC_MARK_HEIGHT} />
+      {audio &&
+        (audio.tracks.length > 0 ? (
+          audio.tracks.map((badge, i) => (
+            <span key={i} className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+              <AudioBadge badge={badge} />
+              {badge.sublabel && (
+                <span className="font-mono text-xs text-text-muted">{badge.sublabel}</span>
+              )}
+            </span>
+          ))
+        ) : (
+          // Probed before EpisodeAudioTrack existed; a forced TV scan replaces
+          // this string with real marks.
+          audio.summary && (
+            <span className="font-mono text-xs text-text-faint">{audio.summary}</span>
+          )
+        ))}
     </div>
   );
+}
+
+// SDR draws no HDR mark (HdrBadge), and a file with neither tracks nor the
+// legacy string has no audio to draw, so neither counts as something to say.
+function drawsAnything(spec: Spec): boolean {
+  const hdr = spec.videoRange !== null && spec.videoRange !== "SDR";
+  const audio = spec.audio !== null && (spec.audio.tracks.length > 0 || spec.audio.summary !== null);
+  return spec.format !== null || spec.resolution !== null || hdr || audio;
 }

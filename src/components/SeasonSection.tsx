@@ -1,7 +1,7 @@
 import CollapsibleSeason from "@/components/CollapsibleSeason";
 import EpisodeRow from "@/components/EpisodeRow";
 import SpecLine from "@/components/SpecLine";
-import { sharedSpec, seasonFiles } from "@/lib/episode-specs";
+import { sharedSpec, seasonFiles, specExcept, type Spec } from "@/lib/episode-specs";
 import type { SeasonView } from "@/lib/queries";
 
 export default function SeasonSection({
@@ -9,7 +9,7 @@ export default function SeasonSection({
   showId,
   playable,
   showTitle,
-  specHoisted = false,
+  hoistedSpec = null,
   defaultCollapsed = false,
 }: {
   season: SeasonView;
@@ -18,9 +18,9 @@ export default function SeasonSection({
   showId: number;
   playable: boolean;
   showTitle: string;
-  /** The show header already states the spec for every season, so this one
-   *  says nothing and its rows stay bare. */
-  specHoisted?: boolean;
+  /** The fields the show header already states for every season, which this
+   *  header and its rows therefore leave out. */
+  hoistedSpec?: Spec | null;
   /** Folded on a first visit — see the show page for which seasons are. */
   defaultCollapsed?: boolean;
 }) {
@@ -28,10 +28,13 @@ export default function SeasonSection({
   const missing = totalCount > 0 && ownedCount === 0;
   const complete = totalCount > 0 && ownedCount === totalCount;
 
-  // Only worth asking when the show header couldn't answer for every season
-  // at once (a show that changes format between seasons). Null means this
-  // season's own files disagree too, and the rows keep their badges.
-  const spec = specHoisted ? null : sharedSpec(seasonFiles(season));
+  // Everything this season's own files agree on — always at least what the
+  // show header hoisted, since agreement across the whole show is agreement
+  // within a season, and sometimes more (a show that changes format between
+  // seasons still has each season saying one thing). That is what the rows
+  // drop; the header adds only the part the show header couldn't say.
+  const shared = sharedSpec(seasonFiles(season));
+  const spec = shared && specExcept(shared, hoistedSpec);
 
   return (
     <CollapsibleSeason
@@ -57,7 +60,7 @@ export default function SeasonSection({
               </h3>
               {airYear && <span className="shrink-0 font-mono text-xs text-text-faint">{airYear}</span>}
             </div>
-            {spec && <SpecLine spec={spec} />}
+            <SpecLine spec={spec} />
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
             <span
@@ -84,7 +87,7 @@ export default function SeasonSection({
             playable={playable}
             showTitle={showTitle}
             seasonNumber={seasonNumber}
-            hoisted={specHoisted || spec !== null}
+            hoisted={shared}
           />
         ))}
       </ul>
