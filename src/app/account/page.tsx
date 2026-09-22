@@ -15,6 +15,7 @@ import { UserAvatar } from "@/components/UserAvatar";
 import { AdultAccessToggle } from "@/components/account/AdultAccessToggle";
 import { PasskeyManager } from "@/components/account/PasskeyManager";
 import { ageLimitFor, ageLimitLabel } from "@/lib/age-rating";
+import { formatRelativeTime } from "@/lib/format-time";
 
 // DB-backed, per-user page — must render per-request, not be frozen at
 // build time (the Docker image is built with no database present).
@@ -66,7 +67,7 @@ export default async function AccountPage() {
             role: true,
             userId: true,
             dateOfBirth: true,
-            user: { select: { name: true, email: true } },
+            user: { select: { name: true, email: true, lastSignInAt: true } },
           },
           orderBy: { createdAt: "asc" },
         },
@@ -161,6 +162,11 @@ export default async function AccountPage() {
                   {member.user.email && (
                     <span className="text-xs text-text-faint">{member.user.email}</span>
                   )}
+                  <span className="text-xs text-text-faint">
+                    {member.user.lastSignInAt
+                      ? `Last signed in ${formatRelativeTime(member.user.lastSignInAt)}`
+                      : "Never signed in"}
+                  </span>
                 </div>
                 <div className="flex flex-wrap items-center justify-end gap-2">
                   <span className="rounded-full border border-border px-2.5 py-0.5 text-xs text-text-muted">

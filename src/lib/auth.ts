@@ -59,6 +59,13 @@ export const auth = betterAuth({
           if (!(await isAllowedEmail(user?.email))) {
             return false;
           }
+          // Every session create that reaches here is a sign-in (OTP,
+          // passkey, whatever method — this hook is the one gate all of
+          // them pass through), so stamp it for /account's member list.
+          // Best-effort: a failed write must not block the sign-in itself.
+          await prisma.user
+            .update({ where: { id: session.userId }, data: { lastSignInAt: new Date() } })
+            .catch(() => {});
           return true;
         },
       },

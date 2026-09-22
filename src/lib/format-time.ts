@@ -45,3 +45,25 @@ export function formatDateDMY(iso: string): string {
   if (Number.isNaN(d.getTime())) return "";
   return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
 }
+
+/** "3 days ago" / "just now" from a timestamp, spelled out for a quiet
+ *  secondary line (contrast with ScanControls.tsx's own terser `3d ago`,
+ *  sized for a cramped admin status row). Always computed against the
+ *  current instant, so callers that render this from a Server Component
+ *  should expect it to go stale between navigations — fine for the
+ *  "last signed in" use it was built for. */
+export function formatRelativeTime(date: Date): string {
+  const diffSecs = Math.round((Date.now() - date.getTime()) / 1000);
+  if (diffSecs < 5) return "just now";
+  if (diffSecs < 60) return `${diffSecs} second${diffSecs === 1 ? "" : "s"} ago`;
+  const mins = Math.round(diffSecs / 60);
+  if (mins < 60) return `${mins} minute${mins === 1 ? "" : "s"} ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.round(hours / 24);
+  if (days < 30) return `${days} day${days === 1 ? "" : "s"} ago`;
+  const months = Math.round(days / 30);
+  if (months < 12) return `${months} month${months === 1 ? "" : "s"} ago`;
+  const years = Math.round(days / 365);
+  return `${years} year${years === 1 ? "" : "s"} ago`;
+}
