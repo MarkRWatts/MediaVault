@@ -1056,7 +1056,7 @@ export async function getReportData(): Promise<ReportData> {
 }
 
 // ---------------------------------------------------------------------------
-// Watch stats ("/stats" — signed-in user's own watch history, Phase 9 of
+// Watch stats ("/history" — signed-in user's own watch history, Phase 9 of
 // HOUSEHOLDS_PLAN.md's "Watch history & stats"). Deliberately kept small per
 // the plan's own wording: total watch time, most-watched titles/genres, a
 // recently-watched list — no charts, no household-wide aggregation (every

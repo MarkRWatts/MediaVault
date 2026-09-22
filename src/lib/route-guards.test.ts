@@ -127,7 +127,7 @@ const UNGATED_LIBRARY_READERS = new Set([
   // Per-user watch history: every row in it is something this person
   // actually watched, which the playback gate already governs. Filtering it
   // again would only hide their own past from them.
-  "stats/page.tsx",
+  "history/page.tsx",
 ]);
 
 describe("every playback route age-gates the media it serves", () => {

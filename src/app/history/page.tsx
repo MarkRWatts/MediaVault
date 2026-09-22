@@ -31,7 +31,7 @@ function progressLabel(row: RecentlyWatchedRow): string {
   return `${formatDuration(row.positionSecs)} in`;
 }
 
-export default async function StatsPage() {
+export default async function HistoryPage() {
   // Personal data, not library management — any signed-in household member
   // sees their own stats, no owner gate (HOUSEHOLDS_PLAN.md's "Watch history
   // & stats", Phase 9). requireMemberOrRedirect covers both "not signed in"
@@ -51,7 +51,7 @@ export default async function StatsPage() {
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-10 px-4 py-6 sm:px-6">
       <div>
-        <h1 className="font-display text-3xl tracking-wide">Stats</h1>
+        <h1 className="font-display text-3xl tracking-wide">History</h1>
         <p className="mt-1 pb-6 text-sm text-text-faint">
           Your own watch history — total time, most-watched titles and genres, and what
           you&rsquo;ve watched recently. Nobody else&rsquo;s history is mixed in here.
