@@ -15,6 +15,7 @@
 // wants, reads the current state and calls set with the opposite.
 
 import { prisma } from "@/lib/db";
+import { WATCH_PROGRESS_MIN_SECS } from "@/lib/constants";
 import { playbackEngine } from "@/lib/playback/engine-flag";
 
 export interface FilmUserState {
@@ -106,13 +107,22 @@ export async function getShowIdsState(userId: string): Promise<{ favouriteIds: n
   return { favouriteIds: favs.map((f) => f.showId), watchedIds: [...watched] };
 }
 
-/** The episode file to offer as the show's "Play": the first owned episode
- *  (season/episode order) without a completed watch record for this person,
- *  else the very first. Null when the show has no playable file. */
+export interface NextEpisode {
+  episodeFileId: number;
+  label: string;
+  /** They stopped part-way through this episode rather than finishing it, so
+   *  the button offers to carry on rather than to start. The player picks the
+   *  position itself from its own progress GET; this only decides the word. */
+  resume: boolean;
+}
+
+/** The episode file to offer as the show's "Play": the one they're part-way
+ *  through, else the first they haven't finished, else the opening episode.
+ *  Null when the show has no playable file. */
 export async function getNextEpisodeFile(
   userId: string | null,
   showId: number,
-): Promise<{ episodeFileId: number; label: string } | null> {
+): Promise<NextEpisode | null> {
   // Same "is this file playable" gate as isFilePlayable (src/lib/playback/
   // engine-flag.ts), applied at the query level rather than filtered in
   // memory afterward: jellyfin wants a matched library item, local wants
@@ -123,13 +133,45 @@ export async function getNextEpisodeFile(
     select: {
       id: true,
       episode: { select: { episodeNumber: true, name: true, season: { select: { seasonNumber: true } } } },
-      watchProgress: userId ? { where: { userId }, select: { completed: true } } : false,
+      watchProgress: userId
+        ? { where: { userId }, select: { completed: true, positionSecs: true, updatedAt: true } }
+        : false,
     },
-    orderBy: [{ episode: { season: { seasonNumber: "asc" } } }, { episode: { episodeNumber: "asc" } }, { id: "asc" }],
   });
   if (files.length === 0) return null;
-  const label = (f: (typeof files)[number]) =>
+
+  // Season 0 is the specials, and nobody starts a series on a Christmas
+  // one-off: it sorts after every real season, so a first visit offers
+  // S01E01 and an unwatched special only comes up once the run proper is
+  // done. Ordering here rather than in the query because seasonNumber's own
+  // ascending order is exactly what's wrong with it.
+  const seasonRank = (seasonNumber: number) => (seasonNumber === 0 ? Number.MAX_SAFE_INTEGER : seasonNumber);
+  const ordered = [...files].sort(
+    (a, b) =>
+      seasonRank(a.episode.season.seasonNumber) - seasonRank(b.episode.season.seasonNumber) ||
+      a.episode.episodeNumber - b.episode.episodeNumber ||
+      a.id - b.id,
+  );
+
+  const label = (f: (typeof ordered)[number]) =>
     `S${String(f.episode.season.seasonNumber).padStart(2, "0")}E${String(f.episode.episodeNumber).padStart(2, "0")}${f.episode.name ? ` · ${f.episode.name}` : ""}`;
-  const next = files.find((f) => !(Array.isArray(f.watchProgress) && f.watchProgress.some((w) => w.completed))) ?? files[0];
-  return { episodeFileId: next.id, label: label(next) };
+  const progressOf = (f: (typeof ordered)[number]) => (Array.isArray(f.watchProgress) ? f.watchProgress[0] : undefined);
+
+  // Something left half-watched beats the next unfinished episode, and the
+  // most recent of those beats an older one: someone who stopped S02E05 last
+  // night means to carry on with it, not to be sent back to the S01E03 they
+  // skipped a year ago. The WATCH_PROGRESS_MIN_SECS floor is the same one
+  // the Continue watching shelf uses — a few seconds of the wrong episode
+  // isn't a sitting to resume.
+  const started = ordered
+    .map((file) => ({ file, progress: progressOf(file) }))
+    .filter((row) => row.progress && !row.progress.completed && row.progress.positionSecs >= WATCH_PROGRESS_MIN_SECS)
+    .sort((a, b) => b.progress!.updatedAt.getTime() - a.progress!.updatedAt.getTime())[0];
+  if (started) return { episodeFileId: started.file.id, label: label(started.file), resume: true };
+
+  // Otherwise the first they haven't finished — and if they've finished the
+  // lot, the opening episode, so the button restarts the series rather than
+  // landing them on a special.
+  const next = ordered.find((f) => !progressOf(f)?.completed) ?? ordered[0];
+  return { episodeFileId: next.id, label: label(next), resume: false };
 }
