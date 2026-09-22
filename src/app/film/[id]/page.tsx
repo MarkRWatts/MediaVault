@@ -46,6 +46,8 @@ export default async function FilmPage({
     ? { versionId: primary.id, source: playSourceFor(primary)!, audioTracks: audioOptionsFor(primary) }
     : null;
 
+  const isConcert = film.kind === "CONCERT";
+
   const userState = userId
     ? await getFilmUserState(
         userId,
@@ -71,11 +73,13 @@ export default async function FilmPage({
         )}
 
         <div className="relative mx-auto flex max-w-5xl flex-col gap-4 px-4 pt-6 sm:px-6">
+          {/* A concert is a Film row, but it's browsed from Music — send
+              people back where they came from. */}
           <Link
-            href="/"
+            href={isConcert ? "/music" : "/"}
             className="w-fit text-xs font-medium text-text-muted hover:text-text"
           >
-            ← Movies
+            ← {isConcert ? "Music" : "Movies"}
           </Link>
 
           <div className="flex flex-col gap-6 pb-2 pt-4 sm:flex-row sm:pt-10">
@@ -91,10 +95,18 @@ export default async function FilmPage({
 
             <div className="flex flex-1 flex-col gap-3 pt-1">
               <div>
+                {isConcert && film.performer && (
+                  <p className="font-display text-lg tracking-wide text-text-muted">{film.performer}</p>
+                )}
                 <h1 className="font-display text-4xl leading-none tracking-wide text-balance sm:text-5xl">
                   {film.title}
                 </h1>
                 <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-sm text-text-muted">
+                  {isConcert && (
+                    <span className="rounded-full border border-accent-border bg-accent-dim px-2.5 py-0.5 text-[10px] uppercase tracking-widest text-accent-bright">
+                      Concert
+                    </span>
+                  )}
                   <CertificationBadge certification={film.certification} />
                   <span>{film.year ?? "Year unknown"}</span>
                   {film.runtimeLabel !== "—" && (
