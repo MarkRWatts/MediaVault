@@ -2,9 +2,11 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import PosterImage from "@/components/PosterImage";
 import SeasonSection from "@/components/SeasonSection";
+import ShowFilmsSection from "@/components/ShowFilmsSection";
 import SpecLine from "@/components/SpecLine";
 import { sharedSpec, showFiles } from "@/lib/episode-specs";
 import { getShowDetail } from "@/lib/queries";
+import { getShowFilms } from "@/lib/queries-film-shows";
 import { playbackAvailable } from "@/lib/playback/engine-flag";
 import FilmActions from "@/components/FilmActions";
 import CertificationBadge from "@/components/CertificationBadge";
@@ -28,9 +30,10 @@ export default async function ShowPage({
   // Only build deep links when playback is actually available — no error
   // state in the UI, episodes without a match simply get no chip.
   const playable = playbackAvailable();
-  const [userState, next] = await Promise.all([
+  const [userState, next, linkedFilms] = await Promise.all([
     getShowUserState(userId, show.id),
     playable ? getNextEpisodeFile(userId, show.id) : Promise.resolve(null),
+    getShowFilms(show.id, ageLimit),
   ]);
 
   const complete = show.totalEpisodeCount > 0 && show.ownedEpisodeCount === show.totalEpisodeCount;
@@ -181,6 +184,8 @@ export default async function ShowPage({
             />
           ))
         )}
+
+        <ShowFilmsSection films={linkedFilms} />
       </div>
     </div>
   );
