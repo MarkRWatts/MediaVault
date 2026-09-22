@@ -46,10 +46,10 @@ export default async function SceneDetailPage({ params }: { params: Promise<{ id
           <img
             src={`/api/adult-image/${scene.posterPath}`}
             alt={scene.title}
-            className="aspect-[2/3] w-full max-w-64 shrink-0 rounded-lg border border-border object-cover"
+            className="aspect-[2/3] w-full max-w-64 shrink-0 self-start rounded-lg border border-border object-cover"
           />
         ) : (
-          <div className="flex aspect-[2/3] w-full max-w-64 shrink-0 items-center justify-center rounded-lg border border-border bg-bg-elevated-2 text-xs text-text-faint">
+          <div className="flex aspect-[2/3] w-full max-w-64 shrink-0 self-start items-center justify-center rounded-lg border border-border bg-bg-elevated-2 text-xs text-text-faint">
             No poster
           </div>
         )}
