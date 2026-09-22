@@ -7,11 +7,16 @@ import SectionHeader from "@/components/SectionHeader";
 import { CARD_COLUMNS, CARD_GRID } from "@/lib/card-grid";
 import StackedFilmCard from "@/components/StackedFilmCard";
 import { videoCodecLabel } from "@/lib/constants";
+import { CERTIFICATE_ORDER } from "@/lib/age-rating";
+import { FORMAT_FILTERS, FORMAT_FILTER_LABEL, matchesFormat, type FormatFilterKey } from "@/lib/library-filters";
 import type { LibraryFilm } from "@/lib/queries";
 
 type FilterKey = "all" | "collection" | "noposter";
 type SortKey = "title" | "year" | "added";
 const ALL_CODECS = "all";
+// "No certificate on record" is a choice of its own, distinct from ALL_CODECS
+// ("any"). Safe as a literal: no BBFC certificate is spelled "unrated".
+const UNRATED = "unrated";
 const SHELF_SIZE = 20;
 
 type FilmItem = { kind: "film"; film: LibraryFilm; sortTitle: string; year: number; addedAt: number };
@@ -148,6 +153,8 @@ export default function LibraryBrowser({
   const [filter, setFilter] = useState<FilterKey>("all");
   const [videoCodec, setVideoCodec] = useState(ALL_CODECS);
   const [audioFormat, setAudioFormat] = useState(ALL_CODECS);
+  const [certificate, setCertificate] = useState(ALL_CODECS);
+  const [format, setFormat] = useState(ALL_CODECS);
   const [sort, setSort] = useState<SortKey>("title");
   const [stack, setStack] = useState(true);
   // Which sections (shelves and grid groups, by title) are folded away.
@@ -213,6 +220,18 @@ export default function LibraryBrowser({
     return Array.from(set).sort();
   }, [films]);
 
+  // Only the certificates the library actually holds, in BBFC order, plus
+  // "Not rated" when any film has none — a dropdown listing certificates
+  // that match nothing is just a way to empty the page.
+  const certificateOptions = useMemo(() => {
+    const present = new Set(films.map((f) => f.certification).filter((c): c is string => !!c));
+    const options = CERTIFICATE_ORDER.filter((c) => present.has(c));
+    // A hand-edited or non-GB value (see age-rating.ts) isn't in the BBFC
+    // order, but it's on a film, so it still needs a way to be selected.
+    const extra = [...present].filter((c) => !CERTIFICATE_ORDER.includes(c)).sort();
+    return { rated: [...options, ...extra], anyUnrated: films.some((f) => !f.certification) };
+  }, [films]);
+
   const filtered = useMemo(() => {
     let list = films;
 
@@ -222,12 +241,15 @@ export default function LibraryBrowser({
     if (videoCodec !== ALL_CODECS) list = list.filter((f) => f.videoCodecs.includes(videoCodec));
     if (audioFormat !== ALL_CODECS)
       list = list.filter((f) => f.audioFormats.includes(audioFormat));
+    if (certificate === UNRATED) list = list.filter((f) => !f.certification);
+    else if (certificate !== ALL_CODECS) list = list.filter((f) => f.certification === certificate);
+    if (format !== ALL_CODECS) list = list.filter((f) => matchesFormat(f, format as FormatFilterKey));
 
     const q = query.trim().toLowerCase();
     if (q) list = list.filter((f) => f.title.toLowerCase().includes(q));
 
     return list;
-  }, [films, filter, videoCodec, audioFormat, query]);
+  }, [films, filter, videoCodec, audioFormat, certificate, format, query]);
 
   // Stacking on: collections are pulled into their own row, format sections
   // only ever see standalone films. Stacking off: no grouping at all — every
@@ -360,6 +382,39 @@ export default function LibraryBrowser({
               {audioFormatOptions.map((a) => (
                 <option key={a} value={a}>
                   {a}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="flex items-center gap-1.5 text-xs text-text-muted">
+            Certificate
+            <select
+              value={certificate}
+              onChange={(e) => setCertificate(e.target.value)}
+              className="rounded-md border border-border bg-bg-elevated px-2 py-1 text-xs text-text focus-visible:outline-none"
+            >
+              <option value={ALL_CODECS}>Any certificate</option>
+              {certificateOptions.rated.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+              {certificateOptions.anyUnrated && <option value={UNRATED}>Not rated</option>}
+            </select>
+          </label>
+
+          <label className="flex items-center gap-1.5 text-xs text-text-muted">
+            Format
+            <select
+              value={format}
+              onChange={(e) => setFormat(e.target.value)}
+              className="rounded-md border border-border bg-bg-elevated px-2 py-1 text-xs text-text focus-visible:outline-none"
+            >
+              <option value={ALL_CODECS}>Any format</option>
+              {FORMAT_FILTERS.map((f) => (
+                <option key={f} value={f}>
+                  {FORMAT_FILTER_LABEL[f]}
                 </option>
               ))}
             </select>
