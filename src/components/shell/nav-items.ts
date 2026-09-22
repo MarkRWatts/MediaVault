@@ -27,7 +27,7 @@ export type NavItem = {
 /** Every signed-in member's destinations, in desktop sidebar order. */
 export const PRIMARY_ITEMS: NavItem[] = [
   { href: "/", label: "Movies", tabLabel: "Movies", icon: Film },
-  { href: "/shows", label: "Shows", tabLabel: "Shows", icon: Tv },
+  { href: "/shows", label: "TV Shows", tabLabel: "TV Shows", icon: Tv },
   { href: "/music", label: "Music", tabLabel: "Music", icon: Disc3 },
   { href: "/collections", label: "Collections", tabLabel: "Collections", icon: Library },
   { href: "/stats", label: "Stats", tabLabel: "Stats", icon: ChartColumn },
