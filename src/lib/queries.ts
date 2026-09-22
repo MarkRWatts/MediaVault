@@ -24,6 +24,13 @@ import {
 import { audioBadge } from "@/lib/audio";
 import { isFilePlayable } from "@/lib/playback/engine-flag";
 
+// Concerts are Film rows (Film.kind — see schema.prisma) but belong to the
+// Music section, so every Movies-side listing, shelf, count and report
+// spreads this into its where clause. The film DETAIL query deliberately
+// doesn't: /film/[id] renders a concert perfectly well, and that's the page
+// the Concerts section links to.
+const NOT_CONCERT = { kind: { not: "CONCERT" } } as const;
+
 // ---------------------------------------------------------------------------
 // Formatting helpers
 // ---------------------------------------------------------------------------
@@ -188,7 +195,7 @@ export async function getLibraryFilms(limit: AgeLimit): Promise<LibraryData> {
     // Digitally owned films, plus physical-only films (owned=false but a
     // disc is logged) — otherwise a scanned-but-unripped disc is invisible
     // everywhere in the browsing UI. See FilmCard.
-    where: { OR: [{ owned: true }, { physicalCopies: { some: {} } }] },
+    where: { ...NOT_CONCERT, OR: [{ owned: true }, { physicalCopies: { some: {} } }] },
     orderBy: { sortTitle: "asc" },
     select: FILM_CARD_SELECT,
   });
@@ -226,6 +233,7 @@ export async function getContinueWatchingFilms(userId: string, limit: AgeLimit):
       versionId: { not: null },
       completed: false,
       positionSecs: { gte: WATCH_PROGRESS_MIN_SECS },
+      version: { film: NOT_CONCERT },
     },
     orderBy: { updatedAt: "desc" },
     select: {
@@ -257,7 +265,7 @@ export async function getContinueWatchingFilms(userId: string, limit: AgeLimit):
 
 export async function getFavouriteFilms(userId: string, limit: AgeLimit): Promise<LibraryFilm[]> {
   const rows = await prisma.filmFavourite.findMany({
-    where: { userId, film: { owned: true } },
+    where: { userId, film: { ...NOT_CONCERT, owned: true } },
     orderBy: { createdAt: "desc" },
     select: { film: { select: FILM_CARD_SELECT } },
   });
@@ -270,7 +278,7 @@ export async function getFavouriteFilms(userId: string, limit: AgeLimit): Promis
  *  completed), for the card overlay's reset-viewed button. */
 export async function getWatchedFilmIds(userId: string): Promise<number[]> {
   const rows = await prisma.watchProgress.findMany({
-    where: { userId, versionId: { not: null } },
+    where: { userId, versionId: { not: null }, version: { film: NOT_CONCERT } },
     select: { version: { select: { filmId: true } } },
   });
   return [...new Set(rows.map((r) => r.version?.filmId).filter((id): id is number => typeof id === "number"))];
@@ -402,6 +410,10 @@ export interface FilmPhysicalCopyView {
 export interface FilmDetail {
   id: number;
   title: string;
+  /** FILM | CONCERT — the page reads the same either way, bar the marker
+   *  and the "back to" link. See schema.prisma. */
+  kind: string;
+  performer: string | null;
   year: number | null;
   posterPath: string | null;
   backdropPath: string | null;
@@ -430,6 +442,7 @@ export async function getFilmDetail(id: number, limit: AgeLimit): Promise<FilmDe
       collection: {
         include: {
           films: {
+            where: NOT_CONCERT,
             orderBy: { releaseDate: "asc" },
             include: { versions: { select: { width: true, height: true } } },
           },
@@ -469,6 +482,8 @@ export async function getFilmDetail(id: number, limit: AgeLimit): Promise<FilmDe
   return {
     id: film.id,
     title: film.title,
+    kind: film.kind,
+    performer: film.performer,
     year: film.year,
     posterPath: film.posterPath,
     backdropPath: film.backdropPath,
@@ -525,7 +540,7 @@ export interface CollectionSummary {
 export async function getCollections(limit: AgeLimit): Promise<CollectionSummary[]> {
   const collections = await prisma.collection.findMany({
     orderBy: { name: "asc" },
-    include: { films: { orderBy: { releaseDate: "asc" } } },
+    include: { films: { where: NOT_CONCERT, orderBy: { releaseDate: "asc" } } },
   });
 
   return collections
@@ -585,7 +600,7 @@ export async function getPlayableCollections(limit: AgeLimit): Promise<PlayableC
       overview: true,
       posterPath: true,
       films: {
-        where: { owned: true },
+        where: { ...NOT_CONCERT, owned: true },
         orderBy: [{ releaseDate: "asc" }, { year: "asc" }],
         select: { id: true, certification: true },
       },
@@ -617,6 +632,7 @@ export async function getCollectionDetail(id: number, limit: AgeLimit): Promise<
     where: { id },
     include: {
       films: {
+        where: NOT_CONCERT,
         orderBy: { releaseDate: "asc" },
         include: {
           versions: { select: { format: true, width: true, height: true } },
@@ -937,16 +953,16 @@ export interface ReportData {
 export async function getReportData(): Promise<ReportData> {
   const [ownedFilms, missingFilms, collections] = await Promise.all([
     prisma.film.findMany({
-      where: { owned: true },
+      where: { ...NOT_CONCERT, owned: true },
       orderBy: { sortTitle: "asc" },
       include: { versions: { include: { audioTracks: true } } },
     }),
     prisma.film.findMany({
-      where: { owned: false },
+      where: { ...NOT_CONCERT, owned: false },
       orderBy: { releaseDate: "asc" },
       include: { collection: true, physicalCopies: { select: { id: true } } },
     }),
-    prisma.collection.findMany({ include: { films: true } }),
+    prisma.collection.findMany({ include: { films: { where: NOT_CONCERT } } }),
   ]);
 
   const discs = ownedFilms.flatMap((f) => f.versions);
@@ -1160,7 +1176,12 @@ export async function getWatchStats(userId: string): Promise<WatchStats> {
   // few-second preview never really "started", so it shouldn't count as
   // watch time, a most-watched title, or a recently-watched entry either.
   const rows = await prisma.watchProgress.findMany({
-    where: { userId, versionId: { not: null }, positionSecs: { gte: WATCH_PROGRESS_MIN_SECS } },
+    where: {
+      userId,
+      versionId: { not: null },
+      positionSecs: { gte: WATCH_PROGRESS_MIN_SECS },
+      version: { film: NOT_CONCERT },
+    },
     orderBy: { updatedAt: "desc" },
     select: {
       positionSecs: true,
