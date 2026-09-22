@@ -1,9 +1,10 @@
 import Link from "next/link";
 import PosterImage from "@/components/PosterImage";
+import PosterCollage from "@/components/PosterCollage";
 import type { LibraryFilm } from "@/lib/queries";
 
 // One card representing a whole collection on the dashboard grid — used when
-// "Stack collections" is on. Shows the chronologically-earliest poster with a
+// "Stack collections" is on. Shows the collection's own artwork with a
 // stacked-card affordance and links through to the collection timeline.
 export default function StackedFilmCard({
   collectionId,
@@ -15,6 +16,10 @@ export default function StackedFilmCard({
   films: LibraryFilm[];
 }) {
   const [first] = films;
+  // Same artwork rule as CollectionCard on /collections: the collection's
+  // TMDB poster if TMDB has one, otherwise a montage of its members. Showing
+  // the earliest film's poster meant "Bond" was a picture of Dr. No.
+  const posterPath = first.collectionPosterPath;
 
   return (
     <Link
@@ -26,12 +31,15 @@ export default function StackedFilmCard({
         <div className="absolute inset-0 translate-x-1.5 translate-y-1.5 rounded-lg border border-border bg-bg-elevated-2" />
         <div className="absolute inset-0 translate-x-0.5 translate-y-0.5 rounded-lg border border-border bg-bg-elevated" />
         <div className="absolute inset-0 overflow-hidden rounded-lg border border-border">
-          <PosterImage
-            posterPath={first.posterPath}
-            title={first.title}
-            year={first.year}
-            className="h-full w-full"
-          />
+          {posterPath ? (
+            <PosterImage
+              posterPath={posterPath}
+              title={collectionName}
+              className="h-full w-full"
+            />
+          ) : (
+            <PosterCollage posters={films.slice(0, 4).map((f) => f.posterPath)} />
+          )}
           <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent px-2.5 pb-2 pt-6">
             <span className="text-[10px] font-semibold uppercase tracking-widest text-white/90">
               {films.length} films
