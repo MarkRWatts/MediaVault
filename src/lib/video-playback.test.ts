@@ -37,7 +37,7 @@ describe("buildHlsFfmpegArgs", () => {
     const plan = planVideoPlayback({
       videoCodec: "mpeg2video",
       container: "vob",
-      audioTracks: [{ streamIdx: 1, codec: "ac3", profile: null, channels: 2 }],
+      audioTracks: [{ streamIdx: 1, codec: "aac", profile: null, channels: 2 }],
     })!;
     const args = buildHlsFfmpegArgs("/in.vob", "/out", plan, null, "original");
     expect(args).toEqual(expect.arrayContaining(["-c:v", "libx264", "-crf", "18", "-threads", "2", "-c:a", "copy"]));
@@ -91,13 +91,40 @@ describe("planVideoPlayback", () => {
     expect(plan).toMatchObject({ tier: "direct", audioAction: "none", audioStreamIndex: null });
   });
 
-  it("remuxes h264+ac3 out of an mkv without touching either stream", () => {
+  it("remuxes h264+aac out of an mkv without touching either stream", () => {
+    const plan = planVideoPlayback({
+      videoCodec: "h264",
+      container: "mkv",
+      audioTracks: [{ streamIdx: 1, codec: "aac", profile: null, channels: 6 }],
+    });
+    expect(plan).toMatchObject({ tier: "prepare", videoAction: "copy", audioAction: "copy", audioStreamIndex: 1 });
+  });
+
+  // AAC is the only codec copied, because it is the only one a browser can
+  // decode through MSE -- see COMPATIBLE_AUDIO_CODECS. The video still copies;
+  // only the audio is re-encoded.
+  it("transcodes an ac3 track even when the video copies, since browsers can't decode it", () => {
     const plan = planVideoPlayback({
       videoCodec: "h264",
       container: "mkv",
       audioTracks: [{ streamIdx: 1, codec: "ac3", profile: null, channels: 6 }],
     });
-    expect(plan).toMatchObject({ tier: "prepare", videoAction: "copy", audioAction: "copy", audioStreamIndex: 1 });
+    expect(plan).toMatchObject({
+      tier: "prepare",
+      videoAction: "copy",
+      audioAction: "transcode",
+      audioStreamIndex: 1,
+      outputAudioCodec: "aac",
+    });
+  });
+
+  it("transcodes eac3 for the same reason", () => {
+    const plan = planVideoPlayback({
+      videoCodec: "h264",
+      container: "mkv",
+      audioTracks: [{ streamIdx: 1, codec: "eac3", profile: null, channels: 6 }],
+    });
+    expect(plan).toMatchObject({ audioAction: "transcode", outputAudioCodec: "aac" });
   });
 
   it("picks a compatible track over an incompatible one regardless of stream order", () => {
@@ -106,7 +133,7 @@ describe("planVideoPlayback", () => {
       container: "mkv",
       audioTracks: [
         { streamIdx: 1, codec: "truehd", profile: null, channels: 8 },
-        { streamIdx: 2, codec: "ac3", profile: null, channels: 6 },
+        { streamIdx: 2, codec: "aac", profile: null, channels: 6 },
       ],
     });
     expect(plan).toMatchObject({ tier: "prepare", audioAction: "copy", audioStreamIndex: 2, hevcTag: true });
@@ -149,7 +176,7 @@ describe("planVideoPlayback", () => {
     const plan = planVideoPlayback({
       videoCodec: "mpeg2video",
       container: "mkv",
-      audioTracks: [{ streamIdx: 1, codec: "ac3", profile: null, channels: 2 }],
+      audioTracks: [{ streamIdx: 1, codec: "aac", profile: null, channels: 2 }],
     });
     expect(plan).toMatchObject({ tier: "prepare", videoAction: "transcode", audioAction: "copy", hevcTag: false });
   });
@@ -169,7 +196,7 @@ describe("buildFfmpegArgs", () => {
     const plan = planVideoPlayback({
       videoCodec: "h264",
       container: "mkv",
-      audioTracks: [{ streamIdx: 1, codec: "ac3", profile: null, channels: 6 }],
+      audioTracks: [{ streamIdx: 1, codec: "aac", profile: null, channels: 6 }],
     })!;
     const args = buildFfmpegArgs("/in.mkv", "/out.mp4", plan);
     expect(args).toEqual([
@@ -303,7 +330,7 @@ describe("pickAudioTrack (via planVideoPlayback)", () => {
       container: "mkv",
       audioTracks: [
         { streamIdx: 1, codec: "dts", profile: "DTS-HD MA", channels: 8 },
-        { streamIdx: 2, codec: "eac3", profile: null, channels: 6, isDefault: true },
+        { streamIdx: 2, codec: "aac", profile: null, channels: 6, isDefault: true },
       ],
     })!;
     expect(plan).toMatchObject({ audioStreamIndex: 2, audioAction: "copy" });
@@ -331,9 +358,9 @@ describe("pickAudioTrack (via planVideoPlayback)", () => {
       videoCodec: "h264",
       container: "mkv",
       audioTracks: [
-        { streamIdx: 1, codec: "ac3", profile: null, channels: 2, title: "English - Audio Description" },
-        { streamIdx: 2, codec: "ac3", profile: null, channels: 2, title: "Director's Commentary" },
-        { streamIdx: 3, codec: "ac3", profile: null, channels: 6, title: "Surround 5.1" },
+        { streamIdx: 1, codec: "aac", profile: null, channels: 2, title: "English - Audio Description" },
+        { streamIdx: 2, codec: "aac", profile: null, channels: 2, title: "Director's Commentary" },
+        { streamIdx: 3, codec: "aac", profile: null, channels: 6, title: "Surround 5.1" },
       ],
     })!;
     expect(plan).toMatchObject({ audioStreamIndex: 3, audioAction: "copy" });
@@ -343,7 +370,7 @@ describe("pickAudioTrack (via planVideoPlayback)", () => {
     const plan = planVideoPlayback({
       videoCodec: "h264",
       container: "mkv",
-      audioTracks: [{ streamIdx: 1, codec: "ac3", profile: null, channels: 2, title: "AD", isDescriptive: true }],
+      audioTracks: [{ streamIdx: 1, codec: "aac", profile: null, channels: 2, title: "AD", isDescriptive: true }],
     })!;
     expect(plan).toMatchObject({ audioStreamIndex: 1, audioAction: "copy" });
   });
@@ -354,7 +381,7 @@ describe("pickAudioTrack (via planVideoPlayback)", () => {
       container: "mkv",
       audioTracks: [
         { streamIdx: 1, codec: "dts", profile: "DTS-HD MA", channels: 8 },
-        { streamIdx: 2, codec: "ac3", profile: null, channels: 6 },
+        { streamIdx: 2, codec: "aac", profile: null, channels: 6 },
       ],
     })!;
     expect(plan).toMatchObject({ audioStreamIndex: 2, audioAction: "copy" });
@@ -366,10 +393,10 @@ describe("output codecs and mseMimeForVariant", () => {
     const remux = planVideoPlayback({
       videoCodec: "h264",
       container: "mkv",
-      audioTracks: [{ streamIdx: 1, codec: "ac3", profile: null, channels: 6 }],
+      audioTracks: [{ streamIdx: 1, codec: "aac", profile: null, channels: 6 }],
     })!;
-    expect(remux).toMatchObject({ outputVideoCodec: "h264", outputAudioCodec: "ac3" });
-    expect(mseMimeForVariant(remux, "original")).toBe('video/mp4; codecs="avc1.640028,ac-3"');
+    expect(remux).toMatchObject({ outputVideoCodec: "h264", outputAudioCodec: "aac" });
+    expect(mseMimeForVariant(remux, "original")).toBe('video/mp4; codecs="avc1.640028,mp4a.40.2"');
     expect(mseMimeForVariant(remux, "remote")).toBe('video/mp4; codecs="avc1.640028,mp4a.40.2"');
 
     const transcode = planVideoPlayback({

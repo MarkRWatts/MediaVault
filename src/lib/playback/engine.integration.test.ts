@@ -256,7 +256,10 @@ describe.skipIf(!hasFfmpeg)("playback engine (real ffmpeg)", () => {
 
     const master = await engine.getMasterPlaylist(key);
     expect(master).toContain("RESOLUTION=160x120");
-    expect(master).toContain('CODECS="avc1.640028,ac-3"');
+    // The fixture's audio is AC-3, but AC-3 is never copied (browsers can't
+    // decode it -- see COMPATIBLE_AUDIO_CODECS), so the master advertises the
+    // AAC the engine actually produces.
+    expect(master).toContain('CODECS="avc1.640028,mp4a.40.2"');
     expect(master.trim().endsWith("main.m3u8")).toBe(true);
   }, 30_000);
 

@@ -64,7 +64,25 @@ export interface VideoPlaybackPlan {
 const SUPPORTED_VIDEO_CODECS = new Set(["h264", "hevc", "h265"]);
 const HEVC_CODECS = new Set(["hevc", "h265"]);
 const MP4_LIKE_CONTAINERS = new Set(["mp4", "m4v", "mov"]);
-const COMPATIBLE_AUDIO_CODECS = new Set(["aac", "ac3", "eac3"]);
+// AAC only, deliberately. AC-3 and E-AC-3 used to be here, on the reasonable
+// view that most players decode them -- but browsers don't, and copying them
+// doesn't merely lose the sound, it loses playback entirely: the master
+// playlist advertises CODECS="avc1.640028,ac-3", Chrome's
+// MediaSource.isTypeSupported says no, and hls.js discards the only variant
+// without ever fetching the media playlist. A grey screen, no error (22 Sep
+// 2026, every AC-3 title in the library).
+//
+// Transcoding them costs little: the tier is decided by videoAction alone
+// (playback/decisions.ts), so an H.264 file still stream-copies its video and
+// only re-encodes audio; 5.1 survives via audioTranscodeChannels; and direct
+// play is unaffected because it needs an MP4-like container, which an MKV
+// library never has. Every DTS and TrueHD title already took this path.
+//
+// What it gives up is AC-3 bitstream passthrough to an AVR, which becomes
+// multichannel PCM instead. If that turns out to matter for the tvOS client,
+// the answer is a second variant in the master playlist for players that
+// declare AC-3 support -- not putting the codec back here for everyone.
+const COMPATIBLE_AUDIO_CODECS = new Set(["aac"]);
 
 // Sources worth transcoding *from* preferentially when no compatible track
 // exists — a lossless origin gives the best possible AAC result. Plain

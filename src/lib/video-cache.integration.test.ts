@@ -146,8 +146,10 @@ describe.skipIf(!hasFfmpeg)("video-cache prepare pipeline (real ffmpeg, HLS)", (
   });
 
   it("refuses the playlist for a direct-play source and points at /stream", async () => {
-    // An MP4/H.264/AC-3 version is direct-playable: the playlist route must
-    // say so rather than pointlessly remux it.
+    // An MP4/H.264/AAC version is direct-playable: the playlist route must
+    // say so rather than pointlessly remux it. AAC specifically -- an AC-3
+    // track is transcoded now (COMPATIBLE_AUDIO_CODECS), which by itself
+    // rules direct play out whatever the container.
     const film = await testPrisma.film.create({ data: { title: "Direct", sortTitle: "direct", owned: true } });
     // Version.filePath is unique, so give it its own file; the bytes are the
     // MKV's, but only the recorded codec/container drive the plan and only
@@ -161,7 +163,7 @@ describe.skipIf(!hasFfmpeg)("video-cache prepare pipeline (real ffmpeg, HLS)", (
         format: "BLURAY",
         videoCodec: "h264",
         container: "mp4",
-        audioTracks: { create: [{ streamIdx: 1, codec: "ac3", channels: 2 }] },
+        audioTracks: { create: [{ streamIdx: 1, codec: "aac", channels: 2 }] },
       },
     });
     expect(await cache.resolveHlsPlaylist("film", direct.id, "original")).toEqual({ kind: "direct" });
@@ -199,8 +201,15 @@ describe.skipIf(!hasFfmpeg)("video-cache prepare pipeline (real ffmpeg, HLS)", (
     // Cap: both finished entries plus the incoming one don't fit, but one
     // finished entry plus the incoming one does -- so exactly the older
     // finished entry must go.
+    //
+    // The slack stands in for however much the prepared entry differs from
+    // its source: the plan re-encodes the fixture's AC-3 to AAC (see
+    // COMPATIBLE_AUDIO_CODECS), so "prepared ~= source" no longer holds to
+    // within a few KB. It has to be at least that difference, and under the
+    // 300 KB of one finished entry, or the test stops distinguishing
+    // "evicted the oldest" from "evicted everything".
     const sourceSize = (await stat(path.join(process.env.MOVIES_PATH!, "Test Film (2020).mkv"))).size;
-    process.env.VIDEO_CACHE_MAX_BYTES = String(300 * kb + sourceSize + 50 * kb);
+    process.env.VIDEO_CACHE_MAX_BYTES = String(300 * kb + sourceSize + 250 * kb);
 
     try {
       const resolved = await cache.resolveHlsPlaylist("film", versionId, "original");
