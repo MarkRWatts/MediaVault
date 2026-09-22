@@ -90,6 +90,47 @@ describe("recordPlayEvent", () => {
     expect(rows[1]).toMatchObject({ completed: false, positionSecs: 15 });
   });
 
+  it("starts a fresh sitting when the player says a finished film was restarted", async () => {
+    await recordPlayEvent({ userId: USER, kind: "film", itemId: 7, positionSecs: 4200, completed: true });
+    // Inside the coalescing window, so without the flag this would fold in.
+    await recordPlayEvent({ userId: USER, kind: "film", itemId: 7, positionSecs: 5, isNewPlay: true });
+
+    const rows = await events();
+    expect(rows).toHaveLength(2);
+    // The watch that happened stays a watch.
+    expect(rows[0]).toMatchObject({ completed: true, positionSecs: 4200 });
+    expect(rows[1]).toMatchObject({ completed: false, positionSecs: 5 });
+  });
+
+  it("infers the restart from the position when the caller sends no flag", async () => {
+    await recordPlayEvent({ userId: USER, kind: "film", itemId: 7, positionSecs: 4200, completed: true });
+    await recordPlayEvent({ userId: USER, kind: "film", itemId: 7, positionSecs: 12 });
+
+    const rows = await events();
+    expect(rows).toHaveLength(2);
+    expect(rows[0].completed).toBe(true);
+  });
+
+  it("folds a late report back into a finished sitting rather than splitting it", async () => {
+    await recordPlayEvent({ userId: USER, kind: "film", itemId: 7, positionSecs: 4200, completed: true });
+    // The credits ran on: still the same viewing, well past the restart floor.
+    await recordPlayEvent({ userId: USER, kind: "film", itemId: 7, positionSecs: 4320, isNewPlay: false });
+
+    const rows = await events();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ completed: true, positionSecs: 4320 });
+  });
+
+  it("never un-watches a sitting it folds a report into", async () => {
+    await recordPlayEvent({ userId: USER, kind: "film", itemId: 7, positionSecs: 4200, completed: true });
+    // A scrub backwards re-reports completed: false, but the film was watched.
+    await recordPlayEvent({ userId: USER, kind: "film", itemId: 7, positionSecs: 3000, completed: false });
+
+    const rows = await events();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ completed: true, positionSecs: 3000 });
+  });
+
   it("coalesces per item and per person, not globally", async () => {
     await recordPlayEvent({ userId: USER, kind: "film", itemId: 7, positionSecs: 30 });
     await recordPlayEvent({ userId: USER, kind: "episode", itemId: 7, positionSecs: 30 });

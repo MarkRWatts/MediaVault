@@ -25,6 +25,12 @@ export type PlayEventKind = "film" | "episode" | "track";
  *  evening the timeline groups by. */
 export const PLAY_EVENT_COALESCE_MS = 6 * 60 * 60_000;
 
+/** A report at or under this position, and behind where the last sitting
+ *  had got to, is somebody starting again rather than carrying on. Only
+ *  consulted for a finished item, and only when the caller has no
+ *  `isNewPlay` of its own. */
+const RESTART_POSITION_SECS = 60;
+
 export interface RecordPlayEventInput {
   userId: string;
   kind: PlayEventKind;
@@ -33,6 +39,26 @@ export interface RecordPlayEventInput {
    *  position worth keeping. */
   positionSecs?: number | null;
   completed?: boolean;
+  /** The progress routes' own "this is the first report of a fresh player
+   *  session" flag. Authoritative where it exists; where it doesn't, a
+   *  rewatch is inferred from the position instead. */
+  isNewPlay?: boolean;
+}
+
+/** Is this report the start of a new viewing of something already watched,
+ *  rather than the tail of the sitting that finished it? Watching the
+ *  credits, then restarting the film an hour later, must not turn the
+ *  finished row back into an abandoned one — the timeline would lose a
+ *  real "Watched". */
+function isRestart(
+  latest: { completed: boolean; positionSecs: number | null },
+  position: number | undefined,
+  isNewPlay: boolean | undefined,
+): boolean {
+  if (!latest.completed) return false;
+  if (isNewPlay !== undefined) return isNewPlay;
+  if (position === undefined) return false;
+  return position <= RESTART_POSITION_SECS && position < (latest.positionSecs ?? Infinity);
 }
 
 /** Never throws — like logPlay and logAudit, a history write failing must
@@ -43,6 +69,7 @@ export async function recordPlayEvent({
   itemId,
   positionSecs,
   completed,
+  isNewPlay,
 }: RecordPlayEventInput): Promise<void> {
   try {
     const now = new Date();
@@ -51,19 +78,24 @@ export async function recordPlayEvent({
     const latest = await prisma.playEvent.findFirst({
       where: { userId, kind, itemId },
       orderBy: { lastSeenAt: "desc" },
-      select: { id: true, lastSeenAt: true, completed: true },
+      select: { id: true, lastSeenAt: true, completed: true, positionSecs: true },
     });
 
-    if (latest && now.getTime() - latest.lastSeenAt.getTime() < PLAY_EVENT_COALESCE_MS) {
+    if (
+      latest &&
+      now.getTime() - latest.lastSeenAt.getTime() < PLAY_EVENT_COALESCE_MS &&
+      !isRestart(latest, position, isNewPlay)
+    ) {
       await prisma.playEvent.update({
         where: { id: latest.id },
         data: {
           lastSeenAt: now,
           ...(position === undefined ? {} : { positionSecs: position }),
-          // The caller recomputes completion from the position on every
-          // report, so a later report is always the better answer —
-          // including when it says false because they rewound.
-          completed: completed ?? latest.completed,
+          // Completion only ever goes up within a sitting. The caller
+          // recomputes it from the position on every report, so a pause
+          // spent scrubbing backwards through a film that was already
+          // finished would otherwise un-watch it.
+          completed: latest.completed || (completed ?? false),
         },
       });
       return;

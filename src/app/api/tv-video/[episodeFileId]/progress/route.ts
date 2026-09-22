@@ -73,7 +73,14 @@ export async function POST(req: Request, ctx: { params: Promise<{ episodeFileId:
     create: { userId, episodeFileId, positionSecs, completed, playCount: 1 },
     update: { positionSecs, completed, ...(isNewPlay ? { playCount: { increment: 1 }, completed: false } : {}) },
   });
-  await recordPlayEvent({ userId, kind: "episode", itemId: episodeFileId, positionSecs, completed: row.completed });
+  await recordPlayEvent({
+    userId,
+    kind: "episode",
+    itemId: episodeFileId,
+    positionSecs,
+    completed: row.completed,
+    isNewPlay: isNewPlay === true,
+  });
   if (isNewPlay) {
     await logPlaybackStart(userId, "video.playback");
     await logPlay("episode", episodeFileId);
