@@ -296,7 +296,7 @@ export default function ScanControls() {
           onChange={(e) => setForce(e.target.checked)}
           className="h-3.5 w-3.5 rounded border-border accent-accent"
         />
-        Force full re-probe (ignores the size/mtime cache — slow)
+        Force: re-probe every file on rescan, and refresh metadata for already-matched titles on fetch (slow)
       </label>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -333,7 +333,7 @@ export default function ScanControls() {
                   <span className="text-sm text-text">Fetch metadata</span>
                   <button
                     type="button"
-                    onClick={() => trigger(section.enrich)}
+                    onClick={() => trigger(section.enrich, { force })}
                     disabled={enrichRunning || pending === section.enrich}
                     className="inline-flex min-h-9 items-center justify-center rounded-md border border-border px-3 py-1.5 text-xs font-medium tracking-wide text-text-muted transition-colors hover:border-border-strong hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
                   >

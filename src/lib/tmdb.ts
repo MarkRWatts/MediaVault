@@ -317,12 +317,43 @@ export async function findOrCreateFilmByTmdbId(tmdbId: number): Promise<FilmRef>
   return { id: film.id, title: film.title, year: film.year, posterPath: film.posterPath, owned: false };
 }
 
+// The confidences a row carries when nothing has matched it yet (LOW being
+// a guess nobody has confirmed), which is all an ordinary enrich pass looks
+// at.
+const NEEDS_MATCH = ["UNMATCHED", "LOW"];
+
+/**
+ * The `matchConfidence` filter an enrich pass selects on, or undefined (no
+ * filter — Prisma ignores it) for a forced pass, which takes in the matched
+ * rows as well. Without that, a correction made on TMDB after the match —
+ * a certificate added, a better poster, a collection created later — never
+ * reaches the row again.
+ */
+export function enrichConfidenceFilter(force: boolean): { in: string[] } | undefined {
+  return force ? undefined : { in: [...NEEDS_MATCH] };
+}
+
+/**
+ * Whether a selected row is refreshed against the TMDB id it already holds
+ * rather than matched from scratch. A forced pass must never re-run the
+ * search on a title that is already matched: the id stands, so no film can
+ * quietly become a different one.
+ */
+export function isRefreshOnly(row: { tmdbId: number | null; matchConfidence: string }): boolean {
+  return row.tmdbId != null && !NEEDS_MATCH.includes(row.matchConfidence);
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function enrichOneFilm(film: Film, log: string[], collectionCache: Map<number, any>): Promise<void> {
+async function enrichOneFilm(film: Film, log: string[], collectionCache: Map<number, any>, refreshOnly = false): Promise<void> {
   let tmdbId: number | null = null;
   let confidence: "EXACT" | "SEARCH" | "LOW" = "EXACT";
 
-  if (film.imdbId) {
+  if (refreshOnly) {
+    // Forced refresh of an already-matched film: its id and the confidence
+    // that match earned both stand, and every search below is skipped.
+    tmdbId = film.tmdbId;
+    confidence = film.matchConfidence === "SEARCH" ? "SEARCH" : "EXACT";
+  } else if (film.imdbId) {
     const found = await tmdbFetch(`/find/${film.imdbId}`, { external_source: "imdb_id" });
     const hit = found.movie_results?.[0];
     if (hit) tmdbId = hit.id;
@@ -369,7 +400,7 @@ async function enrichOneFilm(film: Film, log: string[], collectionCache: Map<num
       if (hit) confidence = "LOW";
     }
     if (hit) tmdbId = hit.id;
-  } else if (confidence !== "EXACT") {
+  } else if (!refreshOnly && confidence !== "EXACT") {
     confidence = "EXACT";
   }
 
@@ -380,7 +411,9 @@ async function enrichOneFilm(film: Film, log: string[], collectionCache: Map<num
 
   const details = await tmdbFetch(`/movie/${tmdbId}`, { append_to_response: "release_dates" });
 
-  if (confidence === "LOW") {
+  if (refreshOnly) {
+    log.push(`Refreshed "${film.title}"${film.year ? ` (${film.year})` : ""} (tmdb:${tmdbId})`);
+  } else if (confidence === "LOW") {
     log.push(`Low-confidence match: "${film.title}"${film.year ? ` (${film.year})` : ""} -> "${details.title}" (tmdb:${tmdbId})`);
   }
 
@@ -594,28 +627,35 @@ async function enrichSeason(
   }
 }
 
-async function enrichOneShow(show: Show, log: string[]): Promise<void> {
+async function enrichOneShow(show: Show, log: string[], refreshOnly = false): Promise<void> {
   let tmdbId: number | null = null;
-  let confidence: "SEARCH" | "LOW" = "SEARCH";
+  let confidence: string = "SEARCH";
 
-  const yearParams: Record<string, string> = show.year ? { first_air_date_year: String(show.year) } : {};
-  let hit = pickTvHit((await tmdbFetch("/search/tv", { query: show.title, ...yearParams })).results, show.title, show.year);
-  if (hit) {
-    confidence = "SEARCH";
-  } else if (show.year) {
-    hit = pickTvHit((await tmdbFetch("/search/tv", { query: show.title })).results, show.title, show.year);
-    if (hit) confidence = "LOW";
+  if (refreshOnly) {
+    // Forced refresh of an already-matched show: its id and confidence
+    // stand, and the searches below are skipped — same rule as films.
+    tmdbId = show.tmdbId;
+    confidence = show.matchConfidence;
+  } else {
+    const yearParams: Record<string, string> = show.year ? { first_air_date_year: String(show.year) } : {};
+    let hit = pickTvHit((await tmdbFetch("/search/tv", { query: show.title, ...yearParams })).results, show.title, show.year);
+    if (hit) {
+      confidence = "SEARCH";
+    } else if (show.year) {
+      hit = pickTvHit((await tmdbFetch("/search/tv", { query: show.title })).results, show.title, show.year);
+      if (hit) confidence = "LOW";
+    }
+    if (!hit && normalizeTitle(show.title) !== show.title.toLowerCase()) {
+      // Accented/punctuated titles can miss — retry with the stripped form.
+      hit = pickTvHit(
+        (await tmdbFetch("/search/tv", { query: normalizeTitle(show.title), ...yearParams })).results,
+        show.title,
+        show.year,
+      );
+      if (hit) confidence = "LOW";
+    }
+    if (hit) tmdbId = hit.id;
   }
-  if (!hit && normalizeTitle(show.title) !== show.title.toLowerCase()) {
-    // Accented/punctuated titles can miss — retry with the stripped form.
-    hit = pickTvHit(
-      (await tmdbFetch("/search/tv", { query: normalizeTitle(show.title), ...yearParams })).results,
-      show.title,
-      show.year,
-    );
-    if (hit) confidence = "LOW";
-  }
-  if (hit) tmdbId = hit.id;
 
   if (tmdbId == null) {
     log.push(`No TMDB match for "${show.title}"${show.year ? ` (${show.year})` : ""}`);
@@ -624,7 +664,9 @@ async function enrichOneShow(show: Show, log: string[]): Promise<void> {
 
   const details = await tmdbFetch(`/tv/${tmdbId}`, { append_to_response: "external_ids,content_ratings" });
 
-  if (confidence === "LOW") {
+  if (refreshOnly) {
+    log.push(`Refreshed "${show.title}"${show.year ? ` (${show.year})` : ""} (tmdb:${tmdbId})`);
+  } else if (confidence === "LOW") {
     log.push(`Low-confidence match: "${show.title}"${show.year ? ` (${show.year})` : ""} -> "${details.name}" (tmdb:${tmdbId})`);
   }
 
@@ -700,18 +742,19 @@ async function enrichOneShow(show: Show, log: string[]): Promise<void> {
   }
 }
 
-async function doEnrichFilms(runId: number, kind: "FILM" | "CONCERT"): Promise<void> {
+async function doEnrichFilms(runId: number, kind: "FILM" | "CONCERT", force: boolean): Promise<void> {
   const log: string[] = [];
   const noun = kind === "CONCERT" ? "concert" : "film";
 
   // Scoped to one library's kind so the Movies and Concerts buttons on
   // /admin each report progress over their own rows.
   const films = await prisma.film.findMany({
-    where: { kind, matchConfidence: { in: ["UNMATCHED", "LOW"] } },
+    where: { kind, matchConfidence: enrichConfidenceFilter(force) },
     orderBy: [{ owned: "desc" }, { id: "asc" }],
   });
 
   const total = films.length;
+  const refreshing = films.filter((film) => isRefreshOnly(film)).length;
   await updateProgress(runId, { total, filesSeen: 0, progress: 0, message: `Enriching ${total} ${noun}(s)` });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -720,7 +763,7 @@ async function doEnrichFilms(runId: number, kind: "FILM" | "CONCERT"): Promise<v
 
   for (const film of films) {
     try {
-      await enrichOneFilm(film, log, collectionCache);
+      await enrichOneFilm(film, log, collectionCache, isRefreshOnly(film));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log.push(`Failed to enrich "${film.title}": ${message}`);
@@ -735,24 +778,29 @@ async function doEnrichFilms(runId: number, kind: "FILM" | "CONCERT"): Promise<v
     }
   }
 
-  await finishRun(runId, log, `Enriched ${total} ${noun}(s)`);
+  await finishRun(
+    runId,
+    log,
+    `Enriched ${total - refreshing} ${noun}(s)${refreshing ? `, refreshed ${refreshing}` : ""}`,
+  );
 }
 
-async function doEnrichTv(runId: number): Promise<void> {
+async function doEnrichTv(runId: number, force: boolean): Promise<void> {
   const log: string[] = [];
 
   const shows = await prisma.show.findMany({
-    where: { matchConfidence: { in: ["UNMATCHED", "LOW"] } },
+    where: { matchConfidence: enrichConfidenceFilter(force) },
     orderBy: [{ id: "asc" }],
   });
 
   const total = shows.length;
+  const refreshing = shows.filter((show) => isRefreshOnly(show)).length;
   await updateProgress(runId, { total, filesSeen: 0, progress: 0, message: `Enriching ${total} show(s)` });
 
   let completed = 0;
   for (const show of shows) {
     try {
-      await enrichOneShow(show, log);
+      await enrichOneShow(show, log, isRefreshOnly(show));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log.push(`Failed to enrich "${show.title}": ${message}`);
@@ -775,8 +823,9 @@ async function doEnrichTv(runId: number): Promise<void> {
   // TMDB search from scratch and rewrites matchConfidence, so using it here
   // would risk re-matching shows that are already correct just to fill in a
   // special. This touches season 0 and nothing else, and is self-limiting —
-  // once the rows have a name they stop matching.
-  const needSpecials = await prisma.show.findMany({
+  // once the rows have a name they stop matching. A forced pass has just
+  // been through every matched show — specials included — so it skips this.
+  const needSpecials = force ? [] : await prisma.show.findMany({
     where: {
       tmdbId: { not: null },
       matchConfidence: { notIn: ["UNMATCHED", "LOW"] },
@@ -798,7 +847,7 @@ async function doEnrichTv(runId: number): Promise<void> {
   await finishRun(
     runId,
     log,
-    `Enriched ${total} show(s)${backfilled ? `, backfilled specials for ${backfilled}` : ""}`,
+    `Enriched ${total - refreshing} show(s)${refreshing ? `, refreshed ${refreshing}` : ""}${backfilled ? `, backfilled specials for ${backfilled}` : ""}`,
   );
 }
 
@@ -810,12 +859,12 @@ const ENRICH_KIND: Record<EnrichMediaType, RunKind> = {
   CONCERT: "ENRICH_CONCERT",
 };
 
-const ENRICH_RUNNER: Record<EnrichMediaType, (runId: number) => Promise<void>> = {
-  FILM: (runId) => doEnrichFilms(runId, "FILM"),
+const ENRICH_RUNNER: Record<EnrichMediaType, (runId: number, force: boolean) => Promise<void>> = {
+  FILM: (runId, force) => doEnrichFilms(runId, "FILM", force),
   TV: doEnrichTv,
   // TMDB carries most concert films as ordinary movies, so this is the film
   // pass over the concert rows — nothing about the matching differs.
-  CONCERT: (runId) => doEnrichFilms(runId, "CONCERT"),
+  CONCERT: (runId, force) => doEnrichFilms(runId, "CONCERT", force),
 };
 
 /**
@@ -823,8 +872,16 @@ const ENRICH_RUNNER: Record<EnrichMediaType, (runId: number) => Promise<void>> =
  * registered (or an existing run is found, or the run is failed immediately
  * for a missing API key) — the actual TMDB work continues in the background
  * and is not awaited here.
+ *
+ * `force` also revisits titles that are already matched, re-reading their
+ * details against the TMDB id they already hold — for corrections made
+ * upstream after the match, which an ordinary pass never looks at again.
  */
-export async function runEnrich(mediaType: EnrichMediaType): Promise<{ runId: number; started: boolean }> {
+export async function runEnrich(
+  mediaType: EnrichMediaType,
+  options: { force?: boolean } = {},
+): Promise<{ runId: number; started: boolean }> {
+  const force = options.force ?? false;
   const { run, started } = await guardAndCreateRun(ENRICH_KIND[mediaType]);
   if (!started) return { runId: run.id, started: false };
 
@@ -833,7 +890,7 @@ export async function runEnrich(mediaType: EnrichMediaType): Promise<{ runId: nu
     return { runId: run.id, started: true };
   }
 
-  ENRICH_RUNNER[mediaType](run.id).catch(async (err) => {
+  ENRICH_RUNNER[mediaType](run.id, force).catch(async (err) => {
     console.error(`[tmdb] ${mediaType} enrich failed:`, err);
     await failRun(run.id, err).catch((e) => console.error("[tmdb] failed to record failure:", e));
   });

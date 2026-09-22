@@ -34,7 +34,8 @@ interface StartedRun {
 
 // Which "Fetch metadata" button each library's row on /admin maps to. A
 // media type with no entry here has no metadata source, so it is scanned
-// and then left alone.
+// and then left alone. Never forced: the nightly pass is for rows that
+// have yet to match, not for re-reading the whole library from TMDB.
 const ENRICH_STARTER: Partial<Record<ScanMediaType, () => Promise<StartedRun>>> = {
   FILM: () => runEnrich("FILM"),
   TV: () => runEnrich("TV"),
