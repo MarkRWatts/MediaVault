@@ -18,6 +18,16 @@ const DEFAULT_ADULT_PREFIX = "/media/Adult/";
 const DEFAULT_CONCERTS_PREFIX = "/media/Concerts/";
 const PROGRESS_UPDATE_EVERY = 25;
 
+// Above this many rows, a pass that matched nothing at all is read as a
+// broken fetch rather than an empty library — see shouldClearStaleIds. Ten
+// is the point where the two explanations stop being comparable: every one
+// of ten-plus files vanishing from Jellyfin between two runs is a thing that
+// essentially doesn't happen, whereas a bad prefix, a missed library or an
+// /Items call that came back wrong takes out all of them at once. Below it
+// the sweep stays as it was, because a wrong decision there costs a handful
+// of ids that the next good run puts straight back.
+const SUSPICIOUS_EMPTY_MATCH_ROWS = 10;
+
 interface MediaFolder {
   Id: string;
   Name: string;
@@ -99,6 +109,15 @@ async function getAllMovieItems(parentId: string): Promise<JellyfinItem[]> {
     ParentId: parentId,
     IncludeItemTypes: "Movie",
     Recursive: "true",
+    // Without this, Jellyfin replaces every movie that belongs to a
+    // collection with the BoxSet it sits in: the Alien, Bourne, Die Hard and
+    // Bond films come back as a handful of box sets whose Path is
+    // /config/data/collections/… instead, so none of them can ever match a
+    // Version and none of them could play. Measured against the real server:
+    // 178 items collapsed (143 films + 35 box sets) vs 282 uncollapsed.
+    // Movies-only: a BoxSet holds movies, so the episode and scene queries
+    // below have nothing to collapse.
+    CollapseBoxSetItems: "false",
     Fields: "Path,ProviderIds",
   });
   return data.Items ?? [];
@@ -191,8 +210,34 @@ function relativizeConcertsPath(jellyfinPath: string): string | null {
   return jellyfinPath.slice(idx + prefix.length);
 }
 
-async function doJellyfinSync(runId: number): Promise<void> {
+/**
+ * Whether a pass may clear the jellyfinId of everything it didn't match.
+ *
+ * The sweep is the destructive half of this job: it exists to drop an id
+ * whose file has genuinely left Jellyfin, but it can't tell that apart from
+ * "the fetch came back wrong", and the day a second movies library appeared
+ * it dutifully unplayable-ified all 284 films. Matching literally nothing
+ * while holding a real number of rows is the shape of that failure, so the
+ * pass keeps what it has and says so instead. An empty library, a small one,
+ * or any pass that matched even one item sweeps exactly as before.
+ */
+export function shouldClearStaleIds(matched: number, total: number): boolean {
+  return matched > 0 || total < SUSPICIOUS_EMPTY_MATCH_ROWS;
+}
+
+/** The loud line a blocked sweep leaves in the run log and its message. */
+function blockedSweepLine(noun: string, kept: number, total: number): string {
+  return `Kept ${kept} existing Jellyfin id(s) on ${total} ${noun}: this run matched none of them, which reads as a failed or misdirected Jellyfin fetch rather than an emptied library`;
+}
+
+// Exported for src/lib/jellyfin.test.ts, which drives a whole sync against a
+// real temp database and a stubbed fetch. Not part of the module's API —
+// callers start a sync through runJellyfinSync below.
+export async function doJellyfinSync(runId: number): Promise<void> {
   const log: string[] = [];
+  // Blocked sweeps, repeated in the run's finishing message so the admin
+  // page shows them without opening the log.
+  const blocked: string[] = [];
 
   await triggerLibraryRefresh(log);
 
@@ -277,14 +322,23 @@ async function doJellyfinSync(runId: number): Promise<void> {
   }
 
   // Any version we didn't match this run: unmatched-in-MediaVault, and clear a
-  // stale jellyfinId if it had one from a previous sync.
+  // stale jellyfinId if it had one from a previous sync — unless the whole
+  // pass matched nothing, which is the broken-fetch shape the guard catches.
   const unmatchedInMediaVault: string[] = [];
+  const staleVersions: typeof versions = [];
   for (const v of versions) {
     if (matchedVersionIds.has(v.id)) continue;
     unmatchedInMediaVault.push(v.filePath);
-    if (v.jellyfinId !== null) {
+    if (v.jellyfinId !== null) staleVersions.push(v);
+  }
+  if (shouldClearStaleIds(matched, versions.length)) {
+    for (const v of staleVersions) {
       await prisma.version.update({ where: { id: v.id }, data: { jellyfinId: null } });
     }
+  } else if (staleVersions.length > 0) {
+    // Only worth saying when there was something to lose: a pass holding no
+    // ids at all has nothing to protect and nothing to report.
+    blocked.push(blockedSweepLine("film version(s)", staleVersions.length, versions.length));
   }
 
   log.push(`Matched ${matched} of ${versions.length} MediaVault versions to Jellyfin items`);
@@ -343,16 +397,24 @@ async function doJellyfinSync(runId: number): Promise<void> {
   }
 
   // Any filePath we didn't match this run: unmatched-in-MediaVault, and clear a
-  // stale jellyfinId on every row sharing it.
+  // stale jellyfinId on every row sharing it. Same guard as the film pass —
+  // a server with no tvshows library reaches here with no items at all, and
+  // that must not cost every episode its id.
   const unmatchedInMediaVaultTv: string[] = [];
+  const staleTvRows: typeof episodeFiles = [];
   for (const [normPath, rows] of episodeFilesByNormPath) {
     if (matchedTvNormPaths.has(normPath)) continue;
     unmatchedInMediaVaultTv.push(rows[0].filePath);
     for (const row of rows) {
-      if (row.jellyfinId !== null) {
-        await prisma.episodeFile.update({ where: { id: row.id }, data: { jellyfinId: null } });
-      }
+      if (row.jellyfinId !== null) staleTvRows.push(row);
     }
+  }
+  if (shouldClearStaleIds(tvMatched, episodeFilesByNormPath.size)) {
+    for (const row of staleTvRows) {
+      await prisma.episodeFile.update({ where: { id: row.id }, data: { jellyfinId: null } });
+    }
+  } else if (staleTvRows.length > 0) {
+    blocked.push(blockedSweepLine("TV file(s)", staleTvRows.length, episodeFilesByNormPath.size));
   }
 
   log.push(`Matched ${tvMatched} of ${episodeFilesByNormPath.size} MediaVault TV file(s) to Jellyfin items`);
@@ -405,13 +467,22 @@ async function doJellyfinSync(runId: number): Promise<void> {
     }
   }
 
+  // Same guard again, and it earns its keep hardest here: with no
+  // ADULT_JELLYFIN_FOLDER_ID there is no fetch at all, so every scene looks
+  // unmatched and the old sweep would strip the lot.
   const unmatchedInMediaVaultAdult: string[] = [];
+  const staleScenes: typeof scenes = [];
   for (const s of scenes) {
     if (matchedSceneIds.has(s.id)) continue;
     unmatchedInMediaVaultAdult.push(s.filePath);
-    if (s.jellyfinId !== null) {
+    if (s.jellyfinId !== null) staleScenes.push(s);
+  }
+  if (shouldClearStaleIds(sceneMatched, scenes.length)) {
+    for (const s of staleScenes) {
       await prisma.scene.update({ where: { id: s.id }, data: { jellyfinId: null } });
     }
+  } else if (staleScenes.length > 0) {
+    blocked.push(blockedSweepLine("scene(s)", staleScenes.length, scenes.length));
   }
 
   if (adultFolderId) {
@@ -451,12 +522,18 @@ async function doJellyfinSync(runId: number): Promise<void> {
   }
 
   const unmatchedConcerts: string[] = [];
+  const staleConcerts: typeof concertVersions = [];
   for (const v of concertVersions) {
     if (matchedConcertIds.has(v.id)) continue;
     unmatchedConcerts.push(v.filePath);
-    if (v.jellyfinId !== null) {
+    if (v.jellyfinId !== null) staleConcerts.push(v);
+  }
+  if (shouldClearStaleIds(concertMatched, concertVersions.length)) {
+    for (const v of staleConcerts) {
       await prisma.version.update({ where: { id: v.id }, data: { jellyfinId: null } });
     }
+  } else if (staleConcerts.length > 0) {
+    blocked.push(blockedSweepLine("concert(s)", staleConcerts.length, concertVersions.length));
   }
 
   if (concertVersions.length > 0) {
@@ -466,10 +543,13 @@ async function doJellyfinSync(runId: number): Promise<void> {
     }
   }
 
+  for (const line of blocked) log.push(line);
+
+  const summary = `Matched ${matched}/${versions.length} movie version(s), ${tvMatched}/${episodeFilesByNormPath.size} TV file(s), ${sceneMatched}/${scenes.length} Adult scene(s), ${concertMatched}/${concertVersions.length} concert(s)`;
   await finishRun(
     runId,
     log,
-    `Matched ${matched}/${versions.length} movie version(s), ${tvMatched}/${episodeFilesByNormPath.size} TV file(s), ${sceneMatched}/${scenes.length} Adult scene(s), ${concertMatched}/${concertVersions.length} concert(s)`,
+    blocked.length > 0 ? `${summary} — kept existing ids after a pass matched nothing, see the log` : summary,
   );
 }
 
