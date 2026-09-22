@@ -16,6 +16,7 @@ export default function FilmShelf({
   collapsed = false,
   onToggle,
   stateFor,
+  divided = false,
 }: {
   title: string;
   films: LibraryFilm[];
@@ -23,12 +24,20 @@ export default function FilmShelf({
   onToggle?: () => void;
   /** Per-film favourite/watched state for the card overlay. */
   stateFor?: (filmId: number) => CardState | undefined;
+  /** See SectionHeader — a rule above this shelf. */
+  divided?: boolean;
 }) {
   if (films.length === 0) return null;
 
   return (
     <section className="flex flex-col gap-3">
-      <SectionHeader title={title} count={films.length} collapsed={collapsed} onToggle={onToggle ?? (() => {})} />
+      <SectionHeader
+        title={title}
+        count={films.length}
+        collapsed={collapsed}
+        onToggle={onToggle ?? (() => {})}
+        divided={divided}
+      />
       {!collapsed && (
         <div className="flex gap-3 overflow-x-auto pb-2">
           {films.map((film) => (

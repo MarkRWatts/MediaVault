@@ -93,6 +93,16 @@ function sortItems<T extends DisplayItem>(items: T[], sort: SortKey): T[] {
 type FormatSectionKey = "4K" | "Blu-ray" | "DVD" | "Other";
 const FORMAT_SECTION_ORDER: FormatSectionKey[] = ["4K", "Blu-ray", "DVD", "Other"];
 
+// Headings only. The keys above double as the collapsed-state keys held in
+// localStorage (COLLAPSED_KEY), so renaming "4K" itself would silently
+// unfold every section a user had folded away.
+const FORMAT_SECTION_LABEL: Record<FormatSectionKey, string> = {
+  "4K": "UltraHD Blu-ray (4K)",
+  "Blu-ray": "Blu-ray",
+  DVD: "DVD",
+  Other: "Other",
+};
+
 function formatSectionFor(film: LibraryFilm): FormatSectionKey {
   // Physical-only films have no ripped Versions (so no formats/bestTier) —
   // section them by the disc medium instead, so a scanned Blu-ray sits
@@ -250,6 +260,20 @@ export default function LibraryBrowser({
     );
   }, [sortedFormatFilmItems]);
 
+  // Empty shelves are dropped here rather than inside FilmShelf so the
+  // separator below knows which shelf is genuinely the first on the page.
+  const shelves = (
+    query.trim() === ""
+      ? ([
+          ["Continue watching", continueWatching],
+          ["New releases", newReleases],
+          ["Recently added", recentlyAdded],
+          ["Favourites", favourites],
+        ] as const)
+      : []
+  ).filter(([, list]) => list.length > 0);
+  const sectionsBeforeFormats = shelves.length + (sortedCollectionItems.length > 0 ? 1 : 0);
+
   if (films.length === 0) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 py-24 text-center">
@@ -380,14 +404,7 @@ export default function LibraryBrowser({
 
       {/* Searching is for one film: the shelves would push the results off
           the bottom of the page, so they step aside until the box is cleared. */}
-      {query.trim() === "" && (
-        [
-          ["Continue watching", continueWatching],
-          ["New releases", newReleases],
-          ["Recently added", recentlyAdded],
-          ["Favourites", favourites],
-        ] as const
-      ).map(([title, list]) => (
+      {shelves.map(([title, list], i) => (
         <FilmShelf
           key={title}
           title={title}
@@ -395,6 +412,7 @@ export default function LibraryBrowser({
           collapsed={collapsedSections.has(title)}
           onToggle={() => toggleSection(title)}
           stateFor={stateFor}
+          divided={i > 0}
         />
       ))}
 
@@ -412,6 +430,7 @@ export default function LibraryBrowser({
                 count={sortedCollectionItems.reduce((sum, item) => sum + item.films.length, 0)}
                 collapsed={collapsedSections.has(COLLECTIONS_SECTION)}
                 onToggle={() => toggleSection(COLLECTIONS_SECTION)}
+                divided={shelves.length > 0}
               />
               {!collapsedSections.has(COLLECTIONS_SECTION) && (
                 <div className={CARD_GRID}>
@@ -428,13 +447,14 @@ export default function LibraryBrowser({
             </section>
           )}
 
-          {formatSections.map(({ key, items }) => (
+          {formatSections.map(({ key, items }, i) => (
             <section key={key} className="flex flex-col gap-3">
               <SectionHeader
-                title={key}
+                title={FORMAT_SECTION_LABEL[key]}
                 count={items.length}
                 collapsed={collapsedSections.has(key)}
                 onToggle={() => toggleSection(key)}
+                divided={sectionsBeforeFormats + i > 0}
               />
               {!collapsedSections.has(key) && (
                 <div className={CARD_GRID}>
