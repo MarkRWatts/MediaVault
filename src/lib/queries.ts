@@ -117,7 +117,10 @@ export interface LibraryData {
 // query (below) — both end up rendering the same LibraryFilm/FilmCard, so
 // they select and shape identically rather than drifting into two subtly
 // different card shapes.
-const FILM_CARD_SELECT = {
+/** Exported for queries-film-shows.ts, which builds the same FilmCard from
+ *  a different starting point (the links on a show) — the card's fields are
+ *  its business, not each caller's. */
+export const FILM_CARD_SELECT = {
   id: true,
   title: true,
   sortTitle: true,
@@ -141,7 +144,7 @@ const FILM_CARD_SELECT = {
   },
 };
 
-type FilmCardSource = {
+export type FilmCardSource = {
   id: number;
   title: string;
   sortTitle: string;
@@ -163,7 +166,7 @@ type FilmCardSource = {
   }[];
 };
 
-function shapeLibraryFilm(f: FilmCardSource): LibraryFilm {
+export function shapeLibraryFilm(f: FilmCardSource): LibraryFilm {
   return {
     id: f.id,
     title: f.title,

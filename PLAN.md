@@ -53,7 +53,9 @@ Shared library (nothing here is per user):
   dispositions), `FilmPhysicalCopy` (a DVD, Blu-ray or UHD disc on the
   shelf, independent of any rip), `Collection` (TMDB collection).
 - **TV**: `Show`, `ShowSeason`, `Episode` (owned or missing, disc-order
-  numbering), `EpisodeFile` (file with specs and Jellyfin id).
+  numbering), `EpisodeFile` (file with specs and Jellyfin id),
+  `FilmShowLink` (many-to-many, curated by hand: the films that belong with
+  a series, like Serenity with Firefly, surfaced on the show's page).
 - **Music**: `Artist` (Discogs id, Spotify id, photo, bio), `Album` (owned
   or a Discogs back-catalogue placeholder; cover art, digital source,
   Discogs identity), `Track` (file, codec, bit depth, sample rate),

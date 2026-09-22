@@ -80,6 +80,33 @@ model Film {
   @@index([collectionId])
   @@index([sortTitle])
   favourites   FilmFavourite[]
+  showLinks    FilmShowLink[]
+}
+
+// A film that belongs with a TV show — Serenity with Firefly, the Downton
+// Abbey films with Downton Abbey, the 1994 Stargate with SG-1, Atlantis and
+// Universe (hence many-to-many: one film, three shows).
+//
+// Curated BY HAND and never written by a scan or enrich pass: TMDB has no
+// movie-to-show relation to read (belongs_to_collection is movies-only), so
+// there is nothing for the pipeline to populate this from and nothing it may
+// overwrite. Only the app owner's link/unlink control on the film page
+// writes here (src/app/actions/film-shows.ts).
+//
+// Purely additive surfacing: a linked film keeps its place in the Movies
+// listings exactly as before, and gains a card on the show's page.
+
+model FilmShowLink {
+  id        Int      @id @default(autoincrement())
+  filmId    Int
+  film      Film     @relation(fields: [filmId], references: [id], onDelete: Cascade)
+  showId    Int
+  show      Show     @relation(fields: [showId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([filmId, showId])
+  @@index([filmId])
+  @@index([showId])
 }
 
 // A physical disc you own of this film — independent of digital ownership
@@ -177,6 +204,7 @@ model Show {
 
   @@index([sortTitle])
   favourites      ShowFavourite[]
+  filmLinks       FilmShowLink[]
 }
 
 model ShowSeason {
