@@ -178,11 +178,10 @@ describe("getWatchStats", () => {
     const stats = await getWatchStats("empty-user");
     expect(stats).toEqual({
       totalWatchSecs: 0,
-      totalFilmsWatched: 0,
+      titlesWatched: 0,
       totalPlays: 0,
       mostWatched: [],
       topGenres: [],
-      recentlyWatched: [],
     });
   });
 
@@ -219,7 +218,7 @@ describe("getWatchStats", () => {
 
     const stats = await getWatchStats("watch-time-user");
     expect(stats.totalWatchSecs).toBe(7200 + 1800);
-    expect(stats.totalFilmsWatched).toBe(2);
+    expect(stats.titlesWatched).toBe(2);
     expect(stats.totalPlays).toBe(2 + 1);
   });
 
@@ -254,8 +253,7 @@ describe("getWatchStats", () => {
 
     const stats = await getWatchStats("preview-only-user");
     expect(stats.totalWatchSecs).toBe(0);
-    expect(stats.totalFilmsWatched).toBe(0);
-    expect(stats.recentlyWatched).toEqual([]);
+    expect(stats.titlesWatched).toBe(0);
   });
 
   it("splits a row's contribution evenly across a film's comma-separated genres", async () => {
@@ -334,32 +332,51 @@ describe("getWatchStats", () => {
     expect(stats.mostWatched[0].playCount).toBe(5);
     // totalPlays is NOT deduped (5 + 2 + 1), reflecting every row.
     expect(stats.totalPlays).toBe(5 + 2 + 1);
-    // totalFilmsWatched IS deduped by film (2 distinct titles, not 3 rows).
-    expect(stats.totalFilmsWatched).toBe(2);
+    // titlesWatched IS deduped by film (2 distinct titles, not 3 rows).
+    expect(stats.titlesWatched).toBe(2);
   });
 
-  it("orders recentlyWatched by updatedAt desc", async () => {
-    await seedUser("recent-user");
-    const older = await seedFilmWithVersion({ title: "Older Watch", durationSecs: 1000 });
-    const newer = await seedFilmWithVersion({ title: "Newer Watch", durationSecs: 1000 });
-    await seedProgress({
-      userId: "recent-user",
-      versionId: older.versionId,
-      positionSecs: 500,
-      completed: false,
-      playCount: 1,
-      updatedAt: new Date("2020-01-01T00:00:00Z"),
+  it("counts episodes towards the totals, one watched title per show", async () => {
+    await seedUser("tv-user");
+    const show = await seedEpisodeWithFile({});
+    // A second episode of the SAME show — one watched title between them.
+    const secondEpisodeId = nextEpisodeId++;
+    const secondFileId = nextEpisodeFileId++;
+    const season = await testPrisma.showSeason.findFirstOrThrow({ where: { showId: show.showId } });
+    await testPrisma.episode.create({
+      data: { id: secondEpisodeId, seasonId: season.id, episodeNumber: 2, owned: true },
     });
+    await testPrisma.episodeFile.create({
+      data: {
+        id: secondFileId,
+        episodeId: secondEpisodeId,
+        filePath: `show-${show.showId}/e${secondEpisodeId}.mkv`,
+        fileName: `e${secondEpisodeId}.mkv`,
+        durationSecs: 1300,
+      },
+    });
+    for (const episodeFileId of [show.episodeFileId, secondFileId]) {
+      await testPrisma.watchProgress.create({
+        data: { userId: "tv-user", episodeFileId, positionSecs: 1200, completed: false, playCount: 1 },
+      });
+    }
+
+    const film = await seedFilmWithVersion({ title: "TV User Film", durationSecs: 3000 });
     await seedProgress({
-      userId: "recent-user",
-      versionId: newer.versionId,
-      positionSecs: 500,
+      userId: "tv-user",
+      versionId: film.versionId,
+      positionSecs: 600,
       completed: false,
       playCount: 1,
-      updatedAt: new Date("2024-01-01T00:00:00Z"),
+      updatedAt: new Date(),
     });
 
-    const stats = await getWatchStats("recent-user");
-    expect(stats.recentlyWatched.map((r) => r.film.title)).toEqual(["Newer Watch", "Older Watch"]);
+    const stats = await getWatchStats("tv-user");
+    expect(stats.totalWatchSecs).toBe(1200 + 1200 + 600);
+    // One film + one show, not one film + two episodes.
+    expect(stats.titlesWatched).toBe(2);
+    expect(stats.totalPlays).toBe(3);
+    // Episodes never reach the most-watched list, which is about titles.
+    expect(stats.mostWatched.map((f) => f.title)).toEqual(["TV User Film"]);
   });
 });
