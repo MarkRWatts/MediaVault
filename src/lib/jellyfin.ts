@@ -83,20 +83,15 @@ async function jellyfinRequest(method: string, pathname: string, body?: unknown)
   return res.json();
 }
 
-/** Every "movies" library on the server, in the order Jellyfin lists them.
- *  Usually one — but the Concerts folder is naturally added as a second
- *  movies library (that's what gets concert films their TMDB metadata), and
- *  the concert pass below has to look in all of them. */
+/** Every "movies" library on the server. Usually one — but the Concerts
+ *  folder is naturally added as a second movies library (that's what gets
+ *  concert films their TMDB metadata), so the sync reads all of them and
+ *  lets each pass claim by prefix. Taking only the first cleared every
+ *  film's jellyfinId the day a second one appeared. */
 async function getMoviesLibraryIds(): Promise<string[]> {
   const data = await jellyfinFetch("/Library/MediaFolders");
   const folders: MediaFolder[] = data.Items ?? [];
   return folders.filter((f) => f.CollectionType === "movies").map((f) => f.Id);
-}
-
-async function getMoviesLibraryId(): Promise<string> {
-  const ids = await getMoviesLibraryIds();
-  if (ids.length === 0) throw new Error('No Jellyfin library with CollectionType "movies" found');
-  return ids[0];
 }
 
 async function getAllMovieItems(parentId: string): Promise<JellyfinItem[]> {
@@ -201,8 +196,19 @@ async function doJellyfinSync(runId: number): Promise<void> {
 
   await triggerLibraryRefresh(log);
 
-  const parentId = await getMoviesLibraryId();
-  const items = await getAllMovieItems(parentId);
+  // EVERY movies-type library, not just the first. A Concerts folder added
+  // as its own library is a second movies library, and taking one of them
+  // leaves every version in the other unmatched — which the sweep below then
+  // "tidies up" by clearing its jellyfinId, so one library too many silently
+  // unplayable-ifies the whole film collection. Both passes read this one
+  // list and each keeps only what its own prefix relativizes, so an extra
+  // library can add items but can never take any away.
+  const movieLibraryIds = await getMoviesLibraryIds();
+  if (movieLibraryIds.length === 0) throw new Error('No Jellyfin library with CollectionType "movies" found');
+  let items: JellyfinItem[] = [];
+  for (const libraryId of movieLibraryIds) {
+    items = items.concat(await getAllMovieItems(libraryId));
+  }
 
   // TV matching is best-effort — a server with no "tvshows" library (or one
   // that errors) shouldn't fail the whole sync; movies still get matched.
@@ -246,8 +252,12 @@ async function doJellyfinSync(runId: number): Promise<void> {
     completed++;
     if (item.Path) {
       const relPath = relativizePath(item.Path);
-      const normPath = relPath?.normalize("NFC");
-      const version = normPath ? versionByNormPath.get(normPath) : undefined;
+      // Outside the movies prefix: an item from one of the other movies
+      // libraries (the concerts one), which the pass below claims. Not this
+      // pass's to match, and not its to report as unmatched either.
+      if (relPath === null) continue;
+      const normPath = relPath.normalize("NFC");
+      const version = versionByNormPath.get(normPath);
       if (version) {
         if (version.jellyfinId !== item.Id) {
           await prisma.version.update({ where: { id: version.id }, data: { jellyfinId: item.Id } });
@@ -415,23 +425,10 @@ async function doJellyfinSync(runId: number): Promise<void> {
   }
 
   // ---- Concerts ----
-  // Same shape as the film pass (concerts are Film rows with Version files),
-  // but against the concerts prefix, and best-effort like TV/Adult — a
-  // household with no Concerts library in Jellyfin shouldn't see the sync
-  // fail. Items are gathered from every movies library because a Concerts
-  // folder added as its own library is a second one, and getMoviesLibraryId
-  // above only ever returns the first.
-  let concertItems: JellyfinItem[] = [];
-  try {
-    const movieLibraryIds = await getMoviesLibraryIds();
-    for (const libraryId of movieLibraryIds) {
-      concertItems = concertItems.concat(await getAllMovieItems(libraryId));
-    }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    log.push(`Failed to fetch Jellyfin concert items: ${message}`);
-  }
-
+  // Same shape as the film pass (concerts are Film rows with Version files)
+  // over the same `items`, but claiming what the concerts prefix
+  // relativizes instead. A household with no Concerts library simply has no
+  // concert items in the list and no concert versions to match them to.
   const concertVersions = await prisma.version.findMany({
     where: { film: { kind: "CONCERT" } },
     select: { id: true, filePath: true, jellyfinId: true },
@@ -440,7 +437,7 @@ async function doJellyfinSync(runId: number): Promise<void> {
   const matchedConcertIds = new Set<number>();
   let concertMatched = 0;
 
-  for (const item of concertItems) {
+  for (const item of items) {
     if (!item.Path) continue;
     const relPath = relativizeConcertsPath(item.Path);
     const normPath = relPath?.normalize("NFC");
@@ -540,7 +537,7 @@ export function jellyfinPlayUrl(itemId: string, serverId: string): string {
 // toggle; this is the admin-delegate half of that opt-in, driving one
 // person's Policy.EnabledFolders on their behalf via ADULT_JELLYFIN_FOLDER_ID
 // (the folder's raw GUID — there's no CollectionType for adult content to
-// match on the way getMoviesLibraryId() matches "movies", so unlike that
+// match on the way getMoviesLibraryIds() matches "movies", so unlike that
 // function this can't discover the id programmatically; it's a one-time
 // paste from Jellyfin's dashboard, same posture as the SSO client's redirect
 // URI). jellyfin-plugin-sso's EnableAuthorization is deliberately off (see
