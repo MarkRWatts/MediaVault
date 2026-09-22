@@ -24,6 +24,7 @@ import { prisma } from "@/lib/db";
 import { WATCH_COMPLETED_RATIO } from "@/lib/constants";
 import { logPlaybackStart } from "@/lib/audit";
 import { logPlay } from "@/lib/play-log";
+import { recordPlayEvent } from "@/lib/play-events";
 import { ageGateForUser } from "@/lib/age-gate";
 import { uhdGate } from "@/lib/uhd-gate";
 
@@ -142,6 +143,21 @@ export async function POST(req: Request, ctx: { params: Promise<{ versionId: str
       ...(isNewPlay ? { playCount: { increment: 1 }, completed: false } : {}),
     },
   });
+  // Their own history (PlayEvent), on every report rather than only the
+  // first: it is what keeps the timeline's "Stopped at …" current, and the
+  // helper folds the ticks of one viewing into a single row itself.
+  await recordPlayEvent({
+    userId,
+    kind: "film",
+    itemId: versionId,
+    positionSecs,
+    completed: row.completed,
+    // Always a definite answer, never undefined: the player sends the flag
+    // once per session and omits it after, so "absent" means "still the
+    // same viewing" here — not "this caller has no idea".
+    isNewPlay: isNewPlay === true,
+  });
+
   if (isNewPlay) {
     await logPlaybackStart(userId, "video.playback");
     await logPlay("film", versionId);

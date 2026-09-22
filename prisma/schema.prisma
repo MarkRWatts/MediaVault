@@ -12,6 +12,8 @@
 //   Scene.matchConfidence: EXACT | SEARCH | LOW | UNMATCHED
 //   ScanRun.kind: see the RunKind union in src/lib/runs.ts (source of truth — this
 //     comment drifts, don't trust it)   ScanRun.status: RUNNING | DONE | FAILED
+//   PlayEvent.kind: film | episode | track (Version | EpisodeFile | Track),
+//     same vocabulary as PlayLog.kind
 //   KeyframeIndex.kind: film | episode | scene (Version | EpisodeFile | Scene)
 //   KeyframeIndex.source: cues | ffprobe
 //   InterlaceCheck.kind: film | episode | scene, same split as KeyframeIndex
@@ -632,6 +634,8 @@ model User {
   // (components/shell/rail.tsx) — see PLAYLISTS_PLAN.md.
   railCollapsed Boolean @default(false)
 
+  playEvents         PlayEvent[]
+
   oauthclients       OauthClient[]
   oauthrefreshtokens OauthRefreshToken[]
   oauthaccesstokens  OauthAccessToken[]
@@ -903,6 +907,39 @@ model WatchProgress {
   @@unique([userId, versionId])
   @@unique([userId, episodeFileId])
   @@index([userId])
+}
+
+// Per-user play history across every media type — what /history's timeline
+// reads. Per-user BY DESIGN, like WatchProgress and unlike PlayLog above:
+// PlayLog is the anonymous "what did the household play today" count and
+// must never learn who; this is the person's own diary of their own
+// listening and viewing, which only they can read.
+//
+// WatchProgress can't do this job: it keeps the LATEST state per item, so a
+// rewatch overwrites the previous one and a film watched every Christmas
+// reads as a single event. A row here is one sitting — appended, never
+// replaced — coalesced within PLAY_EVENT_COALESCE_MS so the twenty progress
+// pings of one viewing stay one line (see src/lib/play-events.ts).
+//
+// itemId is polymorphic by kind (Version.id | EpisodeFile.id | Track.id),
+// the same convention PlayLog uses and for the same reason: films, episodes
+// and tracks live in separate tables with separate id spaces, and a row
+// whose item has since left the library should simply read as removed
+// rather than block the delete. userId, by contrast, does carry a real FK —
+// history is personal data and must go when the account does.
+model PlayEvent {
+  id           Int      @id @default(autoincrement())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind         String // "film" | "episode" | "track"
+  itemId       Int // Version.id | EpisodeFile.id | Track.id — no FK, see above
+  startedAt    DateTime @default(now())
+  lastSeenAt   DateTime @default(now())
+  positionSecs Int? // null for tracks, which report a play but no position
+  completed    Boolean  @default(false)
+
+  @@index([userId, lastSeenAt])
+  @@index([userId, kind, itemId])
 }
 
 model Household {

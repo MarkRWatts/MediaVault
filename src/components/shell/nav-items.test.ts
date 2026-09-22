@@ -23,22 +23,22 @@ describe("navItemsFor", () => {
 
   it("shows a plain member the five everyday sections and no owner rows", () => {
     const groups = navItemsFor({ isOwner: false, hasAdultAccess: false });
-    expect(hrefs(groups.primary)).toEqual(["/", "/shows", "/music", "/collections", "/stats"]);
+    expect(hrefs(groups.primary)).toEqual(["/", "/shows", "/music", "/collections", "/history"]);
     expect(groups.owner).toEqual([]);
     expect(hrefs(groups.mobileTabs)).toEqual(["/", "/shows", "/music", "/collections"]);
-    expect(hrefs(groups.more)).toEqual(["/stats"]);
+    expect(hrefs(groups.more)).toEqual(["/history"]);
   });
 
-  it("adds Adult between Collections and Stats only with the opt-in", () => {
+  it("adds Adult between Collections and History only with the opt-in", () => {
     const groups = navItemsFor({ isOwner: false, hasAdultAccess: true });
-    expect(hrefs(groups.primary)).toEqual(["/", "/shows", "/music", "/collections", "/adult", "/stats"]);
-    expect(hrefs(groups.more)).toEqual(["/adult", "/stats"]);
+    expect(hrefs(groups.primary)).toEqual(["/", "/shows", "/music", "/collections", "/adult", "/history"]);
+    expect(hrefs(groups.more)).toEqual(["/adult", "/history"]);
   });
 
   it("adds the owner group, and puts it last in More, only for the app owner", () => {
     const groups = navItemsFor({ isOwner: true, hasAdultAccess: false });
     expect(groups.owner).toEqual(OWNER_ITEMS);
-    expect(hrefs(groups.more)).toEqual(["/stats", "/scan", "/report", "/admin"]);
+    expect(hrefs(groups.more)).toEqual(["/history", "/scan", "/report", "/admin"]);
     expect(groups.moreOwner).toEqual(OWNER_ITEMS);
   });
 

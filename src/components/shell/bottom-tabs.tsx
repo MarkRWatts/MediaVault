@@ -3,7 +3,7 @@
 // Floating bottom tab bar for mobile (<md), hidden at md+ where the sidebar
 // takes over. Floats clear of the iOS home-indicator swipe zone in the same
 // glass language as the desktop sidebar. Four everyday tabs plus a "More"
-// tab that opens a small sheet with the remaining destinations — Stats,
+// tab that opens a small sheet with the remaining destinations — History,
 // Adult and the owner tools when this person has them, and Account, which
 // the mobile header only shows as an avatar. Ported from template-app /
 // TrainTracker's bottom-tabs.tsx.

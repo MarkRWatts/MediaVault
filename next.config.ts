@@ -59,6 +59,14 @@ const nextConfig: NextConfig = {
   async headers() {
     return [{ source: "/(.*)", headers: securityHeaders }];
   },
+  async redirects() {
+    return [
+      // /stats was the page's name until it grew past films into a
+      // cross-media timeline. Permanent (308) because the old path is
+      // bookmarked and sits in native clients' remembered URLs.
+      { source: "/stats", destination: "/history", permanent: true },
+    ];
+  },
   images: {
     // No next/image anywhere: its optimizer fetches sources server-side
     // with none of the browser's cookies, which forced the poster/cover
