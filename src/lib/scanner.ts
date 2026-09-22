@@ -53,6 +53,39 @@ async function walk(root: string, dir: string, depth: number, out: string[]): Pr
   }
 }
 
+/**
+ * What one file's pass did, so a run can summarise itself. Without this a
+ * healthy scan logs nothing at all — every existing log.push here fires only
+ * on something unusual — and the admin page's Log disclosure vanishes, which
+ * reads as a broken feature rather than a quiet library.
+ *
+ * `created`/`updated` count rows, not files: one TV file covering an episode
+ * range writes a row per episode.
+ */
+interface FileOutcome {
+  probed: boolean; // false = skipped by the size/mtime cache
+  created: number;
+  updated: number;
+}
+
+interface ScanCounts {
+  probed: number;
+  skipped: number;
+  created: number;
+  updated: number;
+}
+
+function tallyOutcomes(outcomes: FileOutcome[]): ScanCounts {
+  const counts: ScanCounts = { probed: 0, skipped: 0, created: 0, updated: 0 };
+  for (const o of outcomes) {
+    if (o.probed) counts.probed++;
+    else counts.skipped++;
+    counts.created += o.created;
+    counts.updated += o.updated;
+  }
+  return counts;
+}
+
 async function mapPool<T, R>(items: T[], limit: number, fn: (item: T, idx: number) => Promise<R>): Promise<R[]> {
   const results: R[] = new Array(items.length);
   let next = 0;
@@ -199,7 +232,7 @@ async function processVersion(
   filmId: number,
   log: string[],
   force: boolean,
-): Promise<void> {
+): Promise<FileOutcome> {
   const { parsed, absPath, size, mtimeMs } = file;
   const existing = await prisma.version.findUnique({ where: { filePath: parsed.relPath } });
 
@@ -212,10 +245,11 @@ async function processVersion(
     edition: parsed.edition,
     container: parsed.container || null,
   };
+  const rows = { created: existing ? 0 : 1, updated: existing ? 1 : 0 };
 
   if (!needProbe) {
     await prisma.version.update({ where: { filePath: parsed.relPath }, data: baseData });
-    return;
+    return { probed: false, ...rows };
   }
 
   try {
@@ -282,6 +316,8 @@ async function processVersion(
       update: { ...baseData, format: existing?.format && existing.format !== "UNKNOWN" ? existing.format : fallbackFormat },
     });
   }
+
+  return { probed: true, ...rows };
 }
 
 // --- TV ---
@@ -374,7 +410,7 @@ async function processEpisodeFile(
   episodeIds: number[],
   log: string[],
   force: boolean,
-): Promise<void> {
+): Promise<FileOutcome> {
   const { parsed, absPath, size, mtimeMs } = file;
   const existingRows = await prisma.episodeFile.findMany({ where: { filePath: parsed.relPath } });
   const existing = existingRows[0];
@@ -386,6 +422,12 @@ async function processEpisodeFile(
     fileName: parsed.fileName,
     container: parsed.container || null,
   };
+
+  // Per episode, not per file: a range file already holding one of its two
+  // rows creates the other and updates the first.
+  const heldEpisodeIds = new Set(existingRows.map((r) => r.episodeId));
+  const created = episodeIds.filter((id) => !heldEpisodeIds.has(id)).length;
+  const rows = { created, updated: episodeIds.length - created };
 
   const upsertAll = async (data: EpisodeFileData): Promise<number[]> => {
     const ids: number[] = [];
@@ -402,7 +444,7 @@ async function processEpisodeFile(
 
   if (!needProbe) {
     await upsertAll(baseData);
-    return;
+    return { probed: false, ...rows };
   }
 
   try {
@@ -455,6 +497,8 @@ async function processEpisodeFile(
     const fallbackFormat = existing?.format && existing.format !== "UNKNOWN" ? existing.format : "UNKNOWN";
     await upsertAll({ ...baseData, format: fallbackFormat });
   }
+
+  return { probed: true, ...rows };
 }
 
 // --- Music ---
@@ -560,7 +604,7 @@ async function resolveAlbum(artistId: number, albumFolder: string, albumTitle: s
  * Track row. `.m4p` (FairPlay DRM) files are never probed — ffprobe can't
  * read encrypted audio anyway — and are recorded with codec "drm".
  */
-async function processTrack(file: MusicCandidateFile, albumId: number, log: string[], force: boolean): Promise<void> {
+async function processTrack(file: MusicCandidateFile, albumId: number, log: string[], force: boolean): Promise<FileOutcome> {
   const { parsed, absPath, size, mtimeMs } = file;
   const existing = await prisma.track.findUnique({ where: { filePath: parsed.relPath } });
 
@@ -571,6 +615,7 @@ async function processTrack(file: MusicCandidateFile, albumId: number, log: stri
     title: parsed.title,
     fileName: parsed.fileName,
   };
+  const rows = { created: existing ? 0 : 1, updated: existing ? 1 : 0 };
 
   if (parsed.codecHint === "drm") {
     const data = {
@@ -586,7 +631,9 @@ async function processTrack(file: MusicCandidateFile, albumId: number, log: stri
       create: { ...data, filePath: parsed.relPath },
       update: data,
     });
-    return;
+    // Never probed by design (ffprobe can't read FairPlay audio), so it
+    // counts with the skipped rather than inflating the probe tally.
+    return { probed: false, ...rows };
   }
 
   const needProbe =
@@ -594,7 +641,7 @@ async function processTrack(file: MusicCandidateFile, albumId: number, log: stri
 
   if (!needProbe) {
     await prisma.track.update({ where: { filePath: parsed.relPath }, data: baseData });
-    return;
+    return { probed: false, ...rows };
   }
 
   try {
@@ -633,6 +680,8 @@ async function processTrack(file: MusicCandidateFile, albumId: number, log: stri
       update: baseData,
     });
   }
+
+  return { probed: true, ...rows };
 }
 
 // Lazy import to avoid a module-load cycle (jellyfin.ts doesn't import
@@ -706,10 +755,11 @@ async function doScanFilmLibrary(runId: number, force: boolean, kind: FilmKind):
   }
 
   // Probe + upsert versions, bounded concurrency (SMB share).
-  await mapPool(candidates, PROBE_CONCURRENCY, async (file) => {
+  const outcomes = await mapPool(candidates, PROBE_CONCURRENCY, async (file) => {
     const filmId = filmIdByPath.get(file.parsed.relPath)!;
-    await processVersion(file, filmId, log, force);
+    const outcome = await processVersion(file, filmId, log, force);
     await reportProgress(`Probed ${completed}/${total}: ${file.parsed.fileName}`);
+    return outcome;
   });
 
   // Delete Version rows for files no longer on disk. Only this library's —
@@ -720,7 +770,6 @@ async function doScanFilmLibrary(runId: number, force: boolean, kind: FilmKind):
   const staleVersionIds = allVersions.filter((v) => !seenPaths.has(v.filePath)).map((v) => v.id);
   if (staleVersionIds.length > 0) {
     await prisma.version.deleteMany({ where: { id: { in: staleVersionIds } } });
-    log.push(`Removed ${staleVersionIds.length} version(s) for files no longer on disk`);
   }
 
   // Owned films left with zero versions: drop, unless they're collection
@@ -738,6 +787,11 @@ async function doScanFilmLibrary(runId: number, force: boolean, kind: FilmKind):
       log.push(`Deleted "${f.title}" — no versions left`);
     }
   }
+
+  // Unconditional, so a clean run still has a log worth opening.
+  const counts = tallyOutcomes(outcomes);
+  log.push(`Walked ${total} ${noun} file(s) under ${rootEnv} — probed ${counts.probed}, skipped ${counts.skipped} unchanged since the last scan`);
+  log.push(`Created ${counts.created} version(s), updated ${counts.updated}, removed ${staleVersionIds.length} for files no longer on disk`);
 
   await finishRun(runId, log, `Scanned ${total} ${noun} file(s)`);
   await triggerJellyfinSync();
@@ -815,10 +869,11 @@ async function doScanTv(runId: number, force: boolean): Promise<void> {
   }
 
   // Probe + upsert episode files, bounded concurrency (SMB share).
-  await mapPool(tvCandidates, PROBE_CONCURRENCY, async (file) => {
+  const outcomes = await mapPool(tvCandidates, PROBE_CONCURRENCY, async (file) => {
     const episodeIds = episodeIdsByPath.get(file.parsed.relPath)!;
-    await processEpisodeFile(file, episodeIds, log, force);
+    const outcome = await processEpisodeFile(file, episodeIds, log, force);
     await reportProgress(`Probed ${completed}/${total}: ${file.parsed.fileName}`);
+    return outcome;
   });
 
   // Delete EpisodeFile rows for TV files no longer on disk.
@@ -827,7 +882,6 @@ async function doScanTv(runId: number, force: boolean): Promise<void> {
   const staleEpisodeFileIds = allEpisodeFiles.filter((f) => !seenTvPaths.has(f.filePath)).map((f) => f.id);
   if (staleEpisodeFileIds.length > 0) {
     await prisma.episodeFile.deleteMany({ where: { id: { in: staleEpisodeFileIds } } });
-    log.push(`Removed ${staleEpisodeFileIds.length} episode file(s) for TV files no longer on disk`);
   }
 
   // Owned episodes left with zero files: revert to a TMDB manifest
@@ -888,6 +942,15 @@ async function doScanTv(runId: number, force: boolean): Promise<void> {
     await prisma.show.delete({ where: { id: s.id } });
     log.push(`Deleted show "${s.title}" — folder "${s.folder}" no longer on disk`);
   }
+
+  const counts = tallyOutcomes(outcomes);
+  log.push(
+    `Walked ${total} TV episode file(s) under TVSHOWS_PATH${tvUnparsed ? `, ${tvUnparsed} unparsed` : ""} — probed ${counts.probed}, skipped ${counts.skipped} unchanged since the last scan`,
+  );
+  log.push(
+    `Created ${counts.created} episode file row(s), updated ${counts.updated}, removed ${staleEpisodeFileIds.length} for files no longer on disk`,
+  );
+  log.push(`${showIdByFolder.size} show folder(s) across ${seasonIdByKey.size} season(s)`);
 
   await finishRun(runId, log, `Scanned ${total} TV episode file(s)`);
   await triggerJellyfinSync();
@@ -959,11 +1022,12 @@ async function doScanMusic(runId: number, force: boolean): Promise<void> {
   }
 
   // Probe + upsert tracks, bounded concurrency (SMB share).
-  await mapPool(musicCandidates, PROBE_CONCURRENCY, async (file) => {
+  const outcomes = await mapPool(musicCandidates, PROBE_CONCURRENCY, async (file) => {
     const albumKey = `${artistIdByFolder.get(file.parsed.artistFolder)}:${file.parsed.albumFolder}`;
     const albumId = albumIdByKey.get(albumKey)!;
-    await processTrack(file, albumId, log, force);
+    const outcome = await processTrack(file, albumId, log, force);
     await reportProgress(`Probed ${completed}/${total}: ${file.parsed.fileName}`);
+    return outcome;
   });
 
   // Delete Track rows for music files no longer on disk.
@@ -972,7 +1036,6 @@ async function doScanMusic(runId: number, force: boolean): Promise<void> {
   const staleTrackIds = allTracks.filter((t) => !seenMusicPaths.has(t.filePath)).map((t) => t.id);
   if (staleTrackIds.length > 0) {
     await prisma.track.deleteMany({ where: { id: { in: staleTrackIds } } });
-    log.push(`Removed ${staleTrackIds.length} track(s) for music files no longer on disk`);
   }
 
   // Owned albums left with zero tracks: if Discogs-matched and still a
@@ -1038,6 +1101,13 @@ async function doScanMusic(runId: number, force: boolean): Promise<void> {
     }
   }
 
+  const counts = tallyOutcomes(outcomes);
+  log.push(
+    `Walked ${total} music file(s) under MUSIC_PATH${musicUnparsed ? `, ${musicUnparsed} unparsed` : ""} — probed ${counts.probed}, skipped ${counts.skipped} unchanged since the last scan`,
+  );
+  log.push(`Created ${counts.created} track(s), updated ${counts.updated}, removed ${staleTrackIds.length} for files no longer on disk`);
+  log.push(`${artistIdByFolder.size} artist folder(s) across ${albumIdByKey.size} album(s)`);
+
   await finishRun(runId, log, `Scanned ${total} music file(s)`);
 }
 
@@ -1070,7 +1140,7 @@ function placeholderSceneTitle(fileName: string): string {
   return withoutExt.replace(/[._]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
-async function processScene(file: SceneCandidate, log: string[], force: boolean): Promise<void> {
+async function processScene(file: SceneCandidate, log: string[], force: boolean): Promise<FileOutcome> {
   const { relPath, absPath, fileName, folder, size, mtimeMs } = file;
   const existing = await prisma.scene.findUnique({ where: { filePath: relPath } });
 
@@ -1078,10 +1148,11 @@ async function processScene(file: SceneCandidate, log: string[], force: boolean)
     force || !existing || existing.sizeBytes === null || Number(existing.sizeBytes) !== size || existing.mtimeMs !== mtimeMs;
 
   const baseData = { fileName, folder };
+  const rows = { created: existing ? 0 : 1, updated: existing ? 1 : 0 };
 
   if (!needProbe) {
     await prisma.scene.update({ where: { filePath: relPath }, data: baseData });
-    return;
+    return { probed: false, ...rows };
   }
 
   const title = existing?.title ?? placeholderSceneTitle(fileName);
@@ -1140,6 +1211,8 @@ async function processScene(file: SceneCandidate, log: string[], force: boolean)
       update: baseData,
     });
   }
+
+  return { probed: true, ...rows };
 }
 
 async function doScanScenes(runId: number, force: boolean): Promise<void> {
@@ -1183,9 +1256,10 @@ async function doScanScenes(runId: number, force: boolean): Promise<void> {
     }
   }
 
-  await mapPool(candidates, PROBE_CONCURRENCY, async (file) => {
-    await processScene(file, log, force);
+  const outcomes = await mapPool(candidates, PROBE_CONCURRENCY, async (file) => {
+    const outcome = await processScene(file, log, force);
     await reportProgress(`Probed ${completed}/${total}: ${file.fileName}`);
+    return outcome;
   });
 
   // Delete Scene rows for files no longer on disk — Scene *is* the file
@@ -1196,8 +1270,11 @@ async function doScanScenes(runId: number, force: boolean): Promise<void> {
   const staleSceneIds = allScenes.filter((s) => !seenPaths.has(s.filePath)).map((s) => s.id);
   if (staleSceneIds.length > 0) {
     await prisma.scene.deleteMany({ where: { id: { in: staleSceneIds } } });
-    log.push(`Removed ${staleSceneIds.length} scene(s) for files no longer on disk`);
   }
+
+  const counts = tallyOutcomes(outcomes);
+  log.push(`Walked ${total} file(s) under ADULT_PATH — probed ${counts.probed}, skipped ${counts.skipped} unchanged since the last scan`);
+  log.push(`Created ${counts.created} scene(s), updated ${counts.updated}, removed ${staleSceneIds.length} for files no longer on disk`);
 
   await finishRun(runId, log, `Scanned ${total} file(s)`);
 }

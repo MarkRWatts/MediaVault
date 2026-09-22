@@ -343,8 +343,21 @@ export function isRefreshOnly(row: { tmdbId: number | null; matchConfidence: str
   return row.tmdbId != null && !NEEDS_MATCH.includes(row.matchConfidence);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function enrichOneFilm(film: Film, log: string[], collectionCache: Map<number, any>, refreshOnly = false): Promise<void> {
+/**
+ * How one row's enrichment ended, so a run can summarise itself. Without it
+ * a clean pass writes no log lines at all — everything below only speaks up
+ * on a miss, a merge or a conflict — and /admin shows no Log disclosure,
+ * which reads as a broken feature rather than a library that needs nothing.
+ */
+type EnrichOutcome = "matched" | "refreshed" | "unmatched" | "conflict" | "merged";
+
+async function enrichOneFilm(
+  film: Film,
+  log: string[],
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  collectionCache: Map<number, any>,
+  refreshOnly = false,
+): Promise<EnrichOutcome> {
   let tmdbId: number | null = null;
   let confidence: "EXACT" | "SEARCH" | "LOW" = "EXACT";
 
@@ -406,7 +419,7 @@ async function enrichOneFilm(film: Film, log: string[], collectionCache: Map<num
 
   if (tmdbId == null) {
     log.push(`No TMDB match for "${film.title}"${film.year ? ` (${film.year})` : ""}`);
-    return;
+    return "unmatched";
   }
 
   const details = await tmdbFetch(`/movie/${tmdbId}`, { append_to_response: "release_dates" });
@@ -454,14 +467,14 @@ async function enrichOneFilm(film: Film, log: string[], collectionCache: Map<num
       await prisma.film.delete({ where: { id: film.id } });
       await prisma.film.update({ where: { id: holder.id }, data: { owned: true } });
       log.push(`Merged duplicate "${film.title}" into "${holder.title}" (tmdb:${tmdbId})`);
-      return;
+      return "merged";
     } else {
       // A search-based match colliding with an owned film is far more likely
       // a WRONG match than a true duplicate — never merge on it.
       log.push(
         `Match conflict: search matched "${film.title}"${film.year ? ` (${film.year})` : ""} to "${holder.title}" (tmdb:${tmdbId}), which is already in the library — left unmatched for review`
       );
-      return;
+      return "conflict";
     }
   }
 
@@ -486,6 +499,8 @@ async function enrichOneFilm(film: Film, log: string[], collectionCache: Map<num
 
   await cachePoster(details.poster_path, "w342");
   await cachePoster(details.backdrop_path, "w780");
+
+  return refreshOnly ? "refreshed" : "matched";
 }
 
 // --- TV ---
@@ -627,7 +642,7 @@ async function enrichSeason(
   }
 }
 
-async function enrichOneShow(show: Show, log: string[], refreshOnly = false): Promise<void> {
+async function enrichOneShow(show: Show, log: string[], refreshOnly = false): Promise<EnrichOutcome> {
   let tmdbId: number | null = null;
   let confidence: string = "SEARCH";
 
@@ -659,7 +674,7 @@ async function enrichOneShow(show: Show, log: string[], refreshOnly = false): Pr
 
   if (tmdbId == null) {
     log.push(`No TMDB match for "${show.title}"${show.year ? ` (${show.year})` : ""}`);
-    return;
+    return "unmatched";
   }
 
   const details = await tmdbFetch(`/tv/${tmdbId}`, { append_to_response: "external_ids,content_ratings" });
@@ -698,7 +713,7 @@ async function enrichOneShow(show: Show, log: string[], refreshOnly = false): Pr
     log.push(
       `Match conflict: search matched "${show.title}"${show.year ? ` (${show.year})` : ""} to "${holder.title}" (tmdb:${tmdbId}), which is already in the library — left unmatched for review`,
     );
-    return;
+    return "conflict";
   }
 
   try {
@@ -740,6 +755,36 @@ async function enrichOneShow(show: Show, log: string[], refreshOnly = false): Pr
       log.push(`Failed to fetch specials for "${show.title}": ${message}`);
     }
   }
+
+  return refreshOnly ? "refreshed" : "matched";
+}
+
+/** The unconditional tail of an enrich run's log: what it looked at, and how
+ *  it went. `considered`/`inLibrary` differ by the rows an ordinary pass
+ *  skips because they are already matched. */
+function enrichSummaryLines(
+  noun: string,
+  considered: number,
+  inLibrary: number,
+  outcomes: Record<EnrichOutcome, number> & { failed: number },
+): string[] {
+  const skipped = inLibrary - considered;
+  const parts = [
+    `Matched ${outcomes.matched}`,
+    `refreshed ${outcomes.refreshed}`,
+    `left ${outcomes.unmatched} unmatched`,
+  ];
+  if (outcomes.merged > 0) parts.push(`merged ${outcomes.merged} duplicate(s)`);
+  if (outcomes.conflict > 0) parts.push(`${outcomes.conflict} match conflict(s)`);
+  if (outcomes.failed > 0) parts.push(`${outcomes.failed} failed`);
+  return [
+    `Considered ${considered} of ${inLibrary} ${noun}(s), skipping ${skipped} already matched`,
+    parts.join(", "),
+  ];
+}
+
+function newOutcomeTally(): Record<EnrichOutcome, number> & { failed: number } {
+  return { matched: 0, refreshed: 0, unmatched: 0, conflict: 0, merged: 0, failed: 0 };
 }
 
 async function doEnrichFilms(runId: number, kind: "FILM" | "CONCERT", force: boolean): Promise<void> {
@@ -752,6 +797,7 @@ async function doEnrichFilms(runId: number, kind: "FILM" | "CONCERT", force: boo
     where: { kind, matchConfidence: enrichConfidenceFilter(force) },
     orderBy: [{ owned: "desc" }, { id: "asc" }],
   });
+  const inLibrary = await prisma.film.count({ where: { kind } });
 
   const total = films.length;
   const refreshing = films.filter((film) => isRefreshOnly(film)).length;
@@ -759,14 +805,16 @@ async function doEnrichFilms(runId: number, kind: "FILM" | "CONCERT", force: boo
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const collectionCache = new Map<number, any>();
+  const tally = newOutcomeTally();
   let completed = 0;
 
   for (const film of films) {
     try {
-      await enrichOneFilm(film, log, collectionCache, isRefreshOnly(film));
+      tally[await enrichOneFilm(film, log, collectionCache, isRefreshOnly(film))]++;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log.push(`Failed to enrich "${film.title}": ${message}`);
+      tally.failed++;
     }
     completed++;
     if (completed % PROGRESS_UPDATE_EVERY === 0 || completed === total) {
@@ -777,6 +825,8 @@ async function doEnrichFilms(runId: number, kind: "FILM" | "CONCERT", force: boo
       });
     }
   }
+
+  for (const line of enrichSummaryLines(noun, total, inLibrary, tally)) log.push(line);
 
   await finishRun(
     runId,
@@ -792,18 +842,21 @@ async function doEnrichTv(runId: number, force: boolean): Promise<void> {
     where: { matchConfidence: enrichConfidenceFilter(force) },
     orderBy: [{ id: "asc" }],
   });
+  const inLibrary = await prisma.show.count();
 
   const total = shows.length;
   const refreshing = shows.filter((show) => isRefreshOnly(show)).length;
   await updateProgress(runId, { total, filesSeen: 0, progress: 0, message: `Enriching ${total} show(s)` });
 
+  const tally = newOutcomeTally();
   let completed = 0;
   for (const show of shows) {
     try {
-      await enrichOneShow(show, log, isRefreshOnly(show));
+      tally[await enrichOneShow(show, log, isRefreshOnly(show))]++;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log.push(`Failed to enrich "${show.title}": ${message}`);
+      tally.failed++;
     }
     completed++;
     if (completed % PROGRESS_UPDATE_EVERY === 0 || completed === total) {
@@ -844,6 +897,9 @@ async function doEnrichTv(runId: number, force: boolean): Promise<void> {
   }
 
   const backfilled = needSpecials.length;
+
+  for (const line of enrichSummaryLines("show", total, inLibrary, tally)) log.push(line);
+
   await finishRun(
     runId,
     log,
