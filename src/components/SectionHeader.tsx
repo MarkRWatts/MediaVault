@@ -24,6 +24,7 @@ export default function SectionHeader({
   collapsed,
   onToggle,
   noun = "film",
+  divided = false,
 }: {
   title: string;
   count: number;
@@ -31,8 +32,13 @@ export default function SectionHeader({
   onToggle: () => void;
   /** Singular noun the count pluralizes, e.g. "artist" -> "3 artists". */
   noun?: string;
+  /** Draw a rule above the heading. The caller decides, because only it
+   *  knows whether anything actually rendered above this one — shelves and
+   *  grid sections both vanish when empty, and a rule above the first
+   *  section on the page would be a line under the filter bar. */
+  divided?: boolean;
 }) {
-  return (
+  const header = (
     <button type="button" onClick={onToggle} aria-expanded={!collapsed} className="flex items-center gap-2 text-left">
       <ChevronIcon collapsed={collapsed} />
       <h2 className="font-display text-xl tracking-wide">{title}</h2>
@@ -42,4 +48,7 @@ export default function SectionHeader({
       </span>
     </button>
   );
+
+  if (!divided) return header;
+  return <div className="border-t border-border pt-5">{header}</div>;
 }

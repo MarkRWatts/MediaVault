@@ -41,13 +41,20 @@ function rowClass(active: boolean) {
   return `${rowBase} ${active ? "bg-accent-dim text-accent" : "text-text-muted hover:bg-bg-hover hover:text-text"}`;
 }
 
-/** Owner-only rows (Scan, Report, Admin) get the Blu-ray blue instead of
- *  the amber accent, so they read as admin-only at a glance. */
+/** Owner-only rows (Scan, Report, Admin) get the app's danger red — the
+ *  same --missing token destructive actions use elsewhere — instead of the
+ *  amber accent, so they read as admin-only at a glance. */
 function ownerRowClass(active: boolean) {
-  return `${rowBase} ${active ? "bg-blu-bg text-blu" : "text-blu/70 hover:bg-blu-bg hover:text-blu"}`;
+  return `${rowBase} ${active ? "bg-missing-bg text-missing" : "text-missing/70 hover:bg-missing-bg hover:text-missing"}`;
 }
 
 const labelClass = "hidden truncate lg:group-data-[collapsed=false]:inline";
+
+/** Mirrors labelClass, inverted: the square icon shows in the collapsed
+ *  rail and hides once lg:group-data-[collapsed=false] expands it, where
+ *  the wordmark below already carries the MV mark — otherwise both render
+ *  at once. */
+const iconClass = "lg:group-data-[collapsed=false]:hidden";
 
 function NavRow({ item, active, className }: { item: NavItem; active: boolean; className: string }) {
   const Icon = item.icon;
@@ -107,15 +114,25 @@ export function Sidebar({
       className="group fixed top-4 bottom-4 left-[max(1rem,env(safe-area-inset-left))] z-30 hidden w-[var(--sidebar-w)] flex-col overflow-hidden rounded-2xl border border-border bg-bg-elevated/85 shadow-lg shadow-black/40 backdrop-blur-md transition-[width] motion-reduce:transition-none md:flex"
     >
       <div className="flex flex-1 flex-col overflow-y-auto overflow-x-hidden px-3 py-4">
-        {/* Brand: the square app icon always; the wordmark only when
-            expanded. Plain <img> — see next.config.ts for why not
-            next/image. Both files are in proxy.ts's public matcher. */}
+        {/* Brand: the square app icon when collapsed, the wordmark (which
+            already contains the MV mark) when expanded — mutually
+            exclusive, never both. Plain <img> — see next.config.ts for why
+            not next/image. Both files are in proxy.ts's public matcher.
+            The row is pinned to the icon's own height (h-9) so toggling
+            collapse swaps which image is visible without the header
+            reflowing — the wordmark is shorter and just centers within it. */}
         <Link
           href="/"
           aria-label="MediaVault — home"
-          className="mb-2 flex shrink-0 items-center justify-center gap-2 px-1 pb-3 lg:group-data-[collapsed=false]:justify-start"
+          className="mb-2 flex h-9 shrink-0 items-center justify-center gap-2 px-1 pb-3 lg:group-data-[collapsed=false]:justify-start"
         >
-          <img src="/icon.png" alt="" width={36} height={36} className="h-9 w-9 shrink-0 rounded-lg" />
+          <img
+            src="/icon.png"
+            alt=""
+            width={36}
+            height={36}
+            className={`h-9 w-9 shrink-0 rounded-lg ${iconClass}`}
+          />
           <img
             src="/logo.png"
             alt="MediaVault"
@@ -147,28 +164,33 @@ export function Sidebar({
           ))}
         </div>
 
-        {owner.length > 0 && (
-          <div className="mt-3 flex flex-col gap-1 border-t border-border pt-3">
-            {owner.map((item) => (
-              <NavRow
-                key={item.href}
-                item={item}
-                active={isNavItemActive(pathname, item.href)}
-                className={ownerRowClass(isNavItemActive(pathname, item.href))}
-              />
-            ))}
-          </div>
-        )}
+        {/* Bottom-up: the owner-only group (when present) and account link
+            both live at the very bottom of the rail, pushed down together
+            by mt-auto. Owner rows get their own divider off the member
+            items above; account then just follows as one more row. */}
+        <div className="mt-auto flex flex-col gap-1">
+          {owner.length > 0 && (
+            <div className="flex flex-col gap-1 border-t border-border pt-3">
+              {owner.map((item) => (
+                <NavRow
+                  key={item.href}
+                  item={item}
+                  active={isNavItemActive(pathname, item.href)}
+                  className={ownerRowClass(isNavItemActive(pathname, item.href))}
+                />
+              ))}
+            </div>
+          )}
 
-        {/* Bottom-up: who's signed in sits at the very bottom, linking to
-            /account (identity, household, passkeys, Sign out). */}
-        <div className="mt-auto flex flex-col gap-1 pt-3">
+          {/* Who's signed in, linking to /account (identity, household,
+              passkeys, Sign out). Gets its own top gap only when there's no
+              owner group above it to supply one. */}
           <Link
             href="/account"
             aria-current={isNavItemActive(pathname, "/account") ? "page" : undefined}
             title={user.name || user.email || "Account"}
             aria-label="Account"
-            className="flex items-center justify-center gap-2 rounded-full px-1.5 py-1.5 transition-colors hover:bg-bg-hover lg:group-data-[collapsed=false]:justify-start"
+            className={`flex items-center justify-center gap-2 rounded-full px-1.5 py-1.5 transition-colors hover:bg-bg-hover lg:group-data-[collapsed=false]:justify-start ${owner.length > 0 ? "" : "mt-3"}`}
           >
             <UserAvatar {...user} size={32} className="shrink-0" />
             <span className={`max-w-[9rem] text-sm font-medium text-text ${labelClass}`}>

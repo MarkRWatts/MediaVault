@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filmKey, normalizeTitle, parseFileName, sortTitle } from "./parse";
+import { filmKey, normalizeTitle, parseConcertPath, parseFileName, sortTitle } from "./parse";
 
 // Every case here is a real path from the share (or a minimal reduction of one).
 describe("parseFileName", () => {
@@ -118,5 +118,43 @@ describe("normalizeTitle", () => {
   it("treats & as equivalent to 'and' — a barcode-derived title using one must still match TMDB's using the other", () => {
     expect(normalizeTitle("Ant Man & The Wasp")).toBe(normalizeTitle("Ant-Man and the Wasp"));
     expect(normalizeTitle("Fast & Furious 6")).toBe("fast and furious 6");
+  });
+});
+
+describe("parseConcertPath", () => {
+  it("splits the act off an 'Artist - Title (Year)' name", () => {
+    const p = parseConcertPath("Pink Floyd - Pulse (1995)/Pink Floyd - Pulse (1995).mkv");
+    expect(p).toMatchObject({ performer: "Pink Floyd", title: "Pulse", year: 1995 });
+  });
+
+  it("keeps a subtitle with the title, not the act", () => {
+    const p = parseConcertPath("Genesis - The Way We Walk - The Longs (1993).mkv");
+    expect(p).toMatchObject({ performer: "Genesis", title: "The Way We Walk - The Longs", year: 1993 });
+  });
+
+  it("leaves the performer null for an ordinary 'Title (Year)' name", () => {
+    const p = parseConcertPath("Woodstock (1970).mkv");
+    expect(p).toMatchObject({ performer: null, title: "Woodstock", year: 1970 });
+  });
+
+  it("does not split a hyphenated word", () => {
+    const p = parseConcertPath("Jean-Michel Jarre Oxygene (1997).mkv");
+    expect(p).toMatchObject({ performer: null, title: "Jean-Michel Jarre Oxygene" });
+  });
+
+  it("takes act, title and year from the folder when the file is just a disc", () => {
+    const p = parseConcertPath("Queen - Live at Wembley (1986)/disc1.mkv");
+    expect(p).toMatchObject({ performer: "Queen", title: "Live at Wembley", year: 1986 });
+  });
+
+  it("groups both discs of a folder onto one film", () => {
+    const a = parseConcertPath("Queen - Live at Wembley (1986)/disc1.mkv");
+    const b = parseConcertPath("Queen - Live at Wembley (1986)/disc2.mkv");
+    expect(filmKey(a)).toBe(filmKey(b));
+  });
+
+  it("keeps the file's own year when it has one", () => {
+    const p = parseConcertPath("Queen - Live at Wembley (1986)/Queen - Live at Wembley (1986) [1080p].mkv");
+    expect(p).toMatchObject({ performer: "Queen", title: "Live at Wembley", year: 1986, resolutionTag: 1080 });
   });
 });

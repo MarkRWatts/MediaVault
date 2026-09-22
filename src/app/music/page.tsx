@@ -8,7 +8,10 @@ import AlbumCardHeart from "@/components/music/AlbumCardHeart";
 import PhysicalAddForm from "@/components/PhysicalAddForm";
 import CollapsibleSection from "@/components/CollapsibleSection";
 import FavouriteTracksTile from "@/components/music/FavouriteTracksTile";
+import { MusicViewSwitcher } from "@/components/music/MusicViewSwitcher";
+import ConcertsSection from "@/components/music/ConcertsSection";
 import { getMusicIndex, getArtistDetail, getMusicFavourites } from "@/lib/queries-music";
+import { getConcerts } from "@/lib/queries-concerts";
 import { requireMemberOrRedirect } from "@/lib/require-member";
 import type { MusicIndexArtist, FavouriteAlbumView } from "@/lib/queries-music";
 
@@ -85,8 +88,12 @@ function ArtistGrid({
 }
 
 export default async function MusicPage() {
-  const { userId } = await requireMemberOrRedirect();
-  const [{ totals, artists }, favourites] = await Promise.all([getMusicIndex(), getMusicFavourites(userId)]);
+  const { userId, ageLimit } = await requireMemberOrRedirect();
+  const [{ totals, artists }, favourites, concerts] = await Promise.all([
+    getMusicIndex(),
+    getMusicFavourites(userId),
+    getConcerts(ageLimit),
+  ]);
 
   // The Compilations pseudo-artist (various=true) skips Discogs matching
   // entirely, so its studio counters are always 0/0 — getMusicIndex has no
@@ -117,6 +124,9 @@ export default async function MusicPage() {
     <div className="flex flex-1 flex-col">
       <div className="border-b border-border px-4 pt-6 sm:px-6">
         <h1 className="font-display text-3xl tracking-wide">Music</h1>
+        <div className="mt-3">
+          <MusicViewSwitcher />
+        </div>
         {artists.length > 0 && (
           <p className="mt-1 pb-6 font-mono text-xs text-text-faint">
             {totals.artists} artist{totals.artists === 1 ? "" : "s"} · {totals.albumsOwned} album
@@ -198,6 +208,11 @@ export default async function MusicPage() {
             )}
           </div>
         )}
+
+        {/* Concert rips (CONCERTS_PATH) — films by storage, music by the
+            time you'd reach for them, so they sit between the favourites
+            and the artist grid rather than in the Movies library. */}
+        <ConcertsSection concerts={concerts} />
 
         {artists.length === 0 ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 py-24 text-center">

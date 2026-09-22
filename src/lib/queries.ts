@@ -24,6 +24,13 @@ import {
 import { audioBadge } from "@/lib/audio";
 import { isFilePlayable } from "@/lib/playback/engine-flag";
 
+// Concerts are Film rows (Film.kind — see schema.prisma) but belong to the
+// Music section, so every Movies-side listing, shelf, count and report
+// spreads this into its where clause. The film DETAIL query deliberately
+// doesn't: /film/[id] renders a concert perfectly well, and that's the page
+// the Concerts section links to.
+const NOT_CONCERT = { kind: { not: "CONCERT" } } as const;
+
 // ---------------------------------------------------------------------------
 // Formatting helpers
 // ---------------------------------------------------------------------------
@@ -83,6 +90,9 @@ export interface LibraryFilm {
   posterPath: string | null;
   collectionId: number | null;
   collectionName: string | null;
+  /** The collection's own TMDB poster, for the stacked card on the library
+   *  grid (StackedFilmCard) — null falls back to a collage of members'. */
+  collectionPosterPath: string | null;
   releaseDate: string | null;
   createdAt: string;
   owned: boolean; // digitally owned (has a ripped Version) — false for physical-only entries
@@ -114,7 +124,7 @@ const FILM_CARD_SELECT = {
   year: true,
   posterPath: true,
   collectionId: true,
-  collection: { select: { name: true } },
+  collection: { select: { name: true, posterPath: true } },
   releaseDate: true,
   certification: true,
   createdAt: true,
@@ -138,7 +148,7 @@ type FilmCardSource = {
   year: number | null;
   posterPath: string | null;
   collectionId: number | null;
-  collection: { name: string } | null;
+  collection: { name: string; posterPath: string | null } | null;
   releaseDate: Date | null;
   certification: string | null;
   createdAt: Date;
@@ -163,6 +173,7 @@ function shapeLibraryFilm(f: FilmCardSource): LibraryFilm {
     posterPath: f.posterPath,
     collectionId: f.collectionId,
     collectionName: f.collection?.name ?? null,
+    collectionPosterPath: f.collection?.posterPath ?? null,
     releaseDate: f.releaseDate ? f.releaseDate.toISOString() : null,
     createdAt: f.createdAt.toISOString(),
     owned: f.owned,
@@ -188,7 +199,7 @@ export async function getLibraryFilms(limit: AgeLimit): Promise<LibraryData> {
     // Digitally owned films, plus physical-only films (owned=false but a
     // disc is logged) — otherwise a scanned-but-unripped disc is invisible
     // everywhere in the browsing UI. See FilmCard.
-    where: { OR: [{ owned: true }, { physicalCopies: { some: {} } }] },
+    where: { ...NOT_CONCERT, OR: [{ owned: true }, { physicalCopies: { some: {} } }] },
     orderBy: { sortTitle: "asc" },
     select: FILM_CARD_SELECT,
   });
@@ -226,6 +237,7 @@ export async function getContinueWatchingFilms(userId: string, limit: AgeLimit):
       versionId: { not: null },
       completed: false,
       positionSecs: { gte: WATCH_PROGRESS_MIN_SECS },
+      version: { film: NOT_CONCERT },
     },
     orderBy: { updatedAt: "desc" },
     select: {
@@ -257,7 +269,7 @@ export async function getContinueWatchingFilms(userId: string, limit: AgeLimit):
 
 export async function getFavouriteFilms(userId: string, limit: AgeLimit): Promise<LibraryFilm[]> {
   const rows = await prisma.filmFavourite.findMany({
-    where: { userId, film: { owned: true } },
+    where: { userId, film: { ...NOT_CONCERT, owned: true } },
     orderBy: { createdAt: "desc" },
     select: { film: { select: FILM_CARD_SELECT } },
   });
@@ -270,7 +282,7 @@ export async function getFavouriteFilms(userId: string, limit: AgeLimit): Promis
  *  completed), for the card overlay's reset-viewed button. */
 export async function getWatchedFilmIds(userId: string): Promise<number[]> {
   const rows = await prisma.watchProgress.findMany({
-    where: { userId, versionId: { not: null } },
+    where: { userId, versionId: { not: null }, version: { film: NOT_CONCERT } },
     select: { version: { select: { filmId: true } } },
   });
   return [...new Set(rows.map((r) => r.version?.filmId).filter((id): id is number => typeof id === "number"))];
@@ -402,6 +414,10 @@ export interface FilmPhysicalCopyView {
 export interface FilmDetail {
   id: number;
   title: string;
+  /** FILM | CONCERT — the page reads the same either way, bar the marker
+   *  and the "back to" link. See schema.prisma. */
+  kind: string;
+  performer: string | null;
   year: number | null;
   posterPath: string | null;
   backdropPath: string | null;
@@ -430,6 +446,7 @@ export async function getFilmDetail(id: number, limit: AgeLimit): Promise<FilmDe
       collection: {
         include: {
           films: {
+            where: NOT_CONCERT,
             orderBy: { releaseDate: "asc" },
             include: { versions: { select: { width: true, height: true } } },
           },
@@ -469,6 +486,8 @@ export async function getFilmDetail(id: number, limit: AgeLimit): Promise<FilmDe
   return {
     id: film.id,
     title: film.title,
+    kind: film.kind,
+    performer: film.performer,
     year: film.year,
     posterPath: film.posterPath,
     backdropPath: film.backdropPath,
@@ -525,7 +544,7 @@ export interface CollectionSummary {
 export async function getCollections(limit: AgeLimit): Promise<CollectionSummary[]> {
   const collections = await prisma.collection.findMany({
     orderBy: { name: "asc" },
-    include: { films: { orderBy: { releaseDate: "asc" } } },
+    include: { films: { where: NOT_CONCERT, orderBy: { releaseDate: "asc" } } },
   });
 
   return collections
@@ -585,7 +604,7 @@ export async function getPlayableCollections(limit: AgeLimit): Promise<PlayableC
       overview: true,
       posterPath: true,
       films: {
-        where: { owned: true },
+        where: { ...NOT_CONCERT, owned: true },
         orderBy: [{ releaseDate: "asc" }, { year: "asc" }],
         select: { id: true, certification: true },
       },
@@ -617,6 +636,7 @@ export async function getCollectionDetail(id: number, limit: AgeLimit): Promise<
     where: { id },
     include: {
       films: {
+        where: NOT_CONCERT,
         orderBy: { releaseDate: "asc" },
         include: {
           versions: { select: { format: true, width: true, height: true } },
@@ -937,16 +957,16 @@ export interface ReportData {
 export async function getReportData(): Promise<ReportData> {
   const [ownedFilms, missingFilms, collections] = await Promise.all([
     prisma.film.findMany({
-      where: { owned: true },
+      where: { ...NOT_CONCERT, owned: true },
       orderBy: { sortTitle: "asc" },
       include: { versions: { include: { audioTracks: true } } },
     }),
     prisma.film.findMany({
-      where: { owned: false },
+      where: { ...NOT_CONCERT, owned: false },
       orderBy: { releaseDate: "asc" },
       include: { collection: true, physicalCopies: { select: { id: true } } },
     }),
-    prisma.collection.findMany({ include: { films: true } }),
+    prisma.collection.findMany({ include: { films: { where: NOT_CONCERT } } }),
   ]);
 
   const discs = ownedFilms.flatMap((f) => f.versions);
@@ -1056,13 +1076,19 @@ export async function getReportData(): Promise<ReportData> {
 }
 
 // ---------------------------------------------------------------------------
-// Watch stats ("/stats" — signed-in user's own watch history, Phase 9 of
-// HOUSEHOLDS_PLAN.md's "Watch history & stats"). Deliberately kept small per
-// the plan's own wording: total watch time, most-watched titles/genres, a
-// recently-watched list — no charts, no household-wide aggregation (every
-// query below is scoped to one userId). TV/episode progress doesn't exist
-// yet (see WatchProgress.episodeFileId's doc comment in schema.prisma), so,
-// same as getContinueWatchingFilms, this only ever looks at versionId rows.
+// Watch stats (the summary tiles on "/history" — the signed-in user's own
+// viewing, Phase 9 of HOUSEHOLDS_PLAN.md's "Watch history & stats").
+// Deliberately kept small per the plan's own wording: totals and the
+// most-watched titles/genres, no charts and no household-wide aggregation
+// (every query below is scoped to one userId). What was played and when is
+// the timeline's job now — see src/lib/play-events.ts and src/lib/history.ts
+// — so nothing here tries to be a list of events.
+//
+// Films and episodes both count towards the totals: TV playback exists now,
+// and a WatchProgress row means the same thing whichever id it carries. The
+// most-watched and genre breakdowns stay film-only, because an episode's
+// "title" is the show and ranking shows by episode plays would say more
+// about how many episodes a series has than about what someone watches.
 // ---------------------------------------------------------------------------
 
 export interface WatchStatsFilm {
@@ -1082,32 +1108,22 @@ export interface GenreStat {
   secs: number;
 }
 
-export interface RecentlyWatchedRow {
-  film: WatchStatsFilm;
-  positionSecs: number;
-  durationSecs: number | null;
-  completed: boolean;
-  playCount: number;
-  updatedAt: string;
-}
-
 export interface WatchStats {
+  /** Films and episodes together. */
   totalWatchSecs: number;
-  // Distinct titles with any qualifying progress — NOT mostWatched.length,
-  // since that list is capped at MOST_WATCHED_LIMIT.
-  totalFilmsWatched: number;
+  // Distinct films plus distinct shows with any qualifying progress — NOT
+  // mostWatched.length, since that list is capped at MOST_WATCHED_LIMIT.
+  titlesWatched: number;
   // Sum of playCount across every qualifying row (not deduped by film —
   // see the dedup note on the most-watched loop below), i.e. "how many
   // times has this person pressed play on something, in total".
   totalPlays: number;
   mostWatched: MostWatchedFilm[];
   topGenres: GenreStat[];
-  recentlyWatched: RecentlyWatchedRow[];
 }
 
 const MOST_WATCHED_LIMIT = 10;
 const TOP_GENRES_LIMIT = 8;
-const RECENTLY_WATCHED_LIMIT = 30;
 
 // What "total watch time" means here — there's no single obviously-correct
 // definition, so this is the one picked and the reasoning for it:
@@ -1138,12 +1154,12 @@ const RECENTLY_WATCHED_LIMIT = 30;
 // abandoned multiple times without ever finishing, but avoids fabricating
 // numbers with no signal behind them.
 //
-// The runtime figure itself prefers Version.durationSecs (the actual
-// probed file length) over Film.runtimeMins (TMDB metadata, coarser and
-// sometimes absent); when a version was never probed, positionSecs itself
-// is used as the runtime stand-in for a completed row, since reaching
-// WATCH_COMPLETED_RATIO means positionSecs is already close to the real
-// runtime by construction.
+// The runtime figure itself prefers the probed file length
+// (Version.durationSecs / EpisodeFile.durationSecs) over TMDB's metadata,
+// which is coarser and sometimes absent; when a file was never probed,
+// positionSecs itself is used as the runtime stand-in for a completed row,
+// since reaching WATCH_COMPLETED_RATIO means positionSecs is already close
+// to the real runtime by construction.
 function watchContributionSecs(row: {
   positionSecs: number;
   completed: boolean;
@@ -1158,26 +1174,35 @@ function watchContributionSecs(row: {
 export async function getWatchStats(userId: string): Promise<WatchStats> {
   // Same WATCH_PROGRESS_MIN_SECS floor getContinueWatchingFilms uses — a
   // few-second preview never really "started", so it shouldn't count as
-  // watch time, a most-watched title, or a recently-watched entry either.
+  // watch time or a most-watched title.
   const rows = await prisma.watchProgress.findMany({
-    where: { userId, versionId: { not: null }, positionSecs: { gte: WATCH_PROGRESS_MIN_SECS } },
+    where: { userId, positionSecs: { gte: WATCH_PROGRESS_MIN_SECS } },
     orderBy: { updatedAt: "desc" },
     select: {
       positionSecs: true,
       completed: true,
       playCount: true,
-      updatedAt: true,
       version: {
         select: {
           durationSecs: true,
           film: { select: { id: true, title: true, year: true, posterPath: true, genres: true } },
         },
       },
+      episodeFile: {
+        select: {
+          durationSecs: true,
+          episode: { select: { season: { select: { showId: true } } } },
+        },
+      },
     },
   });
 
-  type Row = (typeof rows)[number] & { version: NonNullable<(typeof rows)[number]["version"]> };
-  const usable = rows.filter((r): r is Row => r.version !== null);
+  // Exactly one of the two relations is set per row (see WatchProgress in
+  // schema.prisma); a row with neither can't be attributed to anything and
+  // counts for nothing.
+  const usable = rows.filter((r) => r.version !== null || r.episodeFile !== null);
+  type FilmRow = (typeof rows)[number] & { version: NonNullable<(typeof rows)[number]["version"]> };
+  const films = usable.filter((r): r is FilmRow => r.version !== null);
 
   // --- total watch time + genre weighting ---
   //
@@ -1191,7 +1216,9 @@ export async function getWatchStats(userId: string): Promise<WatchStats> {
   // Unlike the most-watched-titles list below, this is NOT deduped across
   // multiple Versions of the same film — time spent watching two different
   // rips of the same title is still time spent, so both rows' contributions
-  // count.
+  // count. Episodes add to the time total but not to any genre: a show's
+  // genres sit on the Show, and attributing a 22-minute episode the same
+  // way a two-hour film is attributed would quietly reweight the list.
   let totalWatchSecs = 0;
   const genreSecs = new Map<string, number>();
   for (const r of usable) {
@@ -1199,11 +1226,11 @@ export async function getWatchStats(userId: string): Promise<WatchStats> {
       positionSecs: r.positionSecs,
       completed: r.completed,
       playCount: r.playCount,
-      durationSecs: r.version.durationSecs,
+      durationSecs: r.version?.durationSecs ?? r.episodeFile?.durationSecs ?? null,
     });
     totalWatchSecs += contribution;
 
-    const genres = r.version.film.genres
+    const genres = r.version?.film.genres
       ? r.version.film.genres.split(",").map((g) => g.trim()).filter(Boolean)
       : [];
     if (genres.length > 0) {
@@ -1219,7 +1246,7 @@ export async function getWatchStats(userId: string): Promise<WatchStats> {
     .slice(0, TOP_GENRES_LIMIT);
 
   // --- most-watched titles: ranked by playCount desc, ties broken by most
-  // recent updatedAt. `usable` already arrives updatedAt-desc from the
+  // recent updatedAt. `films` already arrives updatedAt-desc from the
   // query above and Array.prototype.sort is stable (ES2019+), so sorting
   // only on playCount preserves that original order among ties — no
   // separate tiebreak comparator needed. A film with progress on more than
@@ -1229,7 +1256,7 @@ export async function getWatchStats(userId: string): Promise<WatchStats> {
   // exist of it. */
   const seenFilmIds = new Set<number>();
   const mostWatchedCandidates: MostWatchedFilm[] = [];
-  for (const r of usable) {
+  for (const r of films) {
     const f = r.version.film;
     if (seenFilmIds.has(f.id)) continue;
     seenFilmIds.add(f.id);
@@ -1246,26 +1273,17 @@ export async function getWatchStats(userId: string): Promise<WatchStats> {
     .sort((a, b) => b.playCount - a.playCount)
     .slice(0, MOST_WATCHED_LIMIT);
 
-  const totalFilmsWatched = seenFilmIds.size;
+  // A show counts once however many of its episodes have been watched —
+  // "titles" means things you'd name, not files.
+  const seenShowIds = new Set<number>();
+  for (const r of usable) {
+    if (r.episodeFile) seenShowIds.add(r.episodeFile.episode.season.showId);
+  }
+
+  const titlesWatched = seenFilmIds.size + seenShowIds.size;
   const totalPlays = usable.reduce((sum, r) => sum + r.playCount, 0);
 
-  // --- recently watched: a plain "what did I watch and when" list, capped
-  // so a long-time user's page doesn't grow unbounded. ---
-  const recentlyWatched: RecentlyWatchedRow[] = usable.slice(0, RECENTLY_WATCHED_LIMIT).map((r) => ({
-    film: {
-      id: r.version.film.id,
-      title: r.version.film.title,
-      year: r.version.film.year,
-      posterPath: r.version.film.posterPath,
-    },
-    positionSecs: r.positionSecs,
-    durationSecs: r.version.durationSecs,
-    completed: r.completed,
-    playCount: r.playCount,
-    updatedAt: r.updatedAt.toISOString(),
-  }));
-
-  return { totalWatchSecs, totalFilmsWatched, totalPlays, mostWatched, topGenres, recentlyWatched };
+  return { totalWatchSecs, titlesWatched, totalPlays, mostWatched, topGenres };
 }
 
 // ---------------------------------------------------------------------------

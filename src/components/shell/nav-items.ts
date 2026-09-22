@@ -4,11 +4,11 @@
 // gated groups MediaVault needs (see navItemsFor).
 
 import {
-  ChartColumn,
   ClipboardList,
   Disc3,
   EyeOff,
   Film,
+  History,
   Library,
   ScanBarcode,
   Shield,
@@ -27,14 +27,14 @@ export type NavItem = {
 /** Every signed-in member's destinations, in desktop sidebar order. */
 export const PRIMARY_ITEMS: NavItem[] = [
   { href: "/", label: "Movies", tabLabel: "Movies", icon: Film },
-  { href: "/shows", label: "Shows", tabLabel: "Shows", icon: Tv },
+  { href: "/shows", label: "TV Shows", tabLabel: "TV Shows", icon: Tv },
   { href: "/music", label: "Music", tabLabel: "Music", icon: Disc3 },
   { href: "/collections", label: "Collections", tabLabel: "Collections", icon: Library },
-  { href: "/stats", label: "Stats", tabLabel: "Stats", icon: ChartColumn },
+  { href: "/history", label: "History", tabLabel: "History", icon: History },
 ];
 
 /** Gated on the self-service opt-in (User.adultLibraryAccess, see
- *  /account). Slots in after Collections, before Stats. */
+ *  /account). Slots in after Collections, before History. */
 export const ADULT_ITEM: NavItem = { href: "/adult", label: "Adult", tabLabel: "Adult", icon: EyeOff };
 
 /** App-owner tools (User.isAppOwner — NOT Member.role, see
@@ -69,7 +69,7 @@ export type NavGroups = {
  *  and routes themselves. */
 export function navItemsFor({ isOwner, hasAdultAccess }: NavFlags): NavGroups {
   const primary = hasAdultAccess
-    ? PRIMARY_ITEMS.flatMap((item) => (item.href === "/stats" ? [ADULT_ITEM, item] : [item]))
+    ? PRIMARY_ITEMS.flatMap((item) => (item.href === "/history" ? [ADULT_ITEM, item] : [item]))
     : PRIMARY_ITEMS;
   const owner = isOwner ? OWNER_ITEMS : [];
   const mobileTabs = MOBILE_TAB_HREFS.map((href) => primary.find((i) => i.href === href)!);

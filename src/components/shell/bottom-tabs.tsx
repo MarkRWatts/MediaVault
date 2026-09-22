@@ -3,7 +3,7 @@
 // Floating bottom tab bar for mobile (<md), hidden at md+ where the sidebar
 // takes over. Floats clear of the iOS home-indicator swipe zone in the same
 // glass language as the desktop sidebar. Four everyday tabs plus a "More"
-// tab that opens a small sheet with the remaining destinations — Stats,
+// tab that opens a small sheet with the remaining destinations — History,
 // Adult and the owner tools when this person has them, and Account, which
 // the mobile header only shows as an avatar. Ported from template-app /
 // TrainTracker's bottom-tabs.tsx.
@@ -18,7 +18,9 @@ const sheetRow =
   "flex items-center gap-3 rounded-lg px-4 py-3 font-display text-sm font-medium tracking-wide transition-colors";
 
 function sheetRowClass(active: boolean, owner: boolean) {
-  if (owner) return `${sheetRow} ${active ? "bg-blu-bg text-blu" : "text-blu/70 hover:bg-blu-bg hover:text-blu"}`;
+  // Danger red for owner rows, matching the sidebar's ownerRowClass — same
+  // --missing token destructive actions use elsewhere.
+  if (owner) return `${sheetRow} ${active ? "bg-missing-bg text-missing" : "text-missing/70 hover:bg-missing-bg hover:text-missing"}`;
   return `${sheetRow} ${active ? "bg-accent-dim text-accent" : "text-text hover:bg-bg-hover"}`;
 }
 
@@ -68,9 +70,19 @@ export function BottomTabs({ flags }: { flags: NavFlags }) {
           aria-label="More"
           className="fixed inset-x-3 bottom-[calc(env(safe-area-inset-bottom)+4.75rem)] z-50 flex flex-col gap-1 rounded-2xl border border-border bg-bg-elevated-2 p-2 shadow-lg shadow-black/50 md:hidden"
         >
-          {more.map((item) => (
+          {more.filter((item) => !moreOwner.includes(item)).map((item) => (
             <SheetRow key={item.href} item={item} />
           ))}
+          {/* Owner rows (Scan, Report, Admin) get their own divider, same
+              as the sidebar's bottom owner group — see sheetRowClass. */}
+          {moreOwner.length > 0 && (
+            <>
+              <div className="my-1 sprocket-rule" aria-hidden="true" />
+              {moreOwner.map((item) => (
+                <SheetRow key={item.href} item={item} />
+              ))}
+            </>
+          )}
           {more.length > 0 && <div className="my-1 sprocket-rule" aria-hidden="true" />}
           {/* Account lives here on mobile (household, passkeys, Sign out) —
               the top bar only has room for the avatar. */}

@@ -84,12 +84,17 @@ export function allowsCertificate(limit: AgeLimit, certification: string | null 
   return minimum <= limit;
 }
 
+/** The BBFC certificates in the order they're always presented — least to
+ *  most restrictive. CERTIFICATE_MIN_AGE can't supply this on its own: 12A
+ *  and 12 share an age, as do 18 and R18, so the ordering between them is a
+ *  presentation decision rather than something derivable. */
+export const CERTIFICATE_ORDER: readonly string[] = ["U", "PG", "12A", "12", "15", "18", "R18"];
+
 /** The certificates `limit` may see, in BBFC order — for the /account copy
  *  that tells an owner what a restriction actually does. Empty is possible
  *  in principle only if the table ever gains a certificate above 18. */
 export function allowedCertificates(limit: AgeLimit): string[] {
-  const order = ["U", "PG", "12A", "12", "15", "18", "R18"];
-  return order.filter((c) => allowsCertificate(limit, c));
+  return CERTIFICATE_ORDER.filter((c) => allowsCertificate(limit, c));
 }
 
 /** One-line summary of a restriction for the household UI, e.g.

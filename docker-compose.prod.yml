@@ -64,12 +64,14 @@ services:
     # .env.docker. The base compose's /movies bind still applies but points at
     # an empty placeholder dir on the VM (MOVIES_HOST_PATH in .env.docker);
     # MOVIES_PATH is overridden to look inside this volume instead. The same
-    # "media" share also holds the TV Shows and Music folders, so TVSHOWS_PATH
-    # and MUSIC_PATH are overridden the same way — no separate volume needed.
+    # "media" share also holds the TV Shows, Music and Concerts folders, so
+    # TVSHOWS_PATH, MUSIC_PATH and CONCERTS_PATH are overridden the same way
+    # — no separate volume needed.
     environment:
       MOVIES_PATH: /media-share/Movies
       TVSHOWS_PATH: /media-share/TV Shows
       MUSIC_PATH: /media-share/Music
+      CONCERTS_PATH: /media-share/Concerts
       # Fail the deploy loudly if either is missing instead of booting a
       # server whose passkey origin falls back to trusting the request's
       # Origin header and whose emailed links point nowhere.

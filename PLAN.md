@@ -46,7 +46,8 @@ dark and poster-forward.
 
 Shared library (nothing here is per user):
 
-- **Films**: `Film` (one identity, owned or missing), `Version` (one file
+- **Films**: `Film` (one identity, owned or missing; `kind` is `FILM` or
+  `CONCERT`, and a concert also carries its `performer`), `Version` (one file
   on disk with format, resolution, codec, HDR range, Jellyfin id),
   `AudioTrack` (per version, with default and audio-description
   dispositions), `FilmPhysicalCopy` (a DVD, Blu-ray or UHD disc on the
@@ -85,10 +86,13 @@ Personal layer (per user, cascade-deleted with the user):
 All run server-side, one at a time per kind, with progress visible on
 `/admin` and triggered from there or from the owner-only API routes.
 
-- **Scan** (`src/lib/scanner.ts`): walks the movie, TV and music roots,
-  parses the tolerant filename grammar (`src/lib/parse*.ts`), probes each
-  new or changed file with ffprobe, and upserts rows. Track ids are stable
-  across rescans, which is what makes favourites and playlists safe.
+- **Scan** (`src/lib/scanner.ts`): walks the movie, TV, music and concert
+  roots, parses the tolerant filename grammar (`src/lib/parse*.ts`), probes
+  each new or changed file with ffprobe, and upserts rows. Track ids are
+  stable across rescans, which is what makes favourites and playlists safe.
+  The concert root reuses the film scan whole, writing `Film` rows with
+  `kind = CONCERT`; those are shown in the Music section and filtered out
+  of every Movies listing.
 - **Enrich film and TV** (`src/lib/tmdb.ts`): match by IMDb or TMDB id,
   then title and year; pull details, collection membership, BBFC
   certificates and disc-order episode groups; create missing films and

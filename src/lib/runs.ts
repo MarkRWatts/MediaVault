@@ -7,11 +7,18 @@ import type { ScanRun } from "@/generated/prisma/client";
 
 const STALE_RUN_MS = 30 * 60 * 1000; // 30 minutes
 
+// A full-library scan logs a line per unparseable/failed file, so a bad
+// rename spree can leave thousands behind. The admin page only ever shows
+// the tail, and shipping the rest down a 3s poll is pure weight.
+const LOG_TAIL_LINES = 200;
+
 export type RunKind =
   | "SCAN_FILM"
   | "SCAN_TV"
   | "SCAN_MUSIC"
   | "SCAN_SCENE"
+  | "SCAN_CONCERT"
+  | "ENRICH_CONCERT"
   | "ENRICH_FILM"
   | "ENRICH_TV"
   | "ENRICH_MUSIC"
@@ -130,7 +137,7 @@ function toSummary(run: ScanRun | null): RunSummary | null {
   if (run.log) {
     try {
       const parsed = JSON.parse(run.log);
-      if (Array.isArray(parsed)) log = parsed;
+      if (Array.isArray(parsed)) log = parsed.slice(-LOG_TAIL_LINES);
     } catch {
       // ignore malformed log JSON
     }
@@ -159,6 +166,10 @@ const ALL_KINDS: RunKind[] = [
   "ENRICH_MUSIC",
   "ENRICH_SCENE",
   "JELLYFIN",
+  // Appended rather than slotted in beside the other scans: the reads below
+  // index this array positionally.
+  "SCAN_CONCERT",
+  "ENRICH_CONCERT",
 ];
 
 export async function getLatestRuns(): Promise<{
@@ -171,6 +182,8 @@ export async function getLatestRuns(): Promise<{
   latestEnrichMusic: RunSummary | null;
   latestEnrichScene: RunSummary | null;
   latestJellyfin: RunSummary | null;
+  latestScanConcert: RunSummary | null;
+  latestEnrichConcert: RunSummary | null;
   running: boolean;
 }> {
   const runs = await Promise.all(
@@ -189,6 +202,8 @@ export async function getLatestRuns(): Promise<{
     latestEnrichMusic: toSummary(runs[6]),
     latestEnrichScene: toSummary(runs[7]),
     latestJellyfin: toSummary(runs[8]),
+    latestScanConcert: toSummary(runs[9]),
+    latestEnrichConcert: toSummary(runs[10]),
     running,
   };
 }

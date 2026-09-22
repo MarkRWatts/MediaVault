@@ -83,6 +83,13 @@ export interface VersionProgress {
  *  is a server-side decision it never sees). */
 export interface FilmVersionV1 extends VersionView {
   playable: boolean;
+  /** Why `playable` is false, when the reason is something the app should
+   *  say out loud rather than just grey a button for. Only value today is
+   *  "uhd_playback_disabled", matching the 403 body the playback routes
+   *  answer with (src/lib/uhd-gate.ts). Absent when the version plays, and
+   *  absent for the older "not probed / no Jellyfin item" case the app has
+   *  always handled silently. */
+  unplayableReason?: "uhd_playback_disabled";
 }
 
 /** GET /api/v1/films/:id */

@@ -359,6 +359,15 @@ async function enrichOneFilm(film: Film, log: string[], collectionCache: Map<num
       hit = pickHit((await tmdbFetch("/search/movie", { query: normalizeTitle(film.title), ...yearParams })).results);
       if (hit) confidence = "LOW";
     }
+    if (!hit && film.performer) {
+      // Concert shows are often listed under the act ("Pink Floyd: Pulse",
+      // "Live at Pompeii" vs the dozens of unrelated "Live at …"), so the
+      // bare title alone can find nothing. Only reached once the plain
+      // searches above have all missed, so it can't pull a film off a
+      // match it already had.
+      hit = pickHit((await tmdbFetch("/search/movie", { query: `${film.performer} ${film.title}` })).results);
+      if (hit) confidence = "LOW";
+    }
     if (hit) tmdbId = hit.id;
   } else if (confidence !== "EXACT") {
     confidence = "EXACT";
@@ -691,16 +700,19 @@ async function enrichOneShow(show: Show, log: string[]): Promise<void> {
   }
 }
 
-async function doEnrichFilms(runId: number): Promise<void> {
+async function doEnrichFilms(runId: number, kind: "FILM" | "CONCERT"): Promise<void> {
   const log: string[] = [];
+  const noun = kind === "CONCERT" ? "concert" : "film";
 
+  // Scoped to one library's kind so the Movies and Concerts buttons on
+  // /admin each report progress over their own rows.
   const films = await prisma.film.findMany({
-    where: { matchConfidence: { in: ["UNMATCHED", "LOW"] } },
+    where: { kind, matchConfidence: { in: ["UNMATCHED", "LOW"] } },
     orderBy: [{ owned: "desc" }, { id: "asc" }],
   });
 
   const total = films.length;
-  await updateProgress(runId, { total, filesSeen: 0, progress: 0, message: `Enriching ${total} film(s)` });
+  await updateProgress(runId, { total, filesSeen: 0, progress: 0, message: `Enriching ${total} ${noun}(s)` });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const collectionCache = new Map<number, any>();
@@ -723,7 +735,7 @@ async function doEnrichFilms(runId: number): Promise<void> {
     }
   }
 
-  await finishRun(runId, log, `Enriched ${total} film(s)`);
+  await finishRun(runId, log, `Enriched ${total} ${noun}(s)`);
 }
 
 async function doEnrichTv(runId: number): Promise<void> {
@@ -790,16 +802,20 @@ async function doEnrichTv(runId: number): Promise<void> {
   );
 }
 
-export type EnrichMediaType = "FILM" | "TV";
+export type EnrichMediaType = "FILM" | "TV" | "CONCERT";
 
 const ENRICH_KIND: Record<EnrichMediaType, RunKind> = {
   FILM: "ENRICH_FILM",
   TV: "ENRICH_TV",
+  CONCERT: "ENRICH_CONCERT",
 };
 
 const ENRICH_RUNNER: Record<EnrichMediaType, (runId: number) => Promise<void>> = {
-  FILM: doEnrichFilms,
+  FILM: (runId) => doEnrichFilms(runId, "FILM"),
   TV: doEnrichTv,
+  // TMDB carries most concert films as ordinary movies, so this is the film
+  // pass over the concert rows — nothing about the matching differs.
+  CONCERT: (runId) => doEnrichFilms(runId, "CONCERT"),
 };
 
 /**

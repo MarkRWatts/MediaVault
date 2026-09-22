@@ -11,6 +11,7 @@ import CollectionStrip from "@/components/CollectionStrip";
 import FilmPhysicalCopyForm from "@/components/FilmPhysicalCopyForm";
 import { getFilmDetail } from "@/lib/queries";
 import { isFilePlayable } from "@/lib/playback/engine-flag";
+import { UHD_BLOCKED_MESSAGE, uhdPlaybackBlocked } from "@/lib/constants";
 
 export default async function FilmPage({
   params,
@@ -34,8 +35,10 @@ export default async function FilmPage({
   // -- the player's session-based protocol name -- whenever the version is
   // playable at all, through whichever engine the server has picked.
   const localPlay = process.env.IN_APP_PLAYBACK === "1";
-  const playSourceFor = (v: { jellyfinId: string | null; videoCodec: string | null }) =>
-    localPlay ? ("local" as const) : isFilePlayable(v) ? ("jellyfin" as const) : null;
+  // A UHD rip is refused by the routes (src/lib/uhd-gate.ts) whichever
+  // engine is active, so it never offers a source.
+  const playSourceFor = (v: { jellyfinId: string | null; videoCodec: string | null; format: string }) =>
+    uhdPlaybackBlocked(v) ? null : localPlay ? ("local" as const) : isFilePlayable(v) ? ("jellyfin" as const) : null;
   const audioOptionsFor = (v: (typeof film.versions)[number]) =>
     v.audioTracks.map((a) => ({ streamIdx: a.streamIdx, label: audioTrackLabel(a) }));
   // The main Play button plays the first playable version (versions are
@@ -45,6 +48,14 @@ export default async function FilmPage({
   const primaryPlay = primary
     ? { versionId: primary.id, source: playSourceFor(primary)!, audioTracks: audioOptionsFor(primary) }
     : null;
+  // Nothing to play AND every file is a UHD rip: say why, rather than
+  // leaving a page with files on it and no play control at all.
+  const playDisabledReason =
+    !primaryPlay && film.versions.length > 0 && film.versions.every((v) => uhdPlaybackBlocked(v))
+      ? UHD_BLOCKED_MESSAGE
+      : undefined;
+
+  const isConcert = film.kind === "CONCERT";
 
   const userState = userId
     ? await getFilmUserState(
@@ -71,11 +82,13 @@ export default async function FilmPage({
         )}
 
         <div className="relative mx-auto flex max-w-5xl flex-col gap-4 px-4 pt-6 sm:px-6">
+          {/* A concert is a Film row, but it's browsed from Music — send
+              people back where they came from. */}
           <Link
-            href="/"
+            href={isConcert ? "/music" : "/"}
             className="w-fit text-xs font-medium text-text-muted hover:text-text"
           >
-            ← Movies
+            ← {isConcert ? "Music" : "Movies"}
           </Link>
 
           <div className="flex flex-col gap-6 pb-2 pt-4 sm:flex-row sm:pt-10">
@@ -91,10 +104,18 @@ export default async function FilmPage({
 
             <div className="flex flex-1 flex-col gap-3 pt-1">
               <div>
+                {isConcert && film.performer && (
+                  <p className="font-display text-lg tracking-wide text-text-muted">{film.performer}</p>
+                )}
                 <h1 className="font-display text-4xl leading-none tracking-wide text-balance sm:text-5xl">
                   {film.title}
                 </h1>
                 <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-sm text-text-muted">
+                  {isConcert && (
+                    <span className="rounded-full border border-accent-border bg-accent-dim px-2.5 py-0.5 text-[10px] uppercase tracking-widest text-accent-bright">
+                      Concert
+                    </span>
+                  )}
                   <CertificationBadge certification={film.certification} />
                   <span>{film.year ?? "Year unknown"}</span>
                   {film.runtimeLabel !== "—" && (
@@ -138,6 +159,7 @@ export default async function FilmPage({
                 filmId={film.id}
                 title={film.title}
                 play={primaryPlay}
+                playDisabledReason={playDisabledReason}
                 favourite={userState.favourite}
                 watched={userState.watched}
               />

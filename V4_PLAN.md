@@ -472,6 +472,8 @@ cap, idle stop, and a container restart mid-play.
 - **HEVC sources.** Apple plays HEVC only from fMP4, so an HEVC copy tier
   needs fMP4 segments with absolute `tfdt` (rewritten per segment, or a
   patched muxer). Until then an HEVC source would be transcoded to H.264.
+  4K content arrived on 20 Sep 2026 and this is now the first blocker —
+  planned in `UHD_PLAN.md`, which supersedes this entry and the next.
 - **HDR and 10-bit.** When 4K content arrives: HD Graphics 530 can't
   decode HEVC Main10, so either software decode + `tonemap_opencl` (needs
   Intel's legacy OpenCL runtime for Gen9) or a newer iGPU; and prefer an

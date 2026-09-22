@@ -7,7 +7,7 @@
 // remove, clear, jump) goes straight to the engine and the snapshot
 // re-render is what updates the list — no local state here at all.
 
-import type { KeyboardEvent } from "react";
+import { useEffect, useRef, type KeyboardEvent } from "react";
 import { ChevronDown, ChevronUp, X } from "lucide-react";
 import CoverImage from "@/components/CoverImage";
 import { usePlayer } from "@/components/player/usePlayer";
@@ -16,21 +16,29 @@ import { formatTime } from "@/lib/format-time";
 export function QueuePanel() {
   const { snapshot, engine } = usePlayer();
   const { queue, order, currentKey } = snapshot;
+  const currentRowRef = useRef<HTMLLIElement | null>(null);
+
+  // The list keeps growing as tracks play, so when the current entry moves
+  // bring it back into view rather than leaving the panel scrolled to
+  // wherever it happened to be.
+  useEffect(() => {
+    currentRowRef.current?.scrollIntoView({ block: "nearest" });
+  }, [currentKey]);
 
   if (queue.length === 0) return null;
 
   const byKey = new Map(queue.map((e) => [e.key, e]));
-  // Show from the currently-playing entry onward — anything before it is
-  // already played and not useful as an "up next" list.
-  const startIdx = currentKey != null ? Math.max(order.indexOf(currentKey), 0) : 0;
-  const visibleKeys = order.slice(startIdx);
-  if (visibleKeys.length === 0) return null;
+  const currentIdx = currentKey != null ? order.indexOf(currentKey) : -1;
+  // Everything stays visible, played tracks included, so the panel reads as
+  // a real history — but the header count is still "what's left to hear",
+  // matching rail.tsx's own remainingCount badge.
+  const upcomingCount = order.length - Math.max(currentIdx, 0);
 
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
         <h3 className="font-display text-xs font-semibold tracking-wide text-text-muted">
-          Queue · {visibleKeys.length}
+          Queue · {upcomingCount} to play
         </h3>
         <button
           type="button"
@@ -42,13 +50,14 @@ export function QueuePanel() {
       </div>
 
       <ul className="flex flex-col gap-0.5">
-        {visibleKeys.map((key) => {
+        {order.map((key) => {
           const entry = byKey.get(key);
           if (!entry) return null;
           const isCurrent = key === currentKey;
           const orderIdx = order.indexOf(key);
-          const disableUp = isCurrent || orderIdx <= 0;
-          const disableDown = isCurrent || orderIdx >= order.length - 1;
+          const isPlayed = currentIdx !== -1 && orderIdx < currentIdx;
+          const disableUp = isCurrent || isPlayed || orderIdx <= 0;
+          const disableDown = isCurrent || isPlayed || orderIdx >= order.length - 1;
 
           function handleKeyDown(e: KeyboardEvent<HTMLLIElement>) {
             if (e.key === "Enter" || e.key === " ") {
@@ -60,11 +69,12 @@ export function QueuePanel() {
           return (
             <li
               key={key}
+              ref={isCurrent ? currentRowRef : undefined}
               role="button"
               tabIndex={0}
               onClick={() => engine.jumpTo(key)}
               onKeyDown={handleKeyDown}
-              className="flex items-center gap-2 rounded-lg px-1.5 py-1.5 transition-colors hover:bg-bg-hover"
+              className={`flex items-center gap-2 rounded-lg px-1.5 py-1.5 transition-colors hover:bg-bg-hover ${isPlayed ? "opacity-60" : ""}`}
             >
               <CoverImage
                 albumId={entry.hasCover ? entry.albumId : null}
@@ -74,10 +84,14 @@ export function QueuePanel() {
                 className="h-8 w-8 shrink-0 rounded"
               />
               <div className="min-w-0 flex-1">
-                <p className={`truncate text-sm ${isCurrent ? "text-format-digital" : "text-text"}`}>
+                <p
+                  className={`truncate text-sm ${isCurrent ? "text-format-digital" : isPlayed ? "text-text-faint" : "text-text"}`}
+                >
                   {entry.title}
                 </p>
-                <p className="truncate text-xs text-text-muted">{entry.artist}</p>
+                <p className={`truncate text-xs ${isPlayed ? "text-text-faint" : "text-text-muted"}`}>
+                  {entry.artist}
+                </p>
               </div>
               <span className="shrink-0 font-mono text-[11px] text-text-faint">
                 {formatTime(entry.durationSecs)}

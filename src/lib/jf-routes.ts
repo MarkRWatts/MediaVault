@@ -24,6 +24,7 @@ import {
 import { parseVariant } from "@/lib/video-playback";
 import { currentViewer } from "@/lib/jf-viewer";
 import { ageGateForUser } from "@/lib/age-gate";
+import { uhdGate } from "@/lib/uhd-gate";
 import { playbackEngine } from "@/lib/playback/engine-flag";
 import { engineProxy, engineSession, engineStop } from "@/lib/playback/engine-routes";
 import type { MediaKind } from "@/lib/playback/types";
@@ -42,6 +43,8 @@ export async function jfSession(req: Request, idParam: string, resolveItem: Reso
     if (!viewer) return NextResponse.json({ error: "not signed in" }, { status: 401 });
     const blocked = await ageGateForUser(viewer.userId, kind, Number(idParam));
     if (blocked) return blocked;
+    const uhd = await uhdGate(kind, Number(idParam));
+    if (uhd) return uhd;
     return engineSession(req, idParam, kind, basePath, viewer.deviceId);
   }
 
@@ -52,6 +55,11 @@ export async function jfSession(req: Request, idParam: string, resolveItem: Reso
   const id = Number(idParam);
   const blocked = await ageGateForUser(viewer.userId, kind, id);
   if (blocked) return blocked;
+  // Jellyfin could transcode a UHD source, but the app must not offer what
+  // the local engine can't finish — the block is about the file, not the
+  // backend that happens to be serving it today (src/lib/uhd-gate.ts).
+  const uhd = await uhdGate(kind, id);
+  if (uhd) return uhd;
   const itemId = await resolveItem(id);
   if (!itemId) return NextResponse.json({ error: "not found" }, { status: 404 });
   const params = new URL(req.url).searchParams;
@@ -126,6 +134,8 @@ export async function jfProxy(req: Request, idParam: string, path: string[], res
     // must not outlive the viewer's permission to watch it.
     const blocked = await ageGateForUser(viewer.userId, kind, id);
     if (blocked) return blocked;
+    const uhd = await uhdGate(kind, id);
+    if (uhd) return uhd;
     return engineProxy(req, path.join("/"), kind, id, viewer.deviceId);
   }
 
@@ -134,6 +144,8 @@ export async function jfProxy(req: Request, idParam: string, path: string[], res
   if (!viewer) return NextResponse.json({ error: "not signed in" }, { status: 401 });
   const blocked = await ageGateForUser(viewer.userId, kind, Number(idParam));
   if (blocked) return blocked;
+  const uhd = await uhdGate(kind, Number(idParam));
+  if (uhd) return uhd;
   const itemId = await resolveItem(Number(idParam));
   if (!itemId) return NextResponse.json({ error: "not found" }, { status: 404 });
   return proxyJellyfinHls(itemId, path.join("/"), new URL(req.url).searchParams, viewer.deviceId);
