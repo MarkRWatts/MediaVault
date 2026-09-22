@@ -169,17 +169,23 @@ function RunLog({ run }: { run: RunInfo | null }) {
     if (box) box.scrollTop = box.scrollHeight;
   }, [lines.length]);
 
-  if (lines.length === 0) return null;
+  // A run that has never happened has no log to offer; one that logged
+  // nothing still shows the disclosure, so a quiet run reads as quiet rather
+  // than as a feature that went missing.
+  if (!run) return null;
+  const empty = lines.length === 0;
   return (
     <details className="text-xs">
       <summary className="cursor-pointer select-none text-text-faint transition-colors hover:text-text-muted">
-        Log ({lines.length} line{lines.length === 1 ? "" : "s"})
+        {empty ? "Log (no notable events)" : `Log (${lines.length} line${lines.length === 1 ? "" : "s"})`}
       </summary>
       <pre
         ref={boxRef}
-        className="mt-1.5 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border/60 bg-bg p-2 font-mono text-[11px] leading-relaxed text-text-muted"
+        className={`mt-1.5 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border/60 bg-bg p-2 font-mono text-[11px] leading-relaxed ${
+          empty ? "text-text-faint" : "text-text-muted"
+        }`}
       >
-        {lines.join("\n")}
+        {empty ? "No notable events" : lines.join("\n")}
       </pre>
     </details>
   );
