@@ -276,7 +276,7 @@ export default function ScanControls() {
           <div>
             <h3 className="font-display text-sm tracking-wide text-text">Jellyfin</h3>
             <p className="mt-0.5 text-xs text-text-faint">
-              Matches films/episodes/scenes to Jellyfin library items by path — runs automatically
+              Matches films/episodes/scenes/concerts to Jellyfin library items by path — runs automatically
               after each scan, or trigger it directly (e.g. after renaming files on the share, or
               adding new Adult scenes) without a full rescan.
             </p>

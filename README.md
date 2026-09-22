@@ -181,7 +181,7 @@ extra per device and need HTTPS or `localhost`.
 | --- | --- |
 | `JELLYFIN_URL` | Jellyfin base URL, e.g. `http://<nas>:8096`. |
 | `JELLYFIN_API_KEY` | Token from Dashboard → API Keys. Unset disables in-app video playback and the sync. |
-| `JELLYFIN_MOVIES_PREFIX` / `JELLYFIN_TV_PREFIX` | Path prefixes Jellyfin's items carry before the relative file path (defaults `/media/Movies/` and `/media/TV Shows/`). |
+| `JELLYFIN_MOVIES_PREFIX` / `JELLYFIN_TV_PREFIX` / `JELLYFIN_CONCERTS_PREFIX` | Path prefixes Jellyfin's items carry before the relative file path (defaults `/media/Movies/`, `/media/TV Shows/` and `/media/Concerts/`). |
 | `JELLYFIN_MAX_SESSIONS` | How many members may stream through Jellyfin at once. Default 2; each is a transcode on the Jellyfin host. |
 
 A sync job matches Jellyfin items to files by path (Unicode-normalised, so
