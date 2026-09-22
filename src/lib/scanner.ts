@@ -117,6 +117,17 @@ async function resolveFilm(representative: ParsedConcert, kind: FilmKind, log: s
     }
     if (representative.imdbId && !film.imdbId) updates.imdbId = representative.imdbId;
     if (representative.tmdbId && !film.tmdbId) updates.tmdbId = representative.tmdbId;
+    // An id match can cross libraries — only the title/year search above is
+    // scoped by kind. That means the file was moved (a concert rip that
+    // started life in Movies), and the row should follow it: same TMDB work,
+    // same watch progress and favourites, just the other shelf. The title is
+    // re-read too, since the film parser had kept the act in it.
+    if (film.kind !== kind) {
+      updates.kind = kind;
+      updates.title = representative.title;
+      updates.sortTitle = sortTitle(representative.title);
+      log.push(`Moved "${film.title}" to the ${kind === "CONCERT" ? "concerts" : "movies"} library`);
+    }
     // A rename that adds the act ("Pulse" → "Pink Floyd - Pulse") should
     // land on the existing row rather than wait for the next fresh scan.
     if (representative.performer && representative.performer !== film.performer) {
