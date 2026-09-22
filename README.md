@@ -215,14 +215,17 @@ npx tsx scripts/grant-app-owner.ts you@example.com
 ```
 
 Scans and enrichment run from Admin, or by POSTing to the owner-only API
-routes with the browser's session cookie:
+routes with the browser's session cookie. Admin's Force checkbox (`?force=1`
+on these routes) re-probes every file on a rescan and, on a metadata fetch,
+also refreshes titles that are already matched — for a certificate, poster
+or collection corrected on TMDB after the match.
 
 ```bash
 curl -X POST localhost:3000/api/scan/film     # add ?force=1 to re-probe everything
 curl -X POST localhost:3000/api/scan/tv
 curl -X POST localhost:3000/api/scan/music
 curl -X POST localhost:3000/api/scan/concert
-curl -X POST localhost:3000/api/enrich/film
+curl -X POST localhost:3000/api/enrich/film   # add ?force=1 to refresh matched titles too
 curl -X POST localhost:3000/api/enrich/tv
 curl -X POST localhost:3000/api/enrich-music
 curl -X POST localhost:3000/api/enrich/concert
@@ -239,7 +242,6 @@ points at. On the server, run them inside the container (see
 | --- | --- |
 | `gen-access-code.ts` | Mint an access code for a new household. |
 | `grant-app-owner.ts` | Give an existing user the app-owner role. |
-| `backfill-certifications.ts` | Fetch BBFC certificates for films and shows enriched before certificates existed. Worth running before age-restricting anyone: an uncertificated title is hidden from a restricted member. |
 | `reprobe-audio-tracks.ts` | Refresh audio-track dispositions so the main soundtrack, not an audio-description track, is picked. |
 | `attach-cd-discogs-releases.ts`, `backfill-album-discogs-url.ts`, `backfill-digital-cover-from-cd.ts` | One-off music backfills from the Discogs cutover. |
 | `export-discogs-snapshot.ts`, `apply-discogs-snapshot.ts` | Copy a verified set of Discogs matches from one database to another. |
