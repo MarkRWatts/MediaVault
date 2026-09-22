@@ -10,6 +10,7 @@ import { prisma } from "@/lib/db";
 import { WATCH_COMPLETED_RATIO } from "@/lib/constants";
 import { logPlaybackStart } from "@/lib/audit";
 import { logPlay } from "@/lib/play-log";
+import { recordPlayEvent } from "@/lib/play-events";
 import { ageGateForUser } from "@/lib/age-gate";
 
 async function currentUserId(): Promise<string | null> {
@@ -72,6 +73,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ episodeFileId:
     create: { userId, episodeFileId, positionSecs, completed, playCount: 1 },
     update: { positionSecs, completed, ...(isNewPlay ? { playCount: { increment: 1 }, completed: false } : {}) },
   });
+  await recordPlayEvent({ userId, kind: "episode", itemId: episodeFileId, positionSecs, completed: row.completed });
   if (isNewPlay) {
     await logPlaybackStart(userId, "video.playback");
     await logPlay("episode", episodeFileId);
