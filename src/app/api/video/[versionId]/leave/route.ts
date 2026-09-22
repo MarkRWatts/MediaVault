@@ -10,6 +10,7 @@ import { NextResponse } from "next/server";
 import { noteViewerLeft, parseVariant } from "@/lib/video-cache";
 import { requireMemberOrResponse } from "@/lib/require-member";
 import { ageGate } from "@/lib/age-gate";
+import { uhdGate } from "@/lib/uhd-gate";
 
 export async function POST(req: Request, ctx: { params: Promise<{ versionId: string }> }) {
   const gate = await requireMemberOrResponse();
@@ -28,6 +29,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ versionId: str
   // route is reachable by id alone.
   const blocked = await ageGate(gate.ageLimit, "film", versionId);
   if (blocked) return blocked;
+
+  const uhd = await uhdGate("film", versionId);
+  if (uhd) return uhd;
 
   return NextResponse.json({ shortened: noteViewerLeft("film", versionId, variant) });
 }

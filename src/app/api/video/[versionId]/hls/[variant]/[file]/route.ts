@@ -13,6 +13,7 @@ import { PLAYLIST_NAME, parseVariant, resolveHlsFile, resolveHlsPlaylist } from 
 import { serveFile } from "@/lib/serve-file";
 import { requireMemberOrResponse } from "@/lib/require-member";
 import { ageGate } from "@/lib/age-gate";
+import { uhdGate } from "@/lib/uhd-gate";
 
 export async function GET(
   req: Request,
@@ -36,6 +37,11 @@ export async function GET(
   // permission to watch the film it belongs to.
   const blocked = await ageGate(gate.ageLimit, "film", versionId);
   if (blocked) return blocked;
+
+  // Every segment too, for the same reason: nothing should be able to keep
+  // pulling 4K bytes the server has decided not to serve.
+  const uhd = await uhdGate("film", versionId);
+  if (uhd) return uhd;
 
   if (file === PLAYLIST_NAME) {
     const resolved = await resolveHlsPlaylist("film", versionId, variant);

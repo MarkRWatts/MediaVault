@@ -17,6 +17,7 @@ export default function FilmActions({
   filmId,
   title,
   play,
+  playDisabledReason,
   favourite: initialFavourite,
   watched: initialWatched,
   kind = "film",
@@ -34,6 +35,9 @@ export default function FilmActions({
     label?: string;
     playTitle?: string;
   } | null;
+  /** With `play` null, why: renders the main button disabled and says so,
+   *  instead of dropping it. See src/lib/uhd-gate.ts. */
+  playDisabledReason?: string;
   favourite: boolean;
   watched: boolean;
   kind?: "film" | "show";
@@ -60,6 +64,10 @@ export default function FilmActions({
           label={play.label}
           size="lg"
         />
+      )}
+
+      {!play && playDisabledReason && (
+        <PlayButton versionId={filmId} title={title} size="lg" disabledReason={playDisabledReason} />
       )}
 
       <button
