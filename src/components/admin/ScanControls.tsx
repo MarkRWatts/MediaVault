@@ -25,6 +25,9 @@ interface RunsResponse {
   latestEnrichScene: RunInfo | null;
   latestJellyfin: RunInfo | null;
   running: boolean;
+  // When the periodic sync next fires, or null when it's off — see
+  // src/lib/scheduler.ts.
+  nextSyncAt: string | null;
 }
 
 const EMPTY: RunsResponse = {
@@ -38,6 +41,7 @@ const EMPTY: RunsResponse = {
   latestEnrichScene: null,
   latestJellyfin: null,
   running: false,
+  nextSyncAt: null,
 };
 
 type OpKey =
@@ -63,7 +67,7 @@ const OP_ENDPOINT: Record<OpKey, string> = {
   jellyfinSync: "/api/jellyfin-sync",
 };
 
-const OP_RUN_KEY: Record<OpKey, Exclude<keyof RunsResponse, "running">> = {
+const OP_RUN_KEY: Record<OpKey, Exclude<keyof RunsResponse, "running" | "nextSyncAt">> = {
   scanFilm: "latestScanFilm",
   scanTv: "latestScanTv",
   scanMusic: "latestScanMusic",
@@ -106,6 +110,16 @@ function elapsed(startedAt: string, finishedAt: string | null): string {
   const mins = Math.floor(secs / 60);
   if (mins < 60) return `${mins}m ${secs % 60}s`;
   return `${Math.floor(mins / 60)}h ${mins % 60}m`;
+}
+
+function nextSyncLabel(iso: string | null): string {
+  if (!iso) return "Automatic sync is off.";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "Automatic sync is off.";
+  const mins = Math.max(0, Math.round((then - Date.now()) / 60_000));
+  const when = mins < 1 ? "any moment" : mins < 60 ? `in ${mins}m` : `in ${Math.floor(mins / 60)}h ${mins % 60}m`;
+  const clock = new Date(then).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return `Next automatic sync: ${when} (${clock}).`;
 }
 
 function StatusLine({ run, activeLabel }: { run: RunInfo | null; activeLabel: string }) {
@@ -261,6 +275,8 @@ export default function ScanControls() {
       {theporndbHint && (
         <p className="text-sm text-accent/80">Add THEPORNDB_API_KEY to your environment to enable Adult metadata fetching.</p>
       )}
+
+      <p className="text-xs text-text-faint">{nextSyncLabel(runs.nextSyncAt)}</p>
 
       <label className="flex items-center gap-1.5 self-start text-xs text-text-faint">
         <input
