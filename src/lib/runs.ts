@@ -12,6 +12,8 @@ export type RunKind =
   | "SCAN_TV"
   | "SCAN_MUSIC"
   | "SCAN_SCENE"
+  | "SCAN_CONCERT"
+  | "ENRICH_CONCERT"
   | "ENRICH_FILM"
   | "ENRICH_TV"
   | "ENRICH_MUSIC"
@@ -159,6 +161,10 @@ const ALL_KINDS: RunKind[] = [
   "ENRICH_MUSIC",
   "ENRICH_SCENE",
   "JELLYFIN",
+  // Appended rather than slotted in beside the other scans: the reads below
+  // index this array positionally.
+  "SCAN_CONCERT",
+  "ENRICH_CONCERT",
 ];
 
 export async function getLatestRuns(): Promise<{
@@ -171,6 +177,8 @@ export async function getLatestRuns(): Promise<{
   latestEnrichMusic: RunSummary | null;
   latestEnrichScene: RunSummary | null;
   latestJellyfin: RunSummary | null;
+  latestScanConcert: RunSummary | null;
+  latestEnrichConcert: RunSummary | null;
   running: boolean;
 }> {
   const runs = await Promise.all(
@@ -189,6 +197,8 @@ export async function getLatestRuns(): Promise<{
     latestEnrichMusic: toSummary(runs[6]),
     latestEnrichScene: toSummary(runs[7]),
     latestJellyfin: toSummary(runs[8]),
+    latestScanConcert: toSummary(runs[9]),
+    latestEnrichConcert: toSummary(runs[10]),
     running,
   };
 }

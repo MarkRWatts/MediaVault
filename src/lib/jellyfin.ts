@@ -15,6 +15,7 @@ import { guardAndCreateRun, updateProgress, finishRun, failRun } from "@/lib/run
 const DEFAULT_MOVIES_PREFIX = "/media/Movies/";
 const DEFAULT_TV_PREFIX = "/media/TV Shows/";
 const DEFAULT_ADULT_PREFIX = "/media/Adult/";
+const DEFAULT_CONCERTS_PREFIX = "/media/Concerts/";
 const PROGRESS_UPDATE_EVERY = 25;
 
 interface MediaFolder {
@@ -82,12 +83,20 @@ async function jellyfinRequest(method: string, pathname: string, body?: unknown)
   return res.json();
 }
 
-async function getMoviesLibraryId(): Promise<string> {
+/** Every "movies" library on the server, in the order Jellyfin lists them.
+ *  Usually one — but the Concerts folder is naturally added as a second
+ *  movies library (that's what gets concert films their TMDB metadata), and
+ *  the concert pass below has to look in all of them. */
+async function getMoviesLibraryIds(): Promise<string[]> {
   const data = await jellyfinFetch("/Library/MediaFolders");
   const folders: MediaFolder[] = data.Items ?? [];
-  const movies = folders.find((f) => f.CollectionType === "movies");
-  if (!movies) throw new Error('No Jellyfin library with CollectionType "movies" found');
-  return movies.Id;
+  return folders.filter((f) => f.CollectionType === "movies").map((f) => f.Id);
+}
+
+async function getMoviesLibraryId(): Promise<string> {
+  const ids = await getMoviesLibraryIds();
+  if (ids.length === 0) throw new Error('No Jellyfin library with CollectionType "movies" found');
+  return ids[0];
 }
 
 async function getAllMovieItems(parentId: string): Promise<JellyfinItem[]> {
@@ -175,6 +184,18 @@ function relativizeAdultPath(jellyfinPath: string): string | null {
   return jellyfinPath.slice(idx + prefix.length);
 }
 
+/** Same idea, for the concerts share (JELLYFIN_CONCERTS_PREFIX, falling
+ * back to DEFAULT_CONCERTS_PREFIX). Returning null for a path outside the
+ * prefix is what keeps the two passes apart when one Jellyfin library holds
+ * both: a movie's path misses this prefix, a concert's misses the movies
+ * one, so neither pass can claim the other's Versions. */
+function relativizeConcertsPath(jellyfinPath: string): string | null {
+  const prefix = process.env.JELLYFIN_CONCERTS_PREFIX || DEFAULT_CONCERTS_PREFIX;
+  const idx = jellyfinPath.indexOf(prefix);
+  if (idx === -1) return null;
+  return jellyfinPath.slice(idx + prefix.length);
+}
+
 async function doJellyfinSync(runId: number): Promise<void> {
   const log: string[] = [];
 
@@ -206,7 +227,14 @@ async function doJellyfinSync(runId: number): Promise<void> {
     message: `Matching ${items.length} movie item(s), ${tvItems.length} TV item(s)`,
   });
 
-  const versions = await prisma.version.findMany({ select: { id: true, filePath: true, jellyfinId: true } });
+  // Films only: a concert rip is a Version too, but its filePath is relative
+  // to CONCERTS_PATH, so it can never match the movies prefix — left in this
+  // list it would be reported unmatched every run and have its jellyfinId
+  // cleared by the sweep below, undoing the concert pass. See Film.kind.
+  const versions = await prisma.version.findMany({
+    where: { film: { kind: "FILM" } },
+    select: { id: true, filePath: true, jellyfinId: true },
+  });
   const versionByNormPath = new Map(versions.map((v) => [v.filePath.normalize("NFC"), v]));
   const matchedVersionIds = new Set<number>();
 
@@ -386,10 +414,65 @@ async function doJellyfinSync(runId: number): Promise<void> {
     }
   }
 
+  // ---- Concerts ----
+  // Same shape as the film pass (concerts are Film rows with Version files),
+  // but against the concerts prefix, and best-effort like TV/Adult — a
+  // household with no Concerts library in Jellyfin shouldn't see the sync
+  // fail. Items are gathered from every movies library because a Concerts
+  // folder added as its own library is a second one, and getMoviesLibraryId
+  // above only ever returns the first.
+  let concertItems: JellyfinItem[] = [];
+  try {
+    const movieLibraryIds = await getMoviesLibraryIds();
+    for (const libraryId of movieLibraryIds) {
+      concertItems = concertItems.concat(await getAllMovieItems(libraryId));
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log.push(`Failed to fetch Jellyfin concert items: ${message}`);
+  }
+
+  const concertVersions = await prisma.version.findMany({
+    where: { film: { kind: "CONCERT" } },
+    select: { id: true, filePath: true, jellyfinId: true },
+  });
+  const concertByNormPath = new Map(concertVersions.map((v) => [v.filePath.normalize("NFC"), v]));
+  const matchedConcertIds = new Set<number>();
+  let concertMatched = 0;
+
+  for (const item of concertItems) {
+    if (!item.Path) continue;
+    const relPath = relativizeConcertsPath(item.Path);
+    const normPath = relPath?.normalize("NFC");
+    const version = normPath ? concertByNormPath.get(normPath) : undefined;
+    if (!version) continue; // a movie, or a concert MediaVault hasn't scanned
+    if (version.jellyfinId !== item.Id) {
+      await prisma.version.update({ where: { id: version.id }, data: { jellyfinId: item.Id } });
+    }
+    matchedConcertIds.add(version.id);
+    concertMatched++;
+  }
+
+  const unmatchedConcerts: string[] = [];
+  for (const v of concertVersions) {
+    if (matchedConcertIds.has(v.id)) continue;
+    unmatchedConcerts.push(v.filePath);
+    if (v.jellyfinId !== null) {
+      await prisma.version.update({ where: { id: v.id }, data: { jellyfinId: null } });
+    }
+  }
+
+  if (concertVersions.length > 0) {
+    log.push(`Matched ${concertMatched} of ${concertVersions.length} MediaVault concert(s) to Jellyfin items`);
+    if (unmatchedConcerts.length > 0) {
+      log.push(`Unmatched concerts in MediaVault (${unmatchedConcerts.length}): ${unmatchedConcerts.join(", ")}`);
+    }
+  }
+
   await finishRun(
     runId,
     log,
-    `Matched ${matched}/${versions.length} movie version(s), ${tvMatched}/${episodeFilesByNormPath.size} TV file(s), ${sceneMatched}/${scenes.length} Adult scene(s)`,
+    `Matched ${matched}/${versions.length} movie version(s), ${tvMatched}/${episodeFilesByNormPath.size} TV file(s), ${sceneMatched}/${scenes.length} Adult scene(s), ${concertMatched}/${concertVersions.length} concert(s)`,
   );
 }
 

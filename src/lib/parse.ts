@@ -94,6 +94,44 @@ export function parseFileName(relPath: string): ParsedFile {
   };
 }
 
+export interface ParsedConcert extends ParsedFile {
+  /** The act, when the name follows "Artist - Title (Year)". */
+  performer: string | null;
+}
+
+// Only a spaced hyphen separates the act from the show — "Spider-Man" and
+// "The_A-Team" must survive intact. Non-greedy, so "Genesis - The Way We
+// Walk - The Longs" keeps the whole subtitle with the title.
+const PERFORMER_SPLIT = /^(.+?)\s+-\s+(.+)$/;
+
+function splitPerformer(title: string): { performer: string; title: string } | null {
+  const m = title.match(PERFORMER_SPLIT);
+  return m ? { performer: m[1].trim(), title: m[2].trim() } : null;
+}
+
+/**
+ * Concert rips on top of the ordinary film naming: "Artist - Title (Year)".
+ * Falls back to the containing folder's name when the file itself is just a
+ * disc number — that's also where the title and year then come from, so a
+ * two-disc concert groups into one Film rather than "Disc 1" and "Disc 2".
+ * A name with no " - " at all is an ordinary "Title (Year)" and leaves the
+ * performer null.
+ */
+export function parseConcertPath(relPath: string): ParsedConcert {
+  const parsed = parseFileName(relPath);
+
+  const fromFile = splitPerformer(parsed.title);
+  if (fromFile) return { ...parsed, ...fromFile };
+
+  if (parsed.folder) {
+    const folderParsed = parseFileName(parsed.folder);
+    const fromFolder = splitPerformer(folderParsed.title);
+    if (fromFolder) return { ...parsed, ...fromFolder, year: parsed.year ?? folderParsed.year };
+  }
+
+  return { ...parsed, performer: null };
+}
+
 /**
  * Key that groups multiple files (editions, DVD + BluRay rips) into one Film.
  * imdbId is authoritative when present; otherwise normalised title + year.
