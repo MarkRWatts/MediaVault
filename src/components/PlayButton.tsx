@@ -15,6 +15,7 @@ export default function PlayButton({
   size = "sm",
   basePath,
   label = "Play",
+  disabledReason,
 }: {
   /** Version id for films; EpisodeFile id with basePath "/api/tv-video". */
   versionId: number;
@@ -28,6 +29,11 @@ export default function PlayButton({
   size?: "sm" | "lg" | "overlay";
   basePath?: string;
   label?: string;
+  /** Why this can't be played — renders the button disabled and says so
+   *  beside it instead of opening the player. The server refuses these
+   *  anyway (see src/lib/uhd-gate.ts); this is so the viewer isn't led into
+   *  an error. */
+  disabledReason?: string;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -35,8 +41,22 @@ export default function PlayButton({
     size === "overlay"
       ? "group absolute inset-0 flex items-center justify-center bg-bg/30 transition-colors hover:bg-bg/55 focus-visible:bg-bg/55"
       : size === "lg"
-        ? "inline-flex items-center gap-2 rounded-full border border-accent-border bg-accent-bright/15 px-5 py-2.5 text-sm font-semibold tracking-wide text-accent-bright transition-colors hover:bg-accent-bright/25"
-        : "inline-flex items-center gap-1.5 rounded-full border border-accent-border bg-accent-bright/10 px-2.5 py-1 text-[11px] font-medium tracking-wide text-accent-bright transition-colors hover:bg-accent-bright/20";
+        ? "inline-flex items-center gap-2 rounded-full border border-accent-border bg-accent-bright/15 px-5 py-2.5 text-sm font-semibold tracking-wide text-accent-bright transition-colors hover:bg-accent-bright/25 disabled:cursor-default disabled:border-border disabled:bg-transparent disabled:text-text-faint"
+        : "inline-flex items-center gap-1.5 rounded-full border border-accent-border bg-accent-bright/10 px-2.5 py-1 text-[11px] font-medium tracking-wide text-accent-bright transition-colors hover:bg-accent-bright/20 disabled:cursor-default disabled:border-border disabled:bg-transparent disabled:text-text-faint";
+
+  if (disabledReason && size !== "overlay") {
+    return (
+      <span className="inline-flex flex-wrap items-center gap-2">
+        <button type="button" disabled title={disabledReason} className={className}>
+          <Play aria-hidden className={size === "lg" ? "h-4 w-4 fill-current" : "h-2.5 w-2.5 fill-current"} />
+          {label}
+        </button>
+        {/* A title alone is invisible on a touch screen, which is most of
+            the household — the reason has to be on the page. */}
+        <span className="text-[11px] text-text-faint">{disabledReason}</span>
+      </span>
+    );
+  }
 
   if (size === "overlay") {
     return (

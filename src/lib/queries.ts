@@ -83,6 +83,9 @@ export interface LibraryFilm {
   posterPath: string | null;
   collectionId: number | null;
   collectionName: string | null;
+  /** The collection's own TMDB poster, for the stacked card on the library
+   *  grid (StackedFilmCard) — null falls back to a collage of members'. */
+  collectionPosterPath: string | null;
   releaseDate: string | null;
   createdAt: string;
   owned: boolean; // digitally owned (has a ripped Version) — false for physical-only entries
@@ -114,7 +117,7 @@ const FILM_CARD_SELECT = {
   year: true,
   posterPath: true,
   collectionId: true,
-  collection: { select: { name: true } },
+  collection: { select: { name: true, posterPath: true } },
   releaseDate: true,
   certification: true,
   createdAt: true,
@@ -138,7 +141,7 @@ type FilmCardSource = {
   year: number | null;
   posterPath: string | null;
   collectionId: number | null;
-  collection: { name: string } | null;
+  collection: { name: string; posterPath: string | null } | null;
   releaseDate: Date | null;
   certification: string | null;
   createdAt: Date;
@@ -163,6 +166,7 @@ function shapeLibraryFilm(f: FilmCardSource): LibraryFilm {
     posterPath: f.posterPath,
     collectionId: f.collectionId,
     collectionName: f.collection?.name ?? null,
+    collectionPosterPath: f.collection?.posterPath ?? null,
     releaseDate: f.releaseDate ? f.releaseDate.toISOString() : null,
     createdAt: f.createdAt.toISOString(),
     owned: f.owned,

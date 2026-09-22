@@ -1,5 +1,6 @@
 // GET /api/v1/films/:id — a film's detail screen: versions with their
-// audio tracks, `playable` (isFilePlayable — has been probed and, for the
+// audio tracks, `playable` (isFilePlayable, and not a UHD rip while
+// UHD_PLAYBACK_ENABLED is off — has been probed and, for the
 // jellyfin engine, matched to a Jellyfin item, see IOS_PLAN.md "Video:
 // nothing new" and src/lib/playback/engine-flag.ts), the viewer's favourite
 // state, and their saved position on each version (so a resume prompt
@@ -11,6 +12,7 @@ import { getFilmDetail } from "@/lib/queries";
 import { getFilmUserState } from "@/lib/film-user-state";
 import { prisma } from "@/lib/db";
 import { isFilePlayable } from "@/lib/playback/engine-flag";
+import { UHD_BLOCKED_ERROR, uhdPlaybackBlocked } from "@/lib/constants";
 import type { FilmDetailResponse, FilmVersionV1, VersionProgress } from "@/lib/api-v1-types";
 
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
@@ -39,7 +41,15 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       : Promise.resolve([]),
   ]);
 
-  const versions: FilmVersionV1[] = film.versions.map((v) => ({ ...v, playable: isFilePlayable(v) }));
+  // A UHD version is never playable however well it probed: the playback
+  // routes answer 403 for it (src/lib/uhd-gate.ts). Saying so here saves the
+  // app a round trip and gives it something to show instead of a bare
+  // greyed-out button.
+  const versions: FilmVersionV1[] = film.versions.map((v) =>
+    uhdPlaybackBlocked(v)
+      ? { ...v, playable: false, unplayableReason: UHD_BLOCKED_ERROR }
+      : { ...v, playable: isFilePlayable(v) },
+  );
   const progress: VersionProgress[] = progressRows.map((p) => ({
     // versionId is non-null by construction (queried `in: versionIds`).
     versionId: p.versionId!,

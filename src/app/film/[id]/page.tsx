@@ -11,6 +11,7 @@ import CollectionStrip from "@/components/CollectionStrip";
 import FilmPhysicalCopyForm from "@/components/FilmPhysicalCopyForm";
 import { getFilmDetail } from "@/lib/queries";
 import { isFilePlayable } from "@/lib/playback/engine-flag";
+import { UHD_BLOCKED_MESSAGE, uhdPlaybackBlocked } from "@/lib/constants";
 
 export default async function FilmPage({
   params,
@@ -34,8 +35,10 @@ export default async function FilmPage({
   // -- the player's session-based protocol name -- whenever the version is
   // playable at all, through whichever engine the server has picked.
   const localPlay = process.env.IN_APP_PLAYBACK === "1";
-  const playSourceFor = (v: { jellyfinId: string | null; videoCodec: string | null }) =>
-    localPlay ? ("local" as const) : isFilePlayable(v) ? ("jellyfin" as const) : null;
+  // A UHD rip is refused by the routes (src/lib/uhd-gate.ts) whichever
+  // engine is active, so it never offers a source.
+  const playSourceFor = (v: { jellyfinId: string | null; videoCodec: string | null; format: string }) =>
+    uhdPlaybackBlocked(v) ? null : localPlay ? ("local" as const) : isFilePlayable(v) ? ("jellyfin" as const) : null;
   const audioOptionsFor = (v: (typeof film.versions)[number]) =>
     v.audioTracks.map((a) => ({ streamIdx: a.streamIdx, label: audioTrackLabel(a) }));
   // The main Play button plays the first playable version (versions are
@@ -45,6 +48,12 @@ export default async function FilmPage({
   const primaryPlay = primary
     ? { versionId: primary.id, source: playSourceFor(primary)!, audioTracks: audioOptionsFor(primary) }
     : null;
+  // Nothing to play AND every file is a UHD rip: say why, rather than
+  // leaving a page with files on it and no play control at all.
+  const playDisabledReason =
+    !primaryPlay && film.versions.length > 0 && film.versions.every((v) => uhdPlaybackBlocked(v))
+      ? UHD_BLOCKED_MESSAGE
+      : undefined;
 
   const userState = userId
     ? await getFilmUserState(
@@ -138,6 +147,7 @@ export default async function FilmPage({
                 filmId={film.id}
                 title={film.title}
                 play={primaryPlay}
+                playDisabledReason={playDisabledReason}
                 favourite={userState.favourite}
                 watched={userState.watched}
               />

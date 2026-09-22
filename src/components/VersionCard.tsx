@@ -4,6 +4,7 @@ import HdrBadge from "@/components/HdrBadge";
 import PlayButton from "@/components/PlayButton";
 import type { PlaybackSource } from "@/components/VideoPlayer";
 import { audioBadge } from "@/lib/audio";
+import { UHD_BLOCKED_MESSAGE, uhdPlaybackBlocked } from "@/lib/constants";
 import type { VersionView } from "@/lib/queries";
 
 export default function VersionCard({
@@ -20,6 +21,7 @@ export default function VersionCard({
   playSource?: PlaybackSource | null;
   audioTracks?: { streamIdx: number; label: string }[];
 }) {
+  const blocked = uhdPlaybackBlocked(version);
   const specs: { label: string; value: string }[] = [
     { label: "Resolution", value: version.resolution },
     { label: "Codec", value: version.videoCodec ?? "—" },
@@ -41,8 +43,19 @@ export default function VersionCard({
           <span className="text-sm italic text-text-muted">{version.edition}</span>
         )}
         <div className="ml-auto flex items-center gap-2">
-          {playSource && (
-            <PlayButton versionId={version.id} title={filmTitle} source={playSource} audioTracks={audioTracks} />
+          {/* The server refuses a UHD version outright (src/lib/uhd-gate.ts),
+              so the button is shown disabled whether or not this film would
+              otherwise have had one — silence would read as "no file here". */}
+          {blocked ? (
+            <PlayButton
+              versionId={version.id}
+              title={filmTitle}
+              disabledReason={UHD_BLOCKED_MESSAGE}
+            />
+          ) : (
+            playSource && (
+              <PlayButton versionId={version.id} title={filmTitle} source={playSource} audioTracks={audioTracks} />
+            )
           )}
         </div>
       </div>

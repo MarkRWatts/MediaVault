@@ -1,28 +1,9 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
 import PosterImage from "@/components/PosterImage";
+import PosterCollage from "@/components/PosterCollage";
 import type { CollectionSummary } from "@/lib/queries";
-
-function CollageCell({ posterPath }: { posterPath: string | null }) {
-  const [errored, setErrored] = useState(false);
-  if (!posterPath || errored) {
-    return <div className="h-full w-full bg-bg-elevated-2" />;
-  }
-  return (
-    <div className="relative h-full w-full">
-      <img
-        src={`/api/poster/w342${posterPath}`}
-        alt=""
-        loading="lazy"
-        decoding="async"
-        className="absolute inset-0 h-full w-full object-cover"
-        onError={() => setErrored(true)}
-      />
-    </div>
-  );
-}
 
 export default function CollectionCard({ collection }: { collection: CollectionSummary }) {
   const { id, name, posterPath, collagePosters, ownedCount, totalCount, complete } = collection;
@@ -37,11 +18,7 @@ export default function CollectionCard({ collection }: { collection: CollectionS
         {posterPath ? (
           <PosterImage posterPath={posterPath} title={name} className="h-full w-full" />
         ) : (
-          <div className="grid h-full w-full grid-cols-2 grid-rows-2 gap-px bg-border">
-            {[0, 1, 2, 3].map((i) => (
-              <CollageCell key={i} posterPath={collagePosters[i] ?? null} />
-            ))}
-          </div>
+          <PosterCollage posters={collagePosters} />
         )}
       </div>
 
