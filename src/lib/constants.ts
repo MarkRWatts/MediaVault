@@ -62,6 +62,14 @@ export function formatLabel(format: string): string {
   return FORMAT_LABELS[format] ?? format;
 }
 
+/** Sort key that puts season 0 — the specials — after every real season.
+ *  Plain ascending seasonNumber opens a show on a Christmas one-off instead
+ *  of its first episode, both in the season list and in what the Play button
+ *  offers, so the two order themselves by this instead. */
+export function seasonSortRank(seasonNumber: number): number {
+  return seasonNumber === 0 ? Number.MAX_SAFE_INTEGER : seasonNumber;
+}
+
 /** Whether UltraHD rips can be played at all. Off until UHD_PLAN.md's HEVC
  *  and cache work lands: the local engine can't hand 4K HEVC 10-bit to
  *  Apple's native players, and the production box has neither the

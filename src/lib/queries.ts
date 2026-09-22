@@ -16,6 +16,7 @@ import { prisma } from "@/lib/db";
 import { allowsCertificate, type AgeLimit } from "@/lib/age-rating";
 import {
   resolutionTier,
+  seasonSortRank,
   videoCodecLabel,
   WATCH_PROGRESS_MIN_SECS,
   type Format,
@@ -874,6 +875,12 @@ export async function getShowDetail(id: number, limit: AgeLimit): Promise<ShowDe
       episodes,
     };
   });
+
+  // Specials read as an appendix, not a prologue: season 0 goes to the end,
+  // the same order the Play button picks from (seasonSortRank). Sorted here
+  // rather than in the query so the native clients' /api/v1/shows/[id] gets
+  // the same reading order as the web page.
+  seasons.sort((a, b) => seasonSortRank(a.seasonNumber) - seasonSortRank(b.seasonNumber));
 
   const ownedEpisodeCount = seasons.reduce((sum, s) => sum + s.ownedCount, 0);
   const totalEpisodeCount = seasons.reduce((sum, s) => sum + s.totalCount, 0);

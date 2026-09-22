@@ -15,7 +15,7 @@
 // wants, reads the current state and calls set with the opposite.
 
 import { prisma } from "@/lib/db";
-import { WATCH_PROGRESS_MIN_SECS } from "@/lib/constants";
+import { WATCH_PROGRESS_MIN_SECS, seasonSortRank } from "@/lib/constants";
 import { playbackEngine } from "@/lib/playback/engine-flag";
 
 export interface FilmUserState {
@@ -140,15 +140,13 @@ export async function getNextEpisodeFile(
   });
   if (files.length === 0) return null;
 
-  // Season 0 is the specials, and nobody starts a series on a Christmas
-  // one-off: it sorts after every real season, so a first visit offers
-  // S01E01 and an unwatched special only comes up once the run proper is
-  // done. Ordering here rather than in the query because seasonNumber's own
-  // ascending order is exactly what's wrong with it.
-  const seasonRank = (seasonNumber: number) => (seasonNumber === 0 ? Number.MAX_SAFE_INTEGER : seasonNumber);
+  // Specials sort after every real season (seasonSortRank), so a first visit
+  // offers S01E01 and an unwatched special only comes up once the run proper
+  // is done. Ordering here rather than in the query because seasonNumber's
+  // own ascending order is exactly what's wrong with it.
   const ordered = [...files].sort(
     (a, b) =>
-      seasonRank(a.episode.season.seasonNumber) - seasonRank(b.episode.season.seasonNumber) ||
+      seasonSortRank(a.episode.season.seasonNumber) - seasonSortRank(b.episode.season.seasonNumber) ||
       a.episode.episodeNumber - b.episode.episodeNumber ||
       a.id - b.id,
   );
