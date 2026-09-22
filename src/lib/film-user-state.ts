@@ -110,6 +110,9 @@ export async function getShowIdsState(userId: string): Promise<{ favouriteIds: n
 export interface NextEpisode {
   episodeFileId: number;
   label: string;
+  /** The season it sits in, so the show page can open that season's fold
+   *  rather than work it out from the label. */
+  seasonNumber: number;
   /** They stopped part-way through this episode rather than finishing it, so
    *  the button offers to carry on rather than to start. The player picks the
    *  position itself from its own progress GET; this only decides the word. */
@@ -165,11 +168,22 @@ export async function getNextEpisodeFile(
     .map((file) => ({ file, progress: progressOf(file) }))
     .filter((row) => row.progress && !row.progress.completed && row.progress.positionSecs >= WATCH_PROGRESS_MIN_SECS)
     .sort((a, b) => b.progress!.updatedAt.getTime() - a.progress!.updatedAt.getTime())[0];
-  if (started) return { episodeFileId: started.file.id, label: label(started.file), resume: true };
+  if (started)
+    return {
+      episodeFileId: started.file.id,
+      label: label(started.file),
+      seasonNumber: started.file.episode.season.seasonNumber,
+      resume: true,
+    };
 
   // Otherwise the first they haven't finished — and if they've finished the
   // lot, the opening episode, so the button restarts the series rather than
   // landing them on a special.
   const next = ordered.find((f) => !progressOf(f)?.completed) ?? ordered[0];
-  return { episodeFileId: next.id, label: label(next), resume: false };
+  return {
+    episodeFileId: next.id,
+    label: label(next),
+    seasonNumber: next.episode.season.seasonNumber,
+    resume: false,
+  };
 }
