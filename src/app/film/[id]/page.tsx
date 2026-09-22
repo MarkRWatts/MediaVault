@@ -108,7 +108,9 @@ export default async function FilmPage({
               size="w780"
               priority
               sizes="(min-width: 640px) 224px, 55vw"
-              className="aspect-2/3 w-40 shrink-0 rounded-lg border border-border-strong shadow-lg shadow-black/40 sm:w-56"
+              // self-start so a long overview can't stretch the box past 2:3 and
+              // have object-cover crop the artwork — see the show page's twin.
+              className="aspect-2/3 w-40 shrink-0 self-start rounded-lg border border-border-strong shadow-lg shadow-black/40 sm:w-56"
             />
 
             <div className="flex flex-1 flex-col gap-3 pt-1">

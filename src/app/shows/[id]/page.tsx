@@ -82,7 +82,11 @@ export default async function ShowPage({
               size="w780"
               priority
               sizes="(min-width: 640px) 224px, 55vw"
-              className="aspect-2/3 w-40 shrink-0 rounded-lg border border-border-strong shadow-lg shadow-black/40 sm:w-56"
+              // self-start: the row stretches its items to the tallest one, and
+              // a stretched height beats aspect-ratio — so a long overview made
+              // the poster box taller than 2:3 and object-cover ate the sides of
+              // the artwork (Sharpe lost the end of its title).
+              className="aspect-2/3 w-40 shrink-0 self-start rounded-lg border border-border-strong shadow-lg shadow-black/40 sm:w-56"
             />
 
             <div className="flex flex-1 flex-col gap-3 pt-1">
