@@ -5,6 +5,7 @@
 //   Version.format:        BLURAY | DVD | HD | SD | UNKNOWN
 //   Version.videoRange:    SDR | HDR10 | HLG | DOLBY_VISION
 //   Film.matchConfidence:  EXACT | SEARCH | LOW | UNMATCHED
+//   Film.kind:             FILM | CONCERT
 //   Album.kind:            STUDIO | COMPILATION | EP | LIVE | SINGLE | REMIX | SOUNDTRACK | OTHER
 //   Album.coverSource:     embedded | itunes | discogs | manual
 //   Track.codec:           alac | aac | mp3 | flac | drm | unknown
@@ -40,11 +41,20 @@ model Collection {
 // One movie identity. Rows also exist for films we DON'T own (owned=false),
 // created from TMDB collection membership — that's what the missing-films
 // report is built from.
+//
+// Music concerts (CONCERTS_PATH rips) are Film rows too, marked kind=CONCERT:
+// they want the same Version/AudioTrack/probe/TMDB/Jellyfin/playback
+// machinery, and only differ in where they're browsed — the Music section,
+// not Movies. Every Movies-side listing filters them out; see queries.ts.
 
 model Film {
   id              Int                @id @default(autoincrement())
   title           String
   sortTitle       String // normalised for sorting/grouping ("Matrix, The" style not needed — just lowercased, articles stripped)
+  kind            String             @default("FILM")
+  /// The act, for kind=CONCERT rips named "Artist - Title (Year)". Null for
+  /// films and for concerts whose filename carries no artist part.
+  performer       String?
   year            Int?
   imdbId          String?            @unique
   tmdbId          Int?               @unique

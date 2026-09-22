@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "Film" ADD COLUMN "kind" TEXT NOT NULL DEFAULT 'FILM';
+ALTER TABLE "Film" ADD COLUMN "performer" TEXT;

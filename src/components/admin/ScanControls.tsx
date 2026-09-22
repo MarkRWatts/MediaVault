@@ -23,6 +23,8 @@ interface RunsResponse {
   latestEnrichMusic: RunInfo | null;
   latestEnrichScene: RunInfo | null;
   latestJellyfin: RunInfo | null;
+  latestScanConcert: RunInfo | null;
+  latestEnrichConcert: RunInfo | null;
   running: boolean;
 }
 
@@ -36,6 +38,8 @@ const EMPTY: RunsResponse = {
   latestEnrichMusic: null,
   latestEnrichScene: null,
   latestJellyfin: null,
+  latestScanConcert: null,
+  latestEnrichConcert: null,
   running: false,
 };
 
@@ -48,6 +52,8 @@ type OpKey =
   | "enrichTv"
   | "enrichMusic"
   | "enrichScene"
+  | "scanConcert"
+  | "enrichConcert"
   | "jellyfinSync";
 
 const OP_ENDPOINT: Record<OpKey, string> = {
@@ -59,6 +65,8 @@ const OP_ENDPOINT: Record<OpKey, string> = {
   enrichTv: "/api/enrich/tv",
   enrichMusic: "/api/enrich-music",
   enrichScene: "/api/enrich/scene",
+  scanConcert: "/api/scan/concert",
+  enrichConcert: "/api/enrich/concert",
   jellyfinSync: "/api/jellyfin-sync",
 };
 
@@ -71,6 +79,8 @@ const OP_RUN_KEY: Record<OpKey, Exclude<keyof RunsResponse, "running">> = {
   enrichTv: "latestEnrichTv",
   enrichMusic: "latestEnrichMusic",
   enrichScene: "latestEnrichScene",
+  scanConcert: "latestScanConcert",
+  enrichConcert: "latestEnrichConcert",
   jellyfinSync: "latestJellyfin",
 };
 
@@ -79,6 +89,7 @@ const SECTIONS: { title: string; scan: OpKey; enrich: OpKey }[] = [
   { title: "TV Shows", scan: "scanTv", enrich: "enrichTv" },
   { title: "Music", scan: "scanMusic", enrich: "enrichMusic" },
   { title: "Adult", scan: "scanScene", enrich: "enrichScene" },
+  { title: "Concerts", scan: "scanConcert", enrich: "enrichConcert" },
 ];
 
 function relativeTime(iso: string | null): string {

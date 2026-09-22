@@ -1,4 +1,5 @@
-// Walks MOVIES_PATH (and, optionally, TVSHOWS_PATH / MUSIC_PATH), parses
+// Walks MOVIES_PATH (and, optionally, TVSHOWS_PATH / MUSIC_PATH /
+// CONCERTS_PATH, the last of which runs the film scan over concert rips), parses
 // filenames, probes files with ffprobe, and upserts Film/Version/AudioTrack,
 // Show/ShowSeason/Episode/EpisodeFile, and Artist/Album/Track rows in a
 // single SCAN run. See PLAN.md "Scanner" / SPEC-MUSIC.md "Scanner" and the
@@ -10,7 +11,7 @@ import { prisma } from "@/lib/db";
 import { probe, type ProbedAudioTrack } from "@/lib/ffprobe";
 import { getCuesKeyframes } from "@/lib/playback/keyframes";
 import { saveKeyframeIndex, type KeyframeKind } from "@/lib/playback/keyframe-store";
-import { parseFileName, filmKey, normalizeTitle, sortTitle, VIDEO_EXTENSIONS, type ParsedFile } from "@/lib/parse";
+import { parseFileName, parseConcertPath, filmKey, normalizeTitle, sortTitle, VIDEO_EXTENSIONS, type ParsedConcert } from "@/lib/parse";
 import { parseEpisodePath, type ParsedEpisodeFile } from "@/lib/parse-tv";
 import { parseTrackPath, type ParsedTrack } from "@/lib/parse-music";
 import { classifyFormat, isLosslessCodec, MUSIC_EXTENSIONS } from "@/lib/constants";
@@ -22,11 +23,14 @@ const PROBE_CONCURRENCY = 3;
 const PROGRESS_UPDATE_EVERY = 3;
 
 interface CandidateFile {
-  parsed: ParsedFile;
+  parsed: ParsedConcert;
   absPath: string;
   size: number;
   mtimeMs: number;
 }
+
+/** Film.kind values the film scan can produce — one library folder each. */
+type FilmKind = "FILM" | "CONCERT";
 
 async function walk(root: string, dir: string, depth: number, out: string[]): Promise<void> {
   let entries;
@@ -69,7 +73,7 @@ async function mapPool<T, R>(items: T[], limit: number, fn: (item: T, idx: numbe
  * filmKey. Handles the owned=false → owned=true reconciliation for films
  * that already exist as TMDB-collection placeholders.
  */
-async function resolveFilm(representative: ParsedFile, log: string[]): Promise<number> {
+async function resolveFilm(representative: ParsedConcert, kind: FilmKind, log: string[]): Promise<number> {
   let film = null;
 
   // Cascade through identifiers rather than picking exactly one branch: a
@@ -90,9 +94,14 @@ async function resolveFilm(representative: ParsedFile, log: string[]): Promise<n
     // tag (or whose tag doesn't match an unbackfilled stub) should still
     // merge into a disc you already logged instead of creating a
     // duplicate. Mirrors the same OR in getLibraryFilms.
+    //
+    // Scoped to this library's kind: a concert and a movie can share a title
+    // and year ("Pulse"), and merging them would put a concert rip on a
+    // Movies-page film — or the reverse — with no way back.
     const normTitle = normalizeTitle(representative.title);
     const candidates = await prisma.film.findMany({
       where: {
+        kind,
         year: representative.year,
         OR: [{ owned: true }, { physicalCopies: { some: {} } }],
       },
@@ -108,6 +117,11 @@ async function resolveFilm(representative: ParsedFile, log: string[]): Promise<n
     }
     if (representative.imdbId && !film.imdbId) updates.imdbId = representative.imdbId;
     if (representative.tmdbId && !film.tmdbId) updates.tmdbId = representative.tmdbId;
+    // A rename that adds the act ("Pulse" → "Pink Floyd - Pulse") should
+    // land on the existing row rather than wait for the next fresh scan.
+    if (representative.performer && representative.performer !== film.performer) {
+      updates.performer = representative.performer;
+    }
     if (Object.keys(updates).length > 0) {
       film = await prisma.film.update({ where: { id: film.id }, data: updates });
     }
@@ -118,6 +132,8 @@ async function resolveFilm(representative: ParsedFile, log: string[]): Promise<n
     data: {
       title: representative.title,
       sortTitle: sortTitle(representative.title),
+      kind,
+      performer: representative.performer,
       year: representative.year,
       imdbId: representative.imdbId,
       tmdbId: representative.tmdbId,
@@ -618,17 +634,27 @@ async function triggerJellyfinSync(): Promise<void> {
   }
 }
 
-async function doScanFilms(runId: number, force: boolean): Promise<void> {
+/**
+ * The film scan, over whichever library holds this kind of Film row —
+ * MOVIES_PATH for FILM, CONCERTS_PATH for CONCERT. Identical work either
+ * way (walk, parse, probe, upsert Film/Version/AudioTrack, prune what's
+ * gone, hand off to Jellyfin); only the root, the name parser and the noun
+ * differ, and every query is scoped to `kind` so one library's scan never
+ * prunes or merges into the other's rows.
+ */
+async function doScanFilmLibrary(runId: number, force: boolean, kind: FilmKind): Promise<void> {
   const log: string[] = [];
-  const moviesPath = process.env.MOVIES_PATH;
-  if (!moviesPath) throw new Error("MOVIES_PATH is not set");
+  const noun = kind === "CONCERT" ? "concert" : "movie";
+  const rootEnv = kind === "CONCERT" ? "CONCERTS_PATH" : "MOVIES_PATH";
+  const root = process.env[rootEnv];
+  if (!root) throw new Error(`${rootEnv} is not set`);
 
   const relPaths: string[] = [];
-  await walk(moviesPath, moviesPath, 0, relPaths);
+  await walk(root, root, 0, relPaths);
 
   const candidates: CandidateFile[] = [];
   for (const relPath of relPaths) {
-    const absPath = path.join(moviesPath, relPath);
+    const absPath = path.join(root, relPath);
     let stat;
     try {
       stat = await fs.stat(absPath);
@@ -636,13 +662,14 @@ async function doScanFilms(runId: number, force: boolean): Promise<void> {
       log.push(`Could not stat "${relPath}": ${err instanceof Error ? err.message : String(err)}`);
       continue;
     }
-    const parsed = parseFileName(relPath);
+    const parsed: ParsedConcert =
+      kind === "CONCERT" ? parseConcertPath(relPath) : { ...parseFileName(relPath), performer: null };
     if (parsed.year == null) log.push(`No year parsed for "${relPath}"`);
     candidates.push({ parsed, absPath, size: stat.size, mtimeMs: stat.mtimeMs });
   }
 
   const total = candidates.length;
-  await updateProgress(runId, { total, filesSeen: 0, progress: 0, message: `Found ${total} movie file(s)` });
+  await updateProgress(runId, { total, filesSeen: 0, progress: 0, message: `Found ${total} ${noun} file(s)` });
 
   let completed = 0;
   async function reportProgress(message: string): Promise<void> {
@@ -663,7 +690,7 @@ async function doScanFilms(runId: number, force: boolean): Promise<void> {
 
   const filmIdByPath = new Map<string, number>();
   for (const files of groups.values()) {
-    const filmId = await resolveFilm(files[0].parsed, log);
+    const filmId = await resolveFilm(files[0].parsed, kind, log);
     for (const f of files) filmIdByPath.set(f.parsed.relPath, filmId);
   }
 
@@ -674,9 +701,11 @@ async function doScanFilms(runId: number, force: boolean): Promise<void> {
     await reportProgress(`Probed ${completed}/${total}: ${file.parsed.fileName}`);
   });
 
-  // Delete Version rows for files no longer on disk.
+  // Delete Version rows for files no longer on disk. Only this library's —
+  // a relPath is relative to its own root, so the other library's paths
+  // would all look "missing" from here.
   const seenPaths = new Set(candidates.map((c) => c.parsed.relPath));
-  const allVersions = await prisma.version.findMany({ select: { id: true, filePath: true } });
+  const allVersions = await prisma.version.findMany({ where: { film: { kind } }, select: { id: true, filePath: true } });
   const staleVersionIds = allVersions.filter((v) => !seenPaths.has(v.filePath)).map((v) => v.id);
   if (staleVersionIds.length > 0) {
     await prisma.version.deleteMany({ where: { id: { in: staleVersionIds } } });
@@ -686,7 +715,7 @@ async function doScanFilms(runId: number, force: boolean): Promise<void> {
   // Owned films left with zero versions: drop, unless they're collection
   // members (revert to a "missing" placeholder instead).
   const emptyOwnedFilms = await prisma.film.findMany({
-    where: { owned: true, versions: { none: {} } },
+    where: { kind, owned: true, versions: { none: {} } },
     select: { id: true, title: true, collectionId: true },
   });
   for (const f of emptyOwnedFilms) {
@@ -699,7 +728,7 @@ async function doScanFilms(runId: number, force: boolean): Promise<void> {
     }
   }
 
-  await finishRun(runId, log, `Scanned ${total} movie file(s)`);
+  await finishRun(runId, log, `Scanned ${total} ${noun} file(s)`);
   await triggerJellyfinSync();
 }
 
@@ -1162,20 +1191,22 @@ async function doScanScenes(runId: number, force: boolean): Promise<void> {
   await finishRun(runId, log, `Scanned ${total} file(s)`);
 }
 
-export type ScanMediaType = "FILM" | "TV" | "MUSIC" | "SCENE";
+export type ScanMediaType = "FILM" | "TV" | "MUSIC" | "SCENE" | "CONCERT";
 
 const SCAN_KIND: Record<ScanMediaType, RunKind> = {
   FILM: "SCAN_FILM",
   TV: "SCAN_TV",
   MUSIC: "SCAN_MUSIC",
   SCENE: "SCAN_SCENE",
+  CONCERT: "SCAN_CONCERT",
 };
 
 const SCAN_RUNNER: Record<ScanMediaType, (runId: number, force: boolean) => Promise<void>> = {
-  FILM: doScanFilms,
+  FILM: (runId, force) => doScanFilmLibrary(runId, force, "FILM"),
   TV: doScanTv,
   MUSIC: doScanMusic,
   SCENE: doScanScenes,
+  CONCERT: (runId, force) => doScanFilmLibrary(runId, force, "CONCERT"),
 };
 
 const SCAN_PATH_ENV: Record<ScanMediaType, string> = {
@@ -1183,6 +1214,7 @@ const SCAN_PATH_ENV: Record<ScanMediaType, string> = {
   TV: "TVSHOWS_PATH",
   MUSIC: "MUSIC_PATH",
   SCENE: "ADULT_PATH",
+  CONCERT: "CONCERTS_PATH",
 };
 
 /**

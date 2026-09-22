@@ -18,7 +18,7 @@ import path from "node:path";
 import { prisma } from "@/lib/db";
 import { probe, type ProbeResult, type ProbedAudioTrack } from "@/lib/ffprobe";
 import { audioTrackLabel } from "@/lib/audio-track-label";
-import { mediaRootEnv, resolveSourcePath } from "@/lib/video-cache";
+import { filmRootEnv, mediaRootEnv, resolveSourcePath } from "@/lib/video-cache";
 import {
   pickAudioTrack,
   planVideoPlayback,
@@ -161,10 +161,14 @@ interface SourceRow {
   filePath: string;
   container: string | null;
   durationSecs: number | null;
+  /** The share `filePath` is relative to — a "film" is either a movie
+   *  under MOVIES_PATH or a concert rip under CONCERTS_PATH. */
+  rootEnv: string;
 }
 
-/** film -> Version under MOVIES_PATH, episode -> EpisodeFile under
- *  TVSHOWS_PATH, scene -> Scene under ADULT_PATH. Only the *locating*
+/** film -> Version under MOVIES_PATH (or CONCERTS_PATH, for a concert
+ *  rip), episode -> EpisodeFile under TVSHOWS_PATH, scene -> Scene under
+ *  ADULT_PATH. Only the *locating*
  *  fields are read; the stream details all come from the probe below.
  *  A film whose Film row isn't `owned` is not playable, the same rule
  *  video-cache.ts's loadVersion applies. */
@@ -172,23 +176,33 @@ async function loadRow(kind: MediaKind, id: number): Promise<SourceRow | null> {
   if (kind === "film") {
     const version = await prisma.version.findUnique({
       where: { id },
-      select: { filePath: true, container: true, durationSecs: true, film: { select: { owned: true } } },
+      select: {
+        filePath: true,
+        container: true,
+        durationSecs: true,
+        film: { select: { owned: true, kind: true } },
+      },
     });
     if (!version || !version.film?.owned) return null;
-    return { filePath: version.filePath, container: version.container, durationSecs: version.durationSecs };
+    return {
+      filePath: version.filePath,
+      container: version.container,
+      durationSecs: version.durationSecs,
+      rootEnv: filmRootEnv(version.film.kind),
+    };
   }
   if (kind === "episode") {
     const file = await prisma.episodeFile.findUnique({
       where: { id },
       select: { filePath: true, container: true, durationSecs: true },
     });
-    return file ?? null;
+    return file ? { ...file, rootEnv: mediaRootEnv(kind) } : null;
   }
   const scene = await prisma.scene.findUnique({
     where: { id },
     select: { filePath: true, container: true, durationSecs: true },
   });
-  return scene ?? null;
+  return scene ? { ...scene, rootEnv: mediaRootEnv(kind) } : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -277,11 +291,11 @@ export async function resolveSource(
   const row = await loadRow(kind, id);
   if (!row) return null;
 
-  const absPath = resolveSourcePath(kind, row.filePath);
+  const absPath = resolveSourcePath(kind, row.filePath, row.rootEnv);
   if (!absPath) return null;
   const stat = await fs.stat(absPath).catch(() => null);
   if (!stat?.isFile()) {
-    throw new PlaybackError("not-found", `${mediaRootEnv(kind)} has no readable file at ${row.filePath}`);
+    throw new PlaybackError("not-found", `${row.rootEnv} has no readable file at ${row.filePath}`);
   }
 
   const probed = await cachedProbe(absPath, stat.mtimeMs, stat.size);

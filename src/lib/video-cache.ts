@@ -67,6 +67,10 @@ export type VideoStatus =
 interface ResolvedMedia {
   id: number;
   filePath: string;
+  /** Which share `filePath` is relative to — carried per row because a
+   *  "film" is either a movie under MOVIES_PATH or a concert rip under
+   *  CONCERTS_PATH (Film.kind), and only the row knows which. */
+  rootEnv: string;
   videoCodec: string | null;
   container: string | null;
   durationSecs: number | null;
@@ -407,12 +411,13 @@ function clearIdleTimer(key: string): void {
 async function loadVersion(versionId: number): Promise<ResolvedMedia | null> {
   const version = await prisma.version.findUnique({
     where: { id: versionId },
-    include: { audioTracks: true, film: { select: { owned: true } } },
+    include: { audioTracks: true, film: { select: { owned: true, kind: true } } },
   });
   if (!version || !version.film?.owned) return null;
   return {
     id: version.id,
     filePath: version.filePath,
+    rootEnv: filmRootEnv(version.film.kind),
     videoCodec: version.videoCodec,
     container: version.container,
     durationSecs: version.durationSecs,
@@ -438,6 +443,7 @@ async function loadScene(sceneId: number): Promise<ResolvedMedia | null> {
     return {
       id: scene.id,
       filePath: scene.filePath,
+      rootEnv: mediaRootEnv("scene"),
       videoCodec: result.videoCodec,
       container: scene.container,
       durationSecs: scene.durationSecs,
@@ -462,10 +468,19 @@ export function mediaRootEnv(kind: PlaybackMediaKind): string {
   return "ADULT_PATH";
 }
 
+/** The "film" kind spans two libraries — see ResolvedMedia.rootEnv. */
+export function filmRootEnv(filmKind: string): string {
+  return filmKind === "CONCERT" ? "CONCERTS_PATH" : "MOVIES_PATH";
+}
+
 /** A DB row's stored relative `filePath` resolved against its share, or null
  *  when the share isn't configured or the path escapes it. */
-export function resolveSourcePath(kind: PlaybackMediaKind, filePath: string): string | null {
-  const mediaRoot = process.env[mediaRootEnv(kind)];
+export function resolveSourcePath(
+  kind: PlaybackMediaKind,
+  filePath: string,
+  rootEnv: string = mediaRootEnv(kind),
+): string | null {
+  const mediaRoot = process.env[rootEnv];
   if (!mediaRoot) return null;
   const root = path.resolve(mediaRoot);
   const absPath = path.resolve(root, filePath);
@@ -597,8 +612,8 @@ async function prepare(
   plan: VideoPlaybackPlan,
 ): Promise<void> {
   const key = cacheKey(kind, id, variant);
-  const sourceAbsPath = resolveSourcePath(kind, media.filePath);
-  if (!sourceAbsPath) throw new Error(`${mediaRootEnv(kind)} not set or file path outside its root`);
+  const sourceAbsPath = resolveSourcePath(kind, media.filePath, media.rootEnv);
+  if (!sourceAbsPath) throw new Error(`${media.rootEnv} not set or file path outside its root`);
   const sourceStat = await fs.stat(sourceAbsPath); // throws if the file's missing on disk
 
   // Bounded concurrency (src/lib/semaphore.ts): a whole-file ffmpeg run per
@@ -723,7 +738,7 @@ export async function getVideoStatus(kind: MediaKind, id: number, variant: Varia
   const durationSecs = media.durationSecs;
   const mseMime = mseMimeForVariant(plan, variant);
   if (plan.tier === "direct" && variant === "original") {
-    const sourceAbsPath = resolveSourcePath(kind, media.filePath);
+    const sourceAbsPath = resolveSourcePath(kind, media.filePath, media.rootEnv);
     if (!sourceAbsPath || !(await fileExists(sourceAbsPath))) return { state: "not-found" };
     return { state: "direct", durationSecs, mseMime };
   }
@@ -768,7 +783,7 @@ export async function resolveVideoStream(kind: MediaKind, id: number): Promise<V
   if (!loaded) return { kind: "not-found" };
   const { media, plan } = loaded;
   if (plan.tier !== "direct") return { kind: "needs-prepare" };
-  const sourceAbsPath = resolveSourcePath(kind, media.filePath);
+  const sourceAbsPath = resolveSourcePath(kind, media.filePath, media.rootEnv);
   if (!sourceAbsPath || !(await fileExists(sourceAbsPath))) return { kind: "not-found" };
   return { kind: "complete", absPath: sourceAbsPath, contentType: "video/mp4" };
 }

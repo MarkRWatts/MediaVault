@@ -199,7 +199,7 @@ export function parseFfprobeJson(stdout: string): ProbeResult {
  * Run ffprobe with arbitrary `-show_entries`/output args against a file
  * given its absolute path on the local filesystem (or, when falling back to
  * Docker, a path under one of the media roots — MOVIES_PATH, TVSHOWS_PATH,
- * MUSIC_PATH, or ADULT_PATH — so it can be translated to a container
+ * MUSIC_PATH, ADULT_PATH or CONCERTS_PATH — so it can be translated to a container
  * mount), returning raw stdout. This is the one place that decides "local
  * binary or Docker fallback" and constructs the actual argv, so every other
  * caller (probe() below, keyframes.ts's ffprobe fallback) goes through it
@@ -227,10 +227,11 @@ export async function runFfprobeRaw(args: string[], absPath: string): Promise<st
     process.env.TVSHOWS_PATH,
     process.env.MUSIC_PATH,
     process.env.ADULT_PATH,
+    process.env.CONCERTS_PATH,
   ].filter((r): r is string => !!r);
   if (roots.length === 0) {
     throw new Error(
-      "No media root (MOVIES_PATH/TVSHOWS_PATH/MUSIC_PATH/ADULT_PATH) set; cannot translate path for dockerized ffprobe",
+      "No media root (MOVIES_PATH/TVSHOWS_PATH/MUSIC_PATH/ADULT_PATH/CONCERTS_PATH) set; cannot translate path for dockerized ffprobe",
     );
   }
   let mountRoot: string | null = null;
