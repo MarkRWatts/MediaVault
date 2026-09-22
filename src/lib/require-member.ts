@@ -160,6 +160,18 @@ export async function requireOwnerOrRedirect(): Promise<Owner> {
   return owner;
 }
 
+/** Is this user the app owner? For a page everyone may open that carries an
+ *  owner-only control — the film page's show-link editor. Deciding whether
+ *  to render the control, NOT the gate: that is requireOwner() inside the
+ *  action it submits to. */
+export async function isAppOwner(userId: string): Promise<boolean> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { isAppOwner: true },
+  });
+  return user?.isAppOwner === true;
+}
+
 /** Server-action variant: throws for non-owners (the caller's form
  *  surfaces it as an error), mirroring requireMember()'s throw-vs-redirect
  *  split. Used by the admin actions (mint/send/revoke access codes). */

@@ -4,7 +4,9 @@ import PosterImage from "@/components/PosterImage";
 import VersionCard from "@/components/VersionCard";
 import FilmActions from "@/components/FilmActions";
 import CertificationBadge from "@/components/CertificationBadge";
-import { requireMemberOrRedirect } from "@/lib/require-member";
+import { isAppOwner, requireMemberOrRedirect } from "@/lib/require-member";
+import FilmShowLinksEditor from "@/components/FilmShowLinksEditor";
+import { getFilmShows, getLinkableShows } from "@/lib/queries-film-shows";
 import { getFilmUserState } from "@/lib/film-user-state";
 import { audioTrackLabel } from "@/lib/audio-track-label";
 import CollectionStrip from "@/components/CollectionStrip";
@@ -64,6 +66,13 @@ export default async function FilmPage({
         film.versions.map((v) => v.id),
       )
     : { favourite: false, watched: false };
+
+  // Which shows this film belongs with, curated by hand (FilmShowLink). The
+  // picker's pool is only fetched for the owner, who is the only person who
+  // can write one; a concert is never part of a series, so it gets neither.
+  const linkedShows = isConcert ? [] : await getFilmShows(film.id, ageLimit);
+  const canEditLinks = !isConcert && (await isAppOwner(userId));
+  const linkableShows = canEditLinks ? await getLinkableShows(ageLimit) : [];
 
   return (
     <div className="flex flex-1 flex-col">
@@ -152,6 +161,31 @@ export default async function FilmPage({
                       {g}
                     </span>
                   ))}
+                </div>
+              )}
+
+              {/* "Part of" is said once and the shows follow it as chips —
+                  the 1994 Stargate belongs to three of them, and three
+                  chips each repeating the phrase would be a mouthful. */}
+              {(linkedShows.length > 0 || canEditLinks) && (
+                <div className="flex flex-wrap items-center gap-1.5 text-xs text-text-faint">
+                  {linkedShows.length > 0 && <span>Part of</span>}
+                  {linkedShows.map((s) => (
+                    <Link
+                      key={s.id}
+                      href={`/shows/${s.id}`}
+                      className="rounded-full border border-border px-2.5 py-0.5 text-text-muted transition-colors hover:border-accent hover:text-accent"
+                    >
+                      {s.title}
+                    </Link>
+                  ))}
+                  {canEditLinks && (
+                    <FilmShowLinksEditor
+                      filmId={film.id}
+                      linked={linkedShows}
+                      allShows={linkableShows}
+                    />
+                  )}
                 </div>
               )}
 
