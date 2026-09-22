@@ -28,6 +28,9 @@ services:
       # (same /media-share volume as movies/music) — plain passthrough,
       # empty by default, which skips the Adult scan/enrich phases entirely.
       ADULT_PATH: ${ADULT_PATH:-}
+      # Root of the concert rips, same story — passthrough, empty by
+      # default, which skips the concert scan/enrich phases entirely.
+      CONCERTS_PATH: ${CONCERTS_PATH:-}
       ADULT_IMAGE_CACHE_DIR: /app/data/adult-images
       # TMDB API key (optional, free) — enables posters, metadata, and
       # collection/missing-film detection. Leave blank to scan-only.

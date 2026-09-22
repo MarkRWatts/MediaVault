@@ -44,6 +44,10 @@ collection, show and back catalogue.
   grouped by the format you own: Digital & CD, and Vinyl. An album page
   switches between the digital copy and each physical pressing, with the
   pressing's own tracklist, catalogue number and cover art.
+- **Concerts** — music concert Blu-ray and DVD rips from their own folder,
+  shown as a shelf in the Music section rather than among the films. Each
+  one opens the ordinary film page — versions, artwork from TMDB and the
+  same playback.
 - **Music player** — gapless, lossless, app-wide. Every track streams as raw
   PCM at the device's own sample rate and starts on the first half-second
   chunk, so playback begins about 100 ms after the click on the LAN.
@@ -144,6 +148,7 @@ list with comments; the tables below cover what matters most.
 | `MOVIES_PATH` | Folder of movie files the scanner walks. |
 | `TVSHOWS_PATH` | Folder of TV shows (`Show (Year)/Season NN/Show SxxEyy.ext`). Optional; unset skips every TV feature. |
 | `MUSIC_PATH` | Folder of a music library in iTunes layout (`Artist/Album/NN Track.m4a`). Optional; unset skips every music feature. |
+| `CONCERTS_PATH` | Folder of concert rips, named `Artist - Title (Year)`. Optional; unset skips the concert scan. |
 | `POSTER_CACHE_DIR` | Where downloaded artwork is cached (posters, backdrops, covers, artist photos). |
 | `DATABASE_URL` | SQLite location, e.g. `file:./data/mediavault.db`. |
 | `FFPROBE_DOCKER_IMAGE` | Dev-only fallback: run ffprobe and ffmpeg through `docker run` when they are not on PATH. The deploy image installs ffmpeg. |
@@ -216,9 +221,11 @@ routes with the browser's session cookie:
 curl -X POST localhost:3000/api/scan/film     # add ?force=1 to re-probe everything
 curl -X POST localhost:3000/api/scan/tv
 curl -X POST localhost:3000/api/scan/music
+curl -X POST localhost:3000/api/scan/concert
 curl -X POST localhost:3000/api/enrich/film
 curl -X POST localhost:3000/api/enrich/tv
 curl -X POST localhost:3000/api/enrich-music
+curl -X POST localhost:3000/api/enrich/concert
 curl -X POST localhost:3000/api/jellyfin-sync
 ```
 
