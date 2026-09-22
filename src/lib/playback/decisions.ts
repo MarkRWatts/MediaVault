@@ -318,8 +318,16 @@ export function throttleAction(input: ThrottleInput): "pause" | "resume" | null 
  *  in plan.json -- source mtime/size, the table hash -- moves when only the
  *  *decision* about a file changes underneath it. Bumping the version is the
  *  only way to invalidate those cached segments; they otherwise look exactly
- *  as fresh as ones cut under the corrected rule. */
-export const PLAN_VERSION = 2;
+ *  as fresh as ones cut under the corrected rule.
+ *
+ *  3 (video-playback.ts): AC-3 stopped being a codec we copy, so a segment
+ *  cut under version 2 carries AC-3 audio while the master playlist -- built
+ *  fresh from the current plan on every request -- now advertises the AAC
+ *  those segments don't contain. The audio choice doesn't move the segment
+ *  boundaries, so the table hash is identical and the directory looks clean.
+ *  Chrome played the video in silence with the speaker greyed out; Safari
+ *  hid it entirely by decoding the AC-3 anyway (22 Sep 2026). */
+export const PLAN_VERSION = 3;
 
 /** What `<key>/plan.json` holds: enough to prove the directory's segments
  *  were produced from the file that is on the share *now*, and against the
