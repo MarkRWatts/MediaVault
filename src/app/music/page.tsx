@@ -8,6 +8,7 @@ import AlbumCardHeart from "@/components/music/AlbumCardHeart";
 import PhysicalAddForm from "@/components/PhysicalAddForm";
 import CollapsibleSection from "@/components/CollapsibleSection";
 import FavouriteTracksTile from "@/components/music/FavouriteTracksTile";
+import { MusicViewSwitcher } from "@/components/music/MusicViewSwitcher";
 import { getMusicIndex, getArtistDetail, getMusicFavourites } from "@/lib/queries-music";
 import { requireMemberOrRedirect } from "@/lib/require-member";
 import type { MusicIndexArtist, FavouriteAlbumView } from "@/lib/queries-music";
@@ -117,6 +118,9 @@ export default async function MusicPage() {
     <div className="flex flex-1 flex-col">
       <div className="border-b border-border px-4 pt-6 sm:px-6">
         <h1 className="font-display text-3xl tracking-wide">Music</h1>
+        <div className="mt-3">
+          <MusicViewSwitcher />
+        </div>
         {artists.length > 0 && (
           <p className="mt-1 pb-6 font-mono text-xs text-text-faint">
             {totals.artists} artist{totals.artists === 1 ? "" : "s"} · {totals.albumsOwned} album
