@@ -1244,14 +1244,25 @@ async function enrichArtistBioAndImages(
   }
 }
 
-async function enrichOneArtist(artist: Artist, log: string[]): Promise<void> {
+/**
+ * How one artist's enrichment ended, so a run can summarise itself: every
+ * log line below fires only on something unusual, so a settled catalogue
+ * used to leave /admin with no Log disclosure at all. "already-matched"
+ * covers a row this pass had no matching work for, Discogs having no forced
+ * re-match path the way TMDB does.
+ */
+type ArtistEnrichOutcome = "matched" | "already-matched" | "unmatched" | "conflict" | "compilations";
+
+async function enrichOneArtist(artist: Artist, log: string[]): Promise<ArtistEnrichOutcome> {
   let discogsId = artist.discogsId;
+  let outcome: ArtistEnrichOutcome = "already-matched";
 
   if (!discogsId || artist.matchConfidence === "UNMATCHED" || artist.matchConfidence === "LOW") {
     const match = await matchArtist(artist.name);
     if (match) {
       const holder = await prisma.artist.findUnique({ where: { discogsId: match.discogsId } });
       if (holder && holder.id !== artist.id) {
+        outcome = "conflict";
         log.push(
           `Match conflict: "${artist.name}" matched Discogs artist "${match.name}" (discogs:${match.discogsId}), already claimed by "${holder.name}" — left unmatched for review`,
         );
@@ -1261,11 +1272,13 @@ async function enrichOneArtist(artist: Artist, log: string[]): Promise<void> {
           data: { discogsId: match.discogsId, matchConfidence: match.confidence },
         });
         discogsId = match.discogsId;
+        outcome = "matched";
         if (match.confidence === "LOW") {
           log.push(`Low-confidence match: "${artist.name}" -> "${match.name}" (discogs:${match.discogsId})`);
         }
       }
     } else if (!discogsId) {
+      outcome = "unmatched";
       log.push(`No Discogs match for artist "${artist.name}"`);
     }
   }
@@ -1277,11 +1290,12 @@ async function enrichOneArtist(artist: Artist, log: string[]): Promise<void> {
     // regardless of whether the artist itself is matched.
     await fetchMissingCoversForArtist(artist.id, artist.name, log);
     await enrichArtistBioAndImages(artist.id, artist.name, null, log);
-    return;
+    return outcome;
   }
 
   await reconcileArtistAlbums(artist.id, artist.name, log);
   await enrichArtistBioAndImages(artist.id, artist.name, discogsId, log);
+  return outcome;
 }
 
 async function doMusicEnrich(runId: number): Promise<void> {
@@ -1291,6 +1305,15 @@ async function doMusicEnrich(runId: number): Promise<void> {
   const total = artists.length;
   await updateProgress(runId, { total, filesSeen: 0, progress: 0, message: `Enriching ${total} artist(s)` });
 
+  const tally: Record<ArtistEnrichOutcome, number> & { failed: number } = {
+    matched: 0,
+    "already-matched": 0,
+    unmatched: 0,
+    conflict: 0,
+    compilations: 0,
+    failed: 0,
+  };
+
   let completed = 0;
   for (const artist of artists) {
     try {
@@ -1299,18 +1322,34 @@ async function doMusicEnrich(runId: number): Promise<void> {
         // back-catalogue listing entirely, but still fetch covers for its
         // owned albums so the artist grid tile isn't blank.
         await fetchMissingCoversForArtist(artist.id, artist.name, log);
+        tally.compilations++;
       } else {
-        await enrichOneArtist(artist, log);
+        tally[await enrichOneArtist(artist, log)]++;
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log.push(`Failed to enrich "${artist.name}": ${message}`);
+      tally.failed++;
     }
     completed++;
     if (completed % PROGRESS_UPDATE_EVERY === 0 || completed === total) {
       await updateProgress(runId, { progress: completed, filesSeen: completed, message: `Enriched ${completed}/${total}: ${artist.name}` });
     }
   }
+
+  // Unconditional, so a settled catalogue still has a log worth opening.
+  const albums = await prisma.album.count();
+  log.push(
+    `Considered ${total} artist(s) over ${albums} album(s)${tally.compilations ? `, skipping ${tally.compilations} compilations folder(s)` : ""}`,
+  );
+  const parts = [
+    `Matched ${tally.matched}`,
+    `already matched ${tally["already-matched"]}`,
+    `left ${tally.unmatched} unmatched`,
+  ];
+  if (tally.conflict > 0) parts.push(`${tally.conflict} match conflict(s)`);
+  if (tally.failed > 0) parts.push(`${tally.failed} failed`);
+  log.push(parts.join(", "));
 
   await finishRun(runId, log, `Enriched ${total} artist(s)`);
 }
