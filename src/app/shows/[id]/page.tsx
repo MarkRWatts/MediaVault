@@ -149,7 +149,7 @@ export default async function ShowPage({
                         source: "jellyfin",
                         audioTracks: [],
                         basePath: "/api/tv-video",
-                        label: `Play ${next.label.split(" · ")[0]}`,
+                        label: `${next.resume ? "Continue" : "Play"} ${next.label.split(" · ")[0]}`,
                         playTitle: `${show.title} ${next.label}`,
                       }
                     : null

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyFormat, resolutionTier } from "./constants";
+import { classifyFormat, resolutionTier, seasonSortRank } from "./constants";
 
 describe("classifyFormat", () => {
   it("classifies by width, including 4K", () => {
@@ -30,5 +30,11 @@ describe("resolutionTier", () => {
   it("ranks best-first for comparisons", () => {
     expect(resolutionTier(3840, 2160).rank).toBeLessThan(resolutionTier(1920, 1080).rank);
     expect(resolutionTier(1920, 1080).rank).toBeLessThan(resolutionTier(720, 576).rank);
+  });
+});
+
+describe("seasonSortRank", () => {
+  it("sends the specials to the end, leaving real seasons in order", () => {
+    expect([3, 0, 1, 2].sort((a, b) => seasonSortRank(a) - seasonSortRank(b))).toEqual([1, 2, 3, 0]);
   });
 });
