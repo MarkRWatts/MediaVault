@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { requireMemberOrRedirect } from "@/lib/require-member";
 import SignOutButton from "@/components/SignOutButton";
@@ -16,6 +15,7 @@ import { UserAvatar } from "@/components/UserAvatar";
 import { AdultAccessToggle } from "@/components/account/AdultAccessToggle";
 import { PasskeyManager } from "@/components/account/PasskeyManager";
 import { ageLimitFor, ageLimitLabel } from "@/lib/age-rating";
+import { formatRelativeTime } from "@/lib/format-time";
 
 // DB-backed, per-user page — must render per-request, not be frozen at
 // build time (the Docker image is built with no database present).
@@ -24,14 +24,15 @@ export const dynamic = "force-dynamic";
 // Unified account/household settings page (formerly /household — see
 // HOUSEHOLDS_PLAN.md's "Rebuild /household into a unified /account page").
 // Ported from the template app's app/account/page.tsx: identity (name/
-// email/sign-out) at top, an inline Admin link for the app owner, household
-// name + member list with owner-only rename/promote/demote/remove, an
-// owner-only invite form + pending-invites list, and delete-account at the
-// bottom. Restyled to MediaVault's own dark palette (see src/app/report/page.tsx
-// for the tokens this app already uses) rather than the template's light/
-// cream one. MediaVault's Household model carries no accessKind/lifetime-
-// access concept (no monetization here), so that badge from the template
-// isn't ported.
+// email/sign-out) at top, household name + member list with owner-only
+// rename/promote/demote/remove, an owner-only invite form + pending-invites
+// list, and delete-account at the bottom. Restyled to MediaVault's own dark
+// palette (see src/app/report/page.tsx for the tokens this app already
+// uses) rather than the template's light/cream one. MediaVault's Household
+// model carries no accessKind/lifetime-access concept (no monetization
+// here), so that badge from the template isn't ported. The Admin link the
+// template puts here instead lives only in the sidebar/bottom-tabs owner
+// group now (components/shell) — one way in, not two.
 export default async function AccountPage() {
   const { userId, householdId, role, ageLimit } = await requireMemberOrRedirect();
   const isOwner = role === "owner";
@@ -66,7 +67,7 @@ export default async function AccountPage() {
             role: true,
             userId: true,
             dateOfBirth: true,
-            user: { select: { name: true, email: true } },
+            user: { select: { name: true, email: true, lastSignInAt: true } },
           },
           orderBy: { createdAt: "asc" },
         },
@@ -92,17 +93,6 @@ export default async function AccountPage() {
           <EditNameForm name={user.name} />
           {user.email && <span className="text-sm text-text-muted">{user.email}</span>}
         </div>
-        {/* Only rendered for the app owner; /admin re-checks server-side
-            (src/lib/require-member.ts's requireOwnerOrRedirect), this is
-            just the way in. */}
-        {user.isAppOwner && (
-          <Link
-            href="/admin"
-            className="ml-auto inline-flex shrink-0 min-h-10 items-center justify-center gap-1.5 rounded-md border border-accent px-4 py-2 text-sm font-medium text-accent transition-colors hover:bg-accent/10 sm:min-h-0"
-          >
-            Admin
-          </Link>
-        )}
       </section>
 
       {/* PASSKEYS_PLAN.md Phase 2. Date and authenticator label resolved
@@ -172,6 +162,11 @@ export default async function AccountPage() {
                   {member.user.email && (
                     <span className="text-xs text-text-faint">{member.user.email}</span>
                   )}
+                  <span className="text-xs text-text-faint">
+                    {member.user.lastSignInAt
+                      ? `Last signed in ${formatRelativeTime(member.user.lastSignInAt)}`
+                      : "Never signed in"}
+                  </span>
                 </div>
                 <div className="flex flex-wrap items-center justify-end gap-2">
                   <span className="rounded-full border border-border px-2.5 py-0.5 text-xs text-text-muted">
