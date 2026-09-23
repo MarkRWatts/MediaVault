@@ -14,6 +14,7 @@ import { runEnrich } from "@/lib/tmdb";
 import { runMusicEnrich } from "@/lib/discogs";
 import { runEnrichScene } from "@/lib/theporndb";
 import { runJellyfinSync } from "@/lib/jellyfin";
+import { ensureGaplessCopies } from "@/lib/gapless-copies";
 
 const MS_PER_HOUR = 3_600_000;
 const DEFAULT_INTERVAL_HOURS = 4;
@@ -176,6 +177,7 @@ function scheduleNext(intervalMs: number): void {
 async function tick(intervalMs: number): Promise<void> {
   try {
     await runSyncTick(liveDeps);
+    await ensureGaplessCopies();
   } catch (err) {
     console.error("[scheduler] periodic sync failed:", err);
   } finally {

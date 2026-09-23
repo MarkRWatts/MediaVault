@@ -28,9 +28,13 @@
 // — which AVQueuePlayer joins without a gap. Anything that isn't MP3 is
 // gapless as it is and goes out as the original.
 //
-// The cache is bounded (AUDIO_CACHE_MAX_BYTES, least recently served first
-// out) and self-healing: the source's mtime is in the file name, so a
-// re-ripped track simply misses and the stale copy ages out.
+// The AAC cache is bounded (AUDIO_CACHE_MAX_BYTES, least recently served
+// first out) and self-healing: the source's mtime is in the file name, so a
+// re-ripped track simply misses and the stale copy ages out. Gapless copies
+// live apart from it (AUDIO_GAPLESS_DIR) and are never evicted: a copy that
+// aged out would mean the next listen streams the MP3, blip and all, while
+// a new one is made — so src/lib/gapless-copies.ts makes one for every MP3
+// ahead of time, and a new copy replaces the old one for the same track.
 
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
@@ -60,6 +64,15 @@ const DEFAULT_MAX_BYTES = 5 * 1024 * 1024 * 1024;
 
 export function audioCacheDir(): string {
   return path.resolve(process.env.AUDIO_CACHE_DIR || "./data/audio-cache");
+}
+
+/** Where gapless copies are kept — outside the evictable cache. */
+export function gaplessDir(): string {
+  return path.resolve(process.env.AUDIO_GAPLESS_DIR || "./data/audio-gapless");
+}
+
+function copyDir(quality: AudioQuality): string {
+  return quality === "gapless" ? gaplessDir() : audioCacheDir();
 }
 
 function audioCacheMaxBytes(): number {
@@ -133,8 +146,14 @@ export async function resolveTrackFileForQuality(
 
   const stat = await fs.stat(absPath);
   const name = transcodeFileName(trackId, stat.mtimeMs, quality);
-  const dir = audioCacheDir();
+  const dir = copyDir(quality);
   const target = path.join(dir, name);
+
+  if (quality === "gapless") {
+    // Made before gapless copies had a folder of their own.
+    await fs.mkdir(dir, { recursive: true });
+    await fs.rename(path.join(audioCacheDir(), name), target).catch(() => {});
+  }
 
   try {
     await fs.access(target);
@@ -212,8 +231,22 @@ async function transcode(absPath: string, musicRoot: string, dir: string, name: 
   const target = path.join(dir, name);
   await fs.rename(partialPath, target);
   console.log(`[audio-transcode] ${name} in ${Date.now() - started} ms`);
-  await trimCache(dir, name).catch(() => {});
+  if (quality === "gapless") {
+    await removeStaleGaplessCopies(dir, name).catch(() => {});
+  } else {
+    await trimCache(dir, name).catch(() => {});
+  }
   return target;
+}
+
+/** The same track's copies of earlier versions of its file (a re-rip). */
+async function removeStaleGaplessCopies(dir: string, keep: string): Promise<void> {
+  const trackPrefix = `${keep.split("-")[0]}-`;
+  for (const n of await fs.readdir(dir)) {
+    if (n !== keep && n.startsWith(trackPrefix) && n.endsWith("-alac.m4a")) {
+      await fs.rm(path.join(dir, n), { force: true });
+    }
+  }
 }
 
 async function trimCache(dir: string, keep: string): Promise<void> {

@@ -10,4 +10,15 @@ export async function register() {
 
   const { startScheduler } = await import("@/lib/scheduler");
   startScheduler();
+
+  // Gapless copies for any MP3 that lacks one — a couple of minutes in, so
+  // a deploy's restart isn't also when ffmpeg starts working. Cheap once
+  // they all exist: a stat per MP3.
+  if (process.env.NODE_ENV === "production") {
+    setTimeout(() => {
+      void import("@/lib/gapless-copies")
+        .then(({ ensureGaplessCopies }) => ensureGaplessCopies())
+        .catch((err) => console.error("[gapless-copies] failed:", err));
+    }, 2 * 60 * 1000);
+  }
 }
