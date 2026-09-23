@@ -143,3 +143,20 @@ export function audioFamily(label: string): AudioFamily {
   if (label.startsWith("DTS")) return "dts";
   return "neutral";
 }
+
+// Words a track name uses when it only restates what the chips already say.
+const FORMAT_WORDS =
+  /\b(surround|stereo|mono|dolby|digital|plus|truehd|true-hd|atmos|dts|hd|ma|master|audio|x|aac|ac3|eac3|e-ac-3|ac-3|flac|pcm|lpcm|lossless|channels?|ch)\b/g;
+
+/** Whether a track's own name ("Surround 7.1", "Stereo", "DTS-HD MA 5.1")
+ *  only repeats its codec and layout — shown beside the chips it would say
+ *  everything twice. A name with anything else in it ("Commentary",
+ *  "Director's commentary", "Audio description") is worth showing. */
+export function titleRepeatsFormat(title: string): boolean {
+  const rest = title
+    .toLowerCase()
+    .replace(FORMAT_WORDS, " ")
+    .replace(/\d+(\.\d+)?/g, " ")
+    .replace(/[\s:+\-.,/()[\]]+/g, "");
+  return rest.length === 0;
+}

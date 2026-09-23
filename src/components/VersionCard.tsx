@@ -3,7 +3,7 @@ import FormatBadge from "@/components/FormatBadge";
 import HdrBadge from "@/components/HdrBadge";
 import PlayButton from "@/components/PlayButton";
 import type { PlaybackSource } from "@/components/VideoPlayer";
-import { audioBadge } from "@/lib/audio";
+import { audioBadge, titleRepeatsFormat } from "@/lib/audio";
 import { UHD_BLOCKED_MESSAGE, uhdPlaybackBlocked } from "@/lib/constants";
 import type { VersionView } from "@/lib/queries";
 
@@ -77,17 +77,13 @@ export default function VersionCard({
           <ul className="flex flex-col gap-1.5">
             {version.audioTracks.map((a) => {
               const badge = audioBadge(a.codec, a.profile, a.channels, a.layout);
-              const { sublabel } = badge;
               return (
                 <li key={a.id} className="flex flex-wrap items-center gap-x-2 gap-y-1">
                   <AudioBadge badge={badge} />
-                  {sublabel && (
-                    <span className="font-mono text-[11px] text-text-muted">{sublabel}</span>
-                  )}
                   <span className="font-mono text-[11px] text-text-faint">
                     {(a.language ?? "und").toUpperCase()}
                   </span>
-                  {a.title && (
+                  {a.title && !titleRepeatsFormat(a.title) && (
                     <span className="font-mono text-[11px] italic text-text-faint">{a.title}</span>
                   )}
                 </li>
