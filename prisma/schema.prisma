@@ -645,6 +645,7 @@ model User {
   sessions      Session[]
   accounts      Account[]
   passkeys      Passkey[]
+  deviceCodes   DeviceCode[]
 
   members     Member[]
   invitations Invitation[]
@@ -760,6 +761,33 @@ model Passkey {
   @@index([userId])
   @@index([credentialID])
   @@map("passkey")
+}
+
+// Device sign-in codes — see TVOS_PLAN.md "Sign-in: scan a QR code with
+// your phone". One row per code an Apple TV has put on screen, owned by
+// BetterAuth's deviceAuthorization plugin: the column set is exactly what
+// that plugin's schema declares. `userId` is empty until a signed-in
+// member opens the code's /device link (which claims it for them), and the
+// row is consumed when the TV collects its session, deleted when it is
+// denied or found expired. onDelete: Cascade for the same reason as
+// Passkey: deleteAccount relies on the schema's cascades.
+model DeviceCode {
+  id              String    @id
+  deviceCode      String
+  userCode        String
+  userId          String?
+  user            User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt       DateTime
+  status          String
+  lastPolledAt    DateTime?
+  pollingInterval Int?
+  clientId        String?
+  scope           String?
+
+  @@unique([deviceCode])
+  @@unique([userCode])
+  @@index([userId])
+  @@map("deviceCode")
 }
 
 // Access codes — the growth/trust gate for brand-new households (see

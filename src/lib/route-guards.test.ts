@@ -46,6 +46,7 @@ const PAGE_GUARDS = [
 // Routes that are public ON PURPOSE. Keep this list short and explained.
 const PUBLIC_ROUTES = new Set([
   "api/auth/[...all]/route.ts", // BetterAuth itself — sign-in has to be reachable signed-out
+  ".well-known/apple-app-site-association/route.ts", // fetched by Apple's CDN, no session; names app ids, nothing else
 ]);
 // Pages that manage their own session handling (pre-auth flow, or
 // signed-in-but-no-household states that requireMemberOrRedirect would

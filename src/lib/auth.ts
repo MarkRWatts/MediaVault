@@ -6,7 +6,9 @@
 // code. See HOUSEHOLDS_PLAN.md "Access codes & the web of trust" for the
 // full design — ported from jinglejotter.com's auth.ts.
 import { betterAuth } from "better-auth";
-import { bearer, emailOTP, jwt, organization } from "better-auth/plugins";
+import { bearer, deviceAuthorization, emailOTP, jwt, organization } from "better-auth/plugins";
+import { APIError, createAuthMiddleware, isAPIError } from "better-auth/api";
+import { setSessionCookie } from "better-auth/cookies";
 import { nextCookies } from "better-auth/next-js";
 import { oauthProvider } from "@better-auth/oauth-provider";
 import { passkey } from "@better-auth/passkey";
@@ -15,6 +17,7 @@ import { prisma } from "@/lib/db";
 import { isAllowedEmail } from "@/lib/allowed-email";
 import { logAudit } from "@/lib/audit";
 import { sendSignInOTP } from "@/lib/otp-email";
+import { DEVICE_CODE_LIFETIME, isDeviceClient } from "@/lib/device-sign-in";
 
 export const auth = betterAuth({
   database: prismaAdapter(prisma, { provider: "sqlite" }),
@@ -70,6 +73,50 @@ export const auth = betterAuth({
         },
       },
     },
+  },
+  hooks: {
+    // Device sign-in (the Apple TV app — src/lib/device-sign-in.ts). These
+    // user hooks run BEFORE every plugin's own hooks, which is what the
+    // after-hook below depends on.
+    before: createAuthMiddleware(async (ctx) => {
+      // The plugin lets whoever asks for a code pre-bind it to a user id,
+      // after which only that user may approve it. Nothing of ours sends
+      // one, and a code bound to someone who never asked for it is only
+      // useful for getting them to approve a device that isn't theirs.
+      if (ctx.path === "/device/code" && ctx.body?.user_id) {
+        throw new APIError("BAD_REQUEST", { error: "invalid_request", error_description: "user_id is not accepted" });
+      }
+    }),
+    after: createAuthMiddleware(async (ctx) => {
+      if (isAPIError(ctx.context.returned)) return;
+
+      // /device/token mints the TV's session but only returns the bare
+      // token in its JSON body, and sets no cookie. Under
+      // bearer({ requireSignature: true }) a bare token is useless — the
+      // proxy (src/lib/session-cookie.ts) only accepts the signed
+      // `<token>.<hmac>` form. Setting the signed session cookie here is
+      // what makes bearer()'s own after-hook, which runs next, add the
+      // `set-auth-token` header, so the TV collects its session exactly as
+      // the phone does from /sign-in/email-otp. The body's access_token is
+      // not what the app uses.
+      if (ctx.path === "/device/token" && ctx.context.newSession) {
+        await setSessionCookie(ctx, ctx.context.newSession);
+        return;
+      }
+
+      // Here rather than in the /device page's actions so an approval from
+      // the iOS app, which calls these endpoints directly, is recorded too.
+      if (ctx.path === "/device/approve" || ctx.path === "/device/deny") {
+        const userCode = typeof ctx.body?.userCode === "string" ? ctx.body.userCode : "";
+        const row = await prisma.deviceCode.findFirst({
+          where: { userCode: userCode.replace(/[^a-zA-Z0-9]/g, "").toUpperCase() },
+          select: { userId: true },
+        });
+        if (row?.userId) {
+          await logAudit({ userId: row.userId, action: ctx.path === "/device/approve" ? "device.approve" : "device.deny" });
+        }
+      }
+    }),
   },
   plugins: [
     // Households — renamed to match the app's own domain language; the
@@ -200,6 +247,16 @@ export const auth = betterAuth({
     // unaffected: bearer sessions are created via the same sign-in path
     // (internalAdapter.createSession), not a separate one.
     bearer({ requireSignature: true }),
+    // Sign-in for the Apple TV app by scanning a QR code with a phone
+    // (TVOS_PLAN.md) — see src/lib/device-sign-in.ts and the hooks above.
+    // Adds nothing a stranger can use: approving needs a signed-in session,
+    // and the TV's session is created through internalAdapter.createSession
+    // like every other sign-in, so the web-of-trust hook above gates it.
+    deviceAuthorization({
+      verificationUri: "/device",
+      expiresIn: DEVICE_CODE_LIFETIME,
+      validateClient: isDeviceClient,
+    }),
     // Required for the server-action sign-in/sign-out pattern Phase 4's
     // pages will use — without this, Set-Cookie headers from actions
     // invoked via `auth.api.*` inside a "use server" action don't reach the
