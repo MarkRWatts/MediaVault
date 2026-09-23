@@ -46,14 +46,21 @@ export async function GET(req: Request, ctx: { params: Promise<{ versionId: stri
   if (playbackEngine() === "local") {
     try {
       const source = await resolveSource("film", versionId, "original");
-      if (!source) return NextResponse.json({ error: "not found" }, { status: 404 });
+      if (!source) {
+        logRefusal(versionId, 404, req, "no source");
+        return NextResponse.json({ error: "not found" }, { status: 404 });
+      }
       if (source.plan.tier !== "direct") {
+        logRefusal(versionId, 409, req, `tier ${source.plan.tier}: ${source.plan.reason}`);
         return NextResponse.json({ error: "this file is served by the playback engine; start a session instead" }, { status: 409 });
       }
-      return serveFile(req, source.absPath, "video/mp4", "no-store", { maxRangeBytes: DIRECT_PLAY_MAX_RANGE_BYTES });
+      const res = await serveFile(req, source.absPath, "video/mp4", "no-store", { maxRangeBytes: DIRECT_PLAY_MAX_RANGE_BYTES });
+      if (res.status >= 400) logRefusal(versionId, res.status, req, "serveFile");
+      return res;
     } catch (err) {
       if (err instanceof PlaybackError) {
         const { status, message } = mapPlaybackError(err);
+        logRefusal(versionId, status, req, message);
         return NextResponse.json({ error: message }, { status });
       }
       throw err;
@@ -68,4 +75,10 @@ export async function GET(req: Request, ctx: { params: Promise<{ versionId: stri
     return NextResponse.json({ error: "this file is served as HLS; use hls/<variant>/index.m3u8" }, { status: 409 });
   }
   return serveFile(req, resolved.absPath, resolved.contentType, "no-store", { maxRangeBytes: DIRECT_PLAY_MAX_RANGE_BYTES });
+}
+
+/** One line per refused request: AVPlayer reports any HTTP error as a bare
+ *  CoreMediaErrorDomain code, so this is the only place the reason shows. */
+function logRefusal(versionId: number, status: number, req: Request, reason: string): void {
+  console.warn(`[film-stream] ${versionId} → ${status} (range ${req.headers.get("range") ?? "none"}): ${reason}`);
 }
