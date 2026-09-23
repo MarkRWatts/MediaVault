@@ -179,10 +179,11 @@ function hasNativePlayerBridge(): boolean {
 // URL (UHD_PLAN.md phase B, "Direct-play routing"): for a file that is
 // already playable as-is, the session route then answers with the file's
 // own /stream URL instead of an engine stream -- no segments, no cache.
-// Empty inside the iOS app's web view: the native player it hands off to
-// keeps getting HLS until direct play has been verified on the device.
+// Asked inside an app's web view too: the native player the bridge hands
+// off to is AVPlayer, which the iOS/tvOS apps have shown plays /stream URLs
+// with the session cookie (MediaVaultiOS#38, 23 Sep 2026).
 function directPlayQuery(): string {
-  if (typeof document === "undefined" || hasNativePlayerBridge()) return "";
+  if (typeof document === "undefined") return "";
   const probe = document.createElement("video");
   const families: string[] = [];
   if (probe.canPlayType('video/mp4; codecs="avc1.640028,mp4a.40.2"') !== "") families.push("h264");

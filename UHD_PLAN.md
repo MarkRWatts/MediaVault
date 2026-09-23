@@ -349,9 +349,17 @@ Still to do in phase B, in order:
 1. **Version choice** — pick the best Version this client can take (4K HEVC
    HDR only for a client that declared `hevc`; the 1080p otherwise), then
    switch `UHD_PLAYBACK_ENABLED` on.
-2. **Native apps opt in** — the iOS/tvOS apps send `direct=1` (checking
-   that AVPlayer's requests to /stream carry the app's auth), and the web
-   view's hand-off stops excluding itself.
+2. ~~**Native apps opt in**~~ — **done 23 Sep.** The iOS and tvOS apps send
+   `direct=1` and play /stream as a plain AVURLAsset with the session cookie
+   (MediaVaultiOS#38), verified on the Apple TV 4K (No Time to Die from
+   /stream, no ffmpeg on the VM). Direct play there first lost its sound ~10 s
+   in and after every seek: AVFoundation leaves open-ended ranges half-read,
+   and they held the HTTP/3 connection's flow-control window. So /stream now
+   caps each 206 at 4 MiB (`DIRECT_PLAY_MAX_RANGE_BYTES`, #114). The web
+   player's exclusion for the app web view's hand-off is gone too. Also found
+   the same day: WebKit refuses an MP4 whose TrueHD track passes ~8.4M
+   samples, so TrueHD is no longer kept in the library (#111, and
+   `canDirectPlay` still refuses TrueHD as a safety net).
 3. **Stereo negotiation** — lower priority now: a direct-played file carries
    its own 5.1 AAC, and 384k is noise beside the video's bitrate.
 
