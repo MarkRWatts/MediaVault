@@ -70,25 +70,23 @@ export function seasonSortRank(seasonNumber: number): number {
   return seasonNumber === 0 ? Number.MAX_SAFE_INTEGER : seasonNumber;
 }
 
-/** Whether UltraHD rips can be played at all. Off until UHD_PLAN.md's HEVC
- *  and cache work lands: the local engine can't hand 4K HEVC 10-bit to
- *  Apple's native players, and the production box has neither the
- *  tone-mapping nor the cache headroom for a 4K source. A constant rather
- *  than an env var on purpose — nothing about a deployment makes 4K
- *  playable, so there is nothing to configure. */
-export const UHD_PLAYBACK_ENABLED = false;
-
-/** The block in its pure form, for anything already holding the Version —
- *  the film page, VersionCard, the /api/v1 DTO. src/lib/uhd-gate.ts is the
- *  same rule for routes that only have an id, and is what actually enforces
- *  it; this only decides what the UI offers. */
+/** UltraHD rips play only as the file itself — direct play, to a client
+ *  that declared HEVC (UHD_PLAN.md phase B). Nothing on the server can
+ *  transcode a 4K HEVC 10-bit source: the engine can't hand it to Apple's
+ *  players as HLS, and the box has neither the tone-mapping nor the cache
+ *  headroom. So the conversion routes refuse a UHD Version
+ *  (src/lib/uhd-gate.ts) and /stream serves it untouched; the iOS and
+ *  Apple TV apps, which decode HEVC HDR in hardware, get it that way.
+ *
+ *  The web player doesn't declare HEVC, so for the web UI a UHD Version
+ *  stays unplayable: this is what the film page and VersionCard read. */
 export function uhdPlaybackBlocked(version: { format: string }): boolean {
-  return !UHD_PLAYBACK_ENABLED && version.format === "UHD";
+  return version.format === "UHD";
 }
 
 /** Shown beside a play control that has been disabled by the above, and the
  *  `error` a blocked playback route answers with. */
-export const UHD_BLOCKED_MESSAGE = "UltraHD playback isn't available yet";
+export const UHD_BLOCKED_MESSAGE = "UltraHD plays in the iPhone and Apple TV apps";
 export const UHD_BLOCKED_ERROR = "uhd_playback_disabled";
 
 // ffprobe codec_name -> friendly label, for the video-codec filter/report

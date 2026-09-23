@@ -150,9 +150,14 @@ describe("every playback route age-gates the media it serves", () => {
  *  as the age gate above: jfStop takes a playSessionId rather than a media
  *  id, and the other two jf handlers gate inside jf-routes.ts. */
 const UHD_GATES = ["uhdGate(", "jfSession(", "jfProxy(", "jfStop("];
+/** The file itself and its resume position: how a UHD Version plays, so
+ *  these two are deliberately ungated (uhdPlaybackBlocked, constants.ts). */
+const UHD_DIRECT_ROUTES = ["api/video/[versionId]/stream/route.ts", "api/video/[versionId]/progress/route.ts"];
 
-describe("every film playback route gates UltraHD", () => {
-  const routes = findFiles("route.ts").filter((f) => rel(f).startsWith("api/video/"));
+describe("every film playback route that converts gates UltraHD", () => {
+  const routes = findFiles("route.ts").filter(
+    (f) => rel(f).startsWith("api/video/") && !UHD_DIRECT_ROUTES.includes(rel(f)),
+  );
   it("found the film playback routes", () => {
     expect(routes.length).toBeGreaterThan(5);
   });

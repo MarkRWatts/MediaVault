@@ -1,6 +1,5 @@
 // GET /api/v1/films/:id — a film's detail screen: versions with their
-// audio tracks, `playable` (isFilePlayable, and not a UHD rip while
-// UHD_PLAYBACK_ENABLED is off — has been probed and, for the
+// audio tracks, `playable` (isFilePlayable — has been probed and, for the
 // jellyfin engine, matched to a Jellyfin item, see IOS_PLAN.md "Video:
 // nothing new" and src/lib/playback/engine-flag.ts), the viewer's favourite
 // state, and their saved position on each version (so a resume prompt
@@ -11,7 +10,7 @@ import { requireMemberOrResponse } from "@/lib/require-member";
 import { getFilmDetail } from "@/lib/queries";
 import { getFilmUserState } from "@/lib/film-user-state";
 import { prisma } from "@/lib/db";
-import { isFilePlayable } from "@/lib/playback/engine-flag";
+import { isFilePlayable, playbackEngine } from "@/lib/playback/engine-flag";
 import { UHD_BLOCKED_ERROR, uhdPlaybackBlocked } from "@/lib/constants";
 import type { FilmDetailResponse, FilmVersionV1, VersionProgress } from "@/lib/api-v1-types";
 
@@ -41,12 +40,14 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       : Promise.resolve([]),
   ]);
 
-  // A UHD version is never playable however well it probed: the playback
-  // routes answer 403 for it (src/lib/uhd-gate.ts). Saying so here saves the
-  // app a round trip and gives it something to show instead of a bare
-  // greyed-out button.
+  // A UHD version is playable here like any other: the apps decode HEVC HDR
+  // and the session hands it over as the file itself. Only the local engine
+  // can do that (Jellyfin would transcode), and a client that can't take it
+  // as-is — no HEVC, or the Remote variant — gets the session's 403
+  // (src/lib/uhd-gate.ts) and says so.
+  const localEngine = playbackEngine() === "local";
   const versions: FilmVersionV1[] = film.versions.map((v) =>
-    uhdPlaybackBlocked(v)
+    uhdPlaybackBlocked(v) && !localEngine
       ? { ...v, playable: false, unplayableReason: UHD_BLOCKED_ERROR }
       : { ...v, playable: isFilePlayable(v) },
   );

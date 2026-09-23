@@ -26,7 +26,6 @@ import { logPlaybackStart } from "@/lib/audit";
 import { logPlay } from "@/lib/play-log";
 import { recordPlayEvent } from "@/lib/play-events";
 import { ageGateForUser } from "@/lib/age-gate";
-import { uhdGate } from "@/lib/uhd-gate";
 
 async function currentUserId(): Promise<string | null> {
   const session = await auth.api.getSession({ headers: await headers() });
@@ -58,10 +57,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ versionId: str
   const blocked = await ageGateForUser(userId, "film", versionId);
   if (blocked) return blocked;
 
-  // Same reasoning one flag over: nothing should be reporting or resuming a
-  // position in a file playback is switched off for (src/lib/uhd-gate.ts).
-  const uhd = await uhdGate("film", versionId);
-  if (uhd) return uhd;
+  // No UHD gate: a UHD Version direct-plays, and resumes like any other.
 
   const row = await prisma.watchProgress.findUnique({
     where: { userId_versionId: { userId, versionId } },
@@ -113,9 +109,6 @@ export async function POST(req: Request, ctx: { params: Promise<{ versionId: str
 
   const blocked = await ageGateForUser(userId, "film", versionId);
   if (blocked) return blocked;
-
-  const uhd = await uhdGate("film", versionId);
-  if (uhd) return uhd;
 
   // See WATCH_COMPLETED_RATIO's doc comment for why 95%.
   const completed = positionSecs >= durationSecs * WATCH_COMPLETED_RATIO;

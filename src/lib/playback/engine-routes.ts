@@ -15,6 +15,7 @@
 // registry check on its proxy.
 
 import { NextResponse } from "next/server";
+import { uhdRefusal } from "@/lib/uhd-gate";
 import { serveFile } from "@/lib/serve-file";
 import { parseVariant } from "@/lib/video-playback";
 import {
@@ -214,6 +215,8 @@ export async function engineSession(
   kind: MediaKind,
   basePath: string,
   deviceId: string,
+  /** A UHD Version: direct play or nothing — see src/lib/uhd-gate.ts. */
+  opts: { directOnly?: boolean } = {},
 ): Promise<NextResponse> {
   const id = Number(idParam);
   if (!Number.isInteger(id) || id <= 0) return NextResponse.json({ error: "not found" }, { status: 404 });
@@ -253,6 +256,8 @@ export async function engineSession(
         });
       }
     }
+
+    if (opts.directOnly) return uhdRefusal();
 
     const session = await startSession({ kind, id, variant, audioStreamIndex, deviceId, replaces });
     return NextResponse.json({
