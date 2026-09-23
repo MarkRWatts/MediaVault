@@ -25,7 +25,10 @@ vi.mock("./engine", () => ({
   stopSession: vi.fn(),
 }));
 
-const { addSessionQuery, checkEngineAccess, mapPlaybackError, parseEnginePath } = await import("./engine-routes");
+const { addSessionQuery, canDirectPlay, checkEngineAccess, mapPlaybackError, parseDirectPlayRequest, parseEnginePath } = await import(
+  "./engine-routes"
+);
+const { planVideoPlayback } = await import("@/lib/video-playback");
 
 describe("parseEnginePath", () => {
   it("accepts the three shapes the catch-all serves", () => {
@@ -165,5 +168,43 @@ describe("mapPlaybackError", () => {
     const mapped = mapPlaybackError(err("no-disk-space", "the cache volume has 0.1 GB free"));
     expect(mapped.status).toBe(507);
     expect(mapped.message).not.toContain("GB free");
+  });
+});
+
+describe("parseDirectPlayRequest", () => {
+  it("is null unless the client asked with direct=1", () => {
+    expect(parseDirectPlayRequest(new URLSearchParams("variant=original"))).toBeNull();
+    expect(parseDirectPlayRequest(new URLSearchParams("direct=0&vcodecs=h264"))).toBeNull();
+  });
+
+  it("defaults to H.264, normalises h265 to hevc, and drops what it doesn't know", () => {
+    expect(parseDirectPlayRequest(new URLSearchParams("direct=1"))).toEqual(new Set(["h264"]));
+    expect(parseDirectPlayRequest(new URLSearchParams("direct=1&vcodecs=H264,h265,av1"))).toEqual(new Set(["h264", "hevc"]));
+  });
+});
+
+describe("canDirectPlay", () => {
+  const plan = (videoCodec: string, container: string, codec: string) =>
+    planVideoPlayback({ videoCodec, container, audioTracks: [{ streamIdx: 1, codec, profile: null, channels: 6, isDefault: true }] })!;
+  const h264 = new Set(["h264"]);
+  const both = new Set(["h264", "hevc"]);
+
+  it("takes an MP4 the planner already calls direct, for a client that declared its video", () => {
+    expect(canDirectPlay({ plan: plan("h264", "mp4", "aac") }, h264, null)).toBe(true);
+    expect(canDirectPlay({ plan: plan("hevc", "mp4", "aac") }, both, null)).toBe(true);
+  });
+
+  it("refuses a video family the client didn't declare", () => {
+    expect(canDirectPlay({ plan: plan("hevc", "mp4", "aac") }, h264, null)).toBe(false);
+  });
+
+  it("refuses anything the planner doesn't call direct: MKV, or audio that needs transcoding", () => {
+    expect(canDirectPlay({ plan: plan("h264", "mkv", "aac") }, both, null)).toBe(false);
+    expect(canDirectPlay({ plan: plan("h264", "mp4", "ac3") }, both, null)).toBe(false);
+  });
+
+  it("allows the default audio track asked for by index, but not a different one", () => {
+    expect(canDirectPlay({ plan: plan("h264", "mp4", "aac") }, h264, 1)).toBe(true);
+    expect(canDirectPlay({ plan: plan("h264", "mp4", "aac") }, h264, 2)).toBe(false);
   });
 });

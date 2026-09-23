@@ -28,7 +28,7 @@ import {
   startSession,
   stopSession,
 } from "./engine";
-import { PlaybackError, type PlaybackErrorCode } from "./source";
+import { PlaybackError, resolveSource, type PlaybackErrorCode, type ResolvedSource } from "./source";
 import { parseSegmentFileName, parseStreamKey, SEGMENT_FILE_RE } from "./stream-key";
 import type { MediaKind } from "./types";
 
@@ -37,6 +37,41 @@ const PLAY_SESSION_ID_RE = /^[0-9a-f]{32}$/i;
 // ---------------------------------------------------------------------------
 // Pure helpers -- unit tested directly (engine-routes.test.ts)
 // ---------------------------------------------------------------------------
+
+// Direct play (UHD_PLAN.md phase B, "Direct-play routing"): a client that can
+// play a plain MP4 URL says so on the session request --
+// `?direct=1&vcodecs=h264,hevc` -- and a file it can take as-is is handed
+// back as the file itself (`${basePath}/<id>/stream`, byte ranges) instead of
+// an engine stream: no segments, no cache, no keyframe index. Opt-in, so a
+// client that doesn't ask (today's iOS app) gets HLS exactly as before.
+const DIRECT_VIDEO_FAMILIES: Record<string, string> = { h264: "h264", hevc: "hevc", h265: "hevc" };
+
+/** The video codec families a session request declares it can direct-play,
+ *  or null when it didn't ask for direct play at all. `vcodecs` defaults to
+ *  H.264 -- every client that can open an MP4 URL can decode that. */
+export function parseDirectPlayRequest(params: URLSearchParams): Set<string> | null {
+  if (params.get("direct") !== "1") return null;
+  const declared = (params.get("vcodecs") ?? "h264").split(",").map((c) => DIRECT_VIDEO_FAMILIES[c.trim().toLowerCase()]);
+  return new Set(declared.filter((c): c is string => c !== undefined));
+}
+
+/** Whether this source can skip the engine: the planner already says it is
+ *  playable as-is (MP4-like container, copyable video, a compatible default
+ *  audio track -- planVideoPlayback's "direct" tier), its video is a family
+ *  the client declared, and the caller isn't asking for a different audio
+ *  track than the file's default (switching tracks needs the engine; a
+ *  browser can't pick one out of the file). */
+export function canDirectPlay(
+  source: Pick<ResolvedSource, "plan">,
+  clientVideoFamilies: Set<string>,
+  requestedAudioStreamIndex: number | null,
+): boolean {
+  const { plan } = source;
+  if (plan.tier !== "direct") return false;
+  if (requestedAudioStreamIndex !== null && requestedAudioStreamIndex !== plan.audioStreamIndex) return false;
+  const family = DIRECT_VIDEO_FAMILIES[plan.outputVideoCodec ?? ""];
+  return family !== undefined && clientVideoFamilies.has(family);
+}
 
 /** The only paths the catch-all route serves for the local engine:
  *  `e/<key>/master.m3u8`, `e/<key>/main.m3u8` and `e/<key>/seg_NNNNN.ts`.
@@ -158,7 +193,10 @@ function errorPayload(err: unknown): { status: number; message: string; retryAft
 /**
  * POST .../jf/session, local engine. Same five response fields as
  * jf-routes.ts's Jellyfin branch (source.ts's PlaybackAudioTrack is already
- * `{streamIdx, label}`, so audioTracks needs no remapping).
+ * `{streamIdx, label}`, so audioTracks needs no remapping), plus `mode`:
+ * "hls" for an engine stream, or -- only when the request asked with
+ * `?direct=1` -- "direct", where `playlistUrl` is the file's own /stream URL
+ * and `playSessionId` is null (see canDirectPlay above).
  */
 export async function engineSession(
   req: Request,
@@ -185,9 +223,30 @@ export async function engineSession(
   const replacesParam = params.get("replaces");
   const replaces = replacesParam && /^[0-9a-f]{32}$/i.test(replacesParam) ? replacesParam : null;
 
+  const directFamilies = parseDirectPlayRequest(params);
+
   try {
+    // Direct play only ever replaces the Original rendition: Remote exists to
+    // cut the bitrate, which the file itself can't do.
+    if (directFamilies && variant === "original") {
+      const source = await resolveSource(kind, id, variant, audioStreamIndex);
+      if (source && canDirectPlay(source, directFamilies, audioStreamIndex)) {
+        return NextResponse.json({
+          mode: "direct",
+          // Same field the HLS answer uses: "the URL to play". No session
+          // exists, so nothing to stop -- playSessionId is null.
+          playlistUrl: `${basePath}/${id}/stream`,
+          playSessionId: null,
+          durationSecs: source.durationSecs,
+          transcodeReasons: [],
+          audioTracks: source.audioTracks,
+        });
+      }
+    }
+
     const session = await startSession({ kind, id, variant, audioStreamIndex, deviceId, replaces });
     return NextResponse.json({
+      mode: "hls",
       playlistUrl: `${basePath}/${id}/jf/e/${session.key}/master.m3u8?ps=${session.playSessionId}`,
       playSessionId: session.playSessionId,
       durationSecs: session.durationSecs,

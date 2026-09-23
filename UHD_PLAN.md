@@ -16,7 +16,7 @@ client at full quality, and they expose the general problem.
 
 ## Status (23 Sep 2026)
 
-Not started in code. **Revised 23 Sep** after the library was converted to
+Phase B under way (below). **Revised 23 Sep** after the library was converted to
 MP4 (22–23 Sep): every film and episode is now MP4 with H.264 video (HEVC for
 the three UHD films), a default AAC track, faststart, no subtitles. The three
 UHD films were remuxed on 23 Sep — HEVC Main10 copied untouched (tagged
@@ -327,6 +327,33 @@ one *this client can take*, and only then pick the variant:
   the downmix happens either way — and halves audio bitrate on precisely the
   Wi-Fi clients, while leaving the wired Apple TV at 5.1. It also puts the
   downmix under our control rather than the client's.
+
+**Progress, 23 Sep — slice 1, direct-play routing, done.** A client asks for
+direct play on the session request, `?direct=1&vcodecs=h264,hevc` (it
+declares the video families it can play from a plain MP4 URL). When the file
+qualifies (`canDirectPlay`, engine-routes.ts: the planner's `direct` tier, a
+declared video family, the Original variant, and the default audio track or
+none named), the session answers `mode: "direct"` with the file's own
+`/stream` URL as `playlistUrl` and a null `playSessionId`; otherwise
+`mode: "hls"` and the engine as before. Opt-in, so a client that doesn't ask
+(today's iOS app) is untouched. The web player asks via `canPlayType`
+(`directPlayQuery`, VideoPlayer.tsx), except inside the iOS app's web view,
+whose native hand-off keeps HLS until /stream is verified from AVPlayer. New:
+`/api/tv-video/<episodeFileId>/stream`, resolved through the engine's
+`resolveSource` so the route and the session judge "playable as-is"
+identically. Covered end to end against real MP4s and the real handlers in
+`engine-routes.integration.test.ts`.
+
+Still to do in phase B, in order:
+
+1. **Version choice** — pick the best Version this client can take (4K HEVC
+   HDR only for a client that declared `hevc`; the 1080p otherwise), then
+   switch `UHD_PLAYBACK_ENABLED` on.
+2. **Native apps opt in** — the iOS/tvOS apps send `direct=1` (checking
+   that AVPlayer's requests to /stream carry the app's auth), and the web
+   view's hand-off stops excluding itself.
+3. **Stereo negotiation** — lower priority now: a direct-played file carries
+   its own 5.1 AAC, and 384k is noise beside the video's bitrate.
 
 **Direct-play routing (added 23 Sep).** Having chosen the Version, the
 session route decides how to deliver it:
