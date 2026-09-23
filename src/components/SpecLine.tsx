@@ -32,9 +32,6 @@ export default function SpecLine({
           audio.tracks.map((badge, i) => (
             <span key={i} className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
               <AudioBadge badge={badge} />
-              {badge.sublabel && (
-                <span className="font-mono text-xs text-text-muted">{badge.sublabel}</span>
-              )}
             </span>
           ))
         ) : (

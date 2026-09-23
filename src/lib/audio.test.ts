@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { audioBadge, audioFamily } from "./audio";
+import { audioBadge, audioFamily, titleRepeatsFormat } from "./audio";
 
 describe("audioBadge", () => {
   it("labels the Dolby family", () => {
@@ -90,5 +90,19 @@ describe("audioFamily", () => {
     expect(audioFamily("AAC")).toBe("neutral");
     expect(audioFamily("PCM")).toBe("neutral");
     expect(audioFamily("Unknown")).toBe("neutral");
+  });
+});
+
+describe("titleRepeatsFormat", () => {
+  it("hides names that only restate the codec and layout", () => {
+    for (const t of ["Surround 7.1", "Stereo", "5.1", "DTS-HD MA 5.1", "Dolby TrueHD Atmos 7.1", "AAC 2.0", "Surround 5.1 (AC3)"]) {
+      expect(titleRepeatsFormat(t), t).toBe(true);
+    }
+  });
+
+  it("keeps names that say something else", () => {
+    for (const t of ["Commentary", "Director's commentary 2.0", "Audio Description", "Isolated score"]) {
+      expect(titleRepeatsFormat(t), t).toBe(false);
+    }
   });
 });
