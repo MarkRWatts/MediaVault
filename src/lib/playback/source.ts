@@ -49,6 +49,10 @@ export interface ResolvedSource {
   plan: VideoPlaybackPlan;
   facts: SourceFacts;
   audioTracks: PlaybackAudioTrack[];
+  /** Codec of every audio stream in the file, lower-cased, in stream order --
+   *  including tracks this rendition won't carry, since some players judge
+   *  the whole file (see engine-routes.ts's canDirectPlay on TrueHD). */
+  fileAudioCodecs: string[];
   /** The stream this rendition will carry: the planner's pick, or the
    *  caller's validated override. null when the file has no audio at all. */
   audioStreamIndex: number | null;
@@ -356,6 +360,7 @@ export async function resolveSource(
     plan,
     facts,
     audioTracks: labelAudioTracks(probed.audioTracks),
+    fileAudioCodecs: probed.audioTracks.map((t) => (t.codec ?? "").toLowerCase()),
     audioStreamIndex: chosenIndex,
     audioAction: chosenAction,
     audioChannels: chosenTrack?.channels ?? null,
