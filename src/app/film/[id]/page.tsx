@@ -4,6 +4,8 @@ import PosterImage from "@/components/PosterImage";
 import VersionCard from "@/components/VersionCard";
 import FilmActions from "@/components/FilmActions";
 import CertificationBadge from "@/components/CertificationBadge";
+import SpecChip from "@/components/SpecChip";
+import { videoBadges } from "@/lib/video-badges";
 import { isAppOwner, requireMemberOrRedirect } from "@/lib/require-member";
 import FilmShowLinksEditor from "@/components/FilmShowLinksEditor";
 import { getFilmShows, getLinkableShows } from "@/lib/queries-film-shows";
@@ -56,6 +58,11 @@ export default async function FilmPage({
     !primaryPlay && film.versions.length > 0 && film.versions.every((v) => uhdPlaybackBlocked(v))
       ? UHD_BLOCKED_MESSAGE
       : undefined;
+
+  // The header's format chips describe what Play will play — the same
+  // rules and words as the iOS and Apple TV apps (src/lib/video-badges.ts).
+  const badgeSource = primary ?? film.versions[0] ?? null;
+  const headerBadges = badgeSource ? videoBadges(badgeSource) : [];
 
   const isConcert = film.kind === "CONCERT";
 
@@ -127,12 +134,28 @@ export default async function FilmPage({
                       Concert
                     </span>
                   )}
-                  <CertificationBadge certification={film.certification} />
+                  {/* The apps' order: year · certificate · runtime · format chips. */}
                   <span>{film.year ?? "Year unknown"}</span>
+                  {film.certification && (
+                    <>
+                      <span className="text-text-faint">·</span>
+                      <CertificationBadge certification={film.certification} />
+                    </>
+                  )}
                   {film.runtimeLabel !== "—" && (
                     <>
                       <span className="text-text-faint">·</span>
                       <span>{film.runtimeLabel}</span>
+                    </>
+                  )}
+                  {headerBadges.length > 0 && (
+                    <>
+                      <span className="text-text-faint">·</span>
+                      <span className="flex items-center gap-1.5 font-sans">
+                        {headerBadges.map((b) => (
+                          <SpecChip key={b}>{b}</SpecChip>
+                        ))}
+                      </span>
                     </>
                   )}
                   {film.rating !== null && (

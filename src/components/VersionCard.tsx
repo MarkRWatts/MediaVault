@@ -37,8 +37,8 @@ export default function VersionCard({
   return (
     <div className="rounded-lg border border-border bg-bg-elevated p-4">
       <div className="flex flex-wrap items-center gap-2.5">
-        <FormatBadge kind={version.format} className="px-2 py-1 text-[11px]" logoHeight={18} />
-        <HdrBadge videoRange={version.videoRange} className="px-2 py-1 text-[11px]" logoHeight={18} />
+        <FormatBadge kind={version.format} />
+        <HdrBadge videoRange={version.videoRange} />
         {version.edition && (
           <span className="text-sm italic text-text-muted">{version.edition}</span>
         )}

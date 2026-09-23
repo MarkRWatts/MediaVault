@@ -1,5 +1,5 @@
 // Tag a film you already know about as owned on a physical medium (DVD,
-// Blu-ray, 4K UHD), independent of whether it's been ripped — the film-side
+// Blu-ray, Ultra HD Blu-ray), independent of whether it's been ripped — the film-side
 // equivalent of /api/physical for albums. POST to create/update the copy
 // record for one (film, medium) pair, DELETE to remove it.
 
