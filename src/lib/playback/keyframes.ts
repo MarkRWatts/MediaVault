@@ -1,41 +1,51 @@
 // Keyframe lookup for the copy-tier segment table (V4_PLAN.md "The engine"
-// → "Segment table" / "Keyframe index"): the Matroska Cues reader first,
-// ffprobe (whole file — never called from the scanner, see scanner.ts) as
-// the fallback for everything else, or an MKV/WebM whose Cues turned out to
-// be missing/empty.
+// → "Segment table" / "Keyframe index"): the container's own index first --
+// Matroska Cues (matroska-cues.ts) or MP4's sync-sample table
+// (mp4-sync-samples.ts) -- and ffprobe (whole file — never called from the
+// scanner, see scanner.ts) as the fallback for everything else: another
+// container, or a file whose index turned out to be missing or unreadable.
 
 import path from "node:path";
 import { runFfprobeRaw } from "@/lib/ffprobe";
 import { readMatroskaCues } from "./matroska-cues";
+import { readMp4SyncSamples } from "./mp4-sync-samples";
+import type { KeyframeSource } from "./keyframe-store";
 import type { SegmentEntry } from "@/lib/playback/types";
 
 const MATROSKA_EXTENSIONS = new Set([".mkv", ".webm"]);
+const MP4_EXTENSIONS = new Set([".mp4", ".m4v", ".mov"]);
 
-function isMatroskaContainer(absPath: string): boolean {
-  return MATROSKA_EXTENSIONS.has(path.extname(absPath).toLowerCase());
-}
-
-export interface CuesKeyframes {
+export interface IndexKeyframes {
   keyframeSecs: number[];
   bytesRead: number;
+  source: Extract<KeyframeSource, "cues" | "stss">;
 }
 
 /**
- * Cues-only lookup — cheap (a few hundred KB, see matroska-cues.ts), so this
- * is what the scanner hook calls directly. Never throws: a non-Matroska
- * file, a missing/empty Cues element, or a parse error on a malformed file
- * all just mean "no index yet", which the caller (scanner: skip; getKeyframes
- * below: fall back to ffprobe) is expected to handle.
+ * The container's own keyframe index -- cheap (a few hundred KB to a few MB,
+ * never the media data), so this is what the scanner hook calls directly.
+ * Never throws: another container, a missing/empty index, or a parse error
+ * on a malformed file all just mean "no index yet", which the caller
+ * (scanner: skip; getKeyframes below: fall back to ffprobe) is expected to
+ * handle.
  */
-export async function getCuesKeyframes(absPath: string): Promise<CuesKeyframes | null> {
-  if (!isMatroskaContainer(absPath)) return null;
+export async function getIndexKeyframes(absPath: string): Promise<IndexKeyframes | null> {
+  const ext = path.extname(absPath).toLowerCase();
   try {
-    const result = await readMatroskaCues(absPath);
-    if (!result.keyframeSecs || result.keyframeSecs.length === 0) return null;
-    return { keyframeSecs: result.keyframeSecs, bytesRead: result.bytesRead };
+    if (MATROSKA_EXTENSIONS.has(ext)) {
+      const result = await readMatroskaCues(absPath);
+      if (!result.keyframeSecs || result.keyframeSecs.length === 0) return null;
+      return { keyframeSecs: result.keyframeSecs, bytesRead: result.bytesRead, source: "cues" };
+    }
+    if (MP4_EXTENSIONS.has(ext)) {
+      const result = await readMp4SyncSamples(absPath);
+      if (!result.keyframeSecs || result.keyframeSecs.length === 0) return null;
+      return { keyframeSecs: result.keyframeSecs, bytesRead: result.bytesRead, source: "stss" };
+    }
   } catch {
     return null;
   }
+  return null;
 }
 
 // `packet=pts_time,flags`, one CSV row per video packet, e.g. "12.345600,K_"
@@ -58,23 +68,21 @@ async function getKeyframesFromFfprobe(absPath: string): Promise<number[] | null
   return [...new Set(secs)].sort((a, b) => a - b);
 }
 
-export type KeyframeSource = "cues" | "ffprobe";
-
 export interface KeyframesResult {
   keyframeSecs: number[];
   source: KeyframeSource;
 }
 
 /**
- * Resolve keyframe timestamps for a file, trying the cheap Cues reader
+ * Resolve keyframe timestamps for a file, trying the container's own index
  * before ever falling back to a whole-file ffprobe pass. This is the
  * on-demand path the engine (phase 2) uses when a copy-tier play has no
  * cached KeyframeIndex row yet — never call this from the scanner, which
- * must only use getCuesKeyframes() (see scanner.ts's comment on the hook).
+ * must only use getIndexKeyframes() (see scanner.ts's comment on the hook).
  */
 export async function getKeyframes(absPath: string): Promise<KeyframesResult | null> {
-  const cues = await getCuesKeyframes(absPath);
-  if (cues) return { keyframeSecs: cues.keyframeSecs, source: "cues" };
+  const indexed = await getIndexKeyframes(absPath);
+  if (indexed) return { keyframeSecs: indexed.keyframeSecs, source: indexed.source };
 
   const ffprobeKeyframes = await getKeyframesFromFfprobe(absPath);
   if (!ffprobeKeyframes) return null;

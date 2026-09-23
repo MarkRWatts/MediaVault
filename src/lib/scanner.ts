@@ -9,7 +9,7 @@ import { promises as fs, type Dirent } from "node:fs";
 import path from "node:path";
 import { prisma } from "@/lib/db";
 import { probe, type ProbedAudioTrack } from "@/lib/ffprobe";
-import { getCuesKeyframes } from "@/lib/playback/keyframes";
+import { getIndexKeyframes } from "@/lib/playback/keyframes";
 import { saveKeyframeIndex, type KeyframeKind } from "@/lib/playback/keyframe-store";
 import { parseFileName, parseConcertPath, filmKey, normalizeTitle, sortTitle, VIDEO_EXTENSIONS, type ParsedConcert } from "@/lib/parse";
 import { parseEpisodePath, type ParsedEpisodeFile } from "@/lib/parse-tv";
@@ -199,15 +199,17 @@ function deriveVideoRange(colorTransfer: string | null, hasDolbyVision: boolean)
   return "SDR";
 }
 
-// V4_PLAN.md "Keyframe index": cues-only, never the ffprobe fallback — that
+// V4_PLAN.md "Keyframe index": the container's own index only (Matroska
+// Cues or MP4's sync-sample table), never the ffprobe fallback — that
 // reads the whole file, which belongs at scan time in the background per
 // the plan, not inline in *this* pass (a scan already probes every changed
 // file once; a second whole-file read here would double that cost for
-// every MKV without cues). A file with no Cues yet is simply left unindexed
-// — the engine builds one on demand behind a "preparing" state later. One
-// cues read covers every id in `fileIds` (multi-episode range files share a
-// single physical file across several EpisodeFile rows). Never throws: an
-// index is a cache, not something worth failing a scan over.
+// every file without a usable index). A file with no index yet is simply
+// left unindexed — the engine builds one on demand behind a "preparing"
+// state later. One read covers every id in `fileIds` (multi-episode range
+// files share a single physical file across several EpisodeFile rows).
+// Never throws: an index is a cache, not something worth failing a scan
+// over.
 async function indexKeyframes(
   kind: KeyframeKind,
   fileIds: number[],
@@ -216,10 +218,10 @@ async function indexKeyframes(
   log: string[],
 ): Promise<void> {
   try {
-    const cues = await getCuesKeyframes(absPath);
-    if (!cues) return;
+    const indexed = await getIndexKeyframes(absPath);
+    if (!indexed) return;
     for (const fileId of fileIds) {
-      await saveKeyframeIndex(kind, fileId, cacheKey, { keyframeSecs: cues.keyframeSecs, source: "cues" });
+      await saveKeyframeIndex(kind, fileId, cacheKey, { keyframeSecs: indexed.keyframeSecs, source: indexed.source });
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

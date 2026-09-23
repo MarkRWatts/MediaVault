@@ -25,7 +25,7 @@ import path from "node:path";
 import { cacheDir, dirSize } from "@/lib/video-cache";
 import { HLS_SEGMENT_SECS, type Variant } from "@/lib/video-playback";
 import { loadKeyframeIndex, saveKeyframeIndex } from "./keyframe-store";
-import { getCuesKeyframes, getKeyframes, fixedSegmentTable, segmentTableFromKeyframes } from "./keyframes";
+import { getIndexKeyframes, getKeyframes, fixedSegmentTable, segmentTableFromKeyframes } from "./keyframes";
 import {
   isPlanStale,
   segmentTableHash,
@@ -150,8 +150,9 @@ export async function sweepStagingDirs(): Promise<string[]> {
 
 /**
  * Keyframe times for a copy-tier stream, cheapest source first: the cached
- * KeyframeIndex row, then the Matroska Cues reader (a few hundred KB), and
- * only then the whole-file ffprobe pass V4_PLAN.md warns is a scan-time job.
+ * KeyframeIndex row, then the container's own index (Matroska Cues or MP4
+ * sync samples -- a few hundred KB to a few MB), and only then the
+ * whole-file ffprobe pass V4_PLAN.md warns is a scan-time job.
  * Whatever it took, the answer is written back so the next play -- and every
  * later seek in this one -- is a single indexed SELECT.
  *
@@ -164,10 +165,10 @@ async function resolveKeyframes(source: ResolvedSource): Promise<number[]> {
   const cached = await loadKeyframeIndex(source.kind, source.id, cacheKey);
   if (cached) return cached.keyframeSecs;
 
-  const cues = await getCuesKeyframes(source.absPath);
-  if (cues) {
-    await saveKeyframeIndex(source.kind, source.id, cacheKey, { keyframeSecs: cues.keyframeSecs, source: "cues" });
-    return cues.keyframeSecs;
+  const indexed = await getIndexKeyframes(source.absPath);
+  if (indexed) {
+    await saveKeyframeIndex(source.kind, source.id, cacheKey, { keyframeSecs: indexed.keyframeSecs, source: indexed.source });
+    return indexed.keyframeSecs;
   }
 
   const probed = await getKeyframes(source.absPath);
