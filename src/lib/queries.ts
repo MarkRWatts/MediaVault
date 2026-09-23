@@ -89,6 +89,9 @@ export interface LibraryFilm {
   year: number | null;
   certification: string | null;
   posterPath: string | null;
+  /** The film's TMDB backdrop — the Apple TV's screen fades to it as the
+   *  card takes focus (TVOS_PLAN.md). */
+  backdropPath: string | null;
   collectionId: number | null;
   collectionName: string | null;
   /** The collection's own TMDB poster, for the stacked card on the library
@@ -127,6 +130,7 @@ export const FILM_CARD_SELECT = {
   sortTitle: true,
   year: true,
   posterPath: true,
+  backdropPath: true,
   collectionId: true,
   collection: { select: { name: true, posterPath: true } },
   releaseDate: true,
@@ -151,6 +155,7 @@ export type FilmCardSource = {
   sortTitle: string;
   year: number | null;
   posterPath: string | null;
+  backdropPath: string | null;
   collectionId: number | null;
   collection: { name: string; posterPath: string | null } | null;
   releaseDate: Date | null;
@@ -175,6 +180,7 @@ export function shapeLibraryFilm(f: FilmCardSource): LibraryFilm {
     sortTitle: f.sortTitle,
     year: f.year,
     posterPath: f.posterPath,
+    backdropPath: f.backdropPath,
     collectionId: f.collectionId,
     collectionName: f.collection?.name ?? null,
     collectionPosterPath: f.collection?.posterPath ?? null,
@@ -687,6 +693,8 @@ export interface ShowSummary {
   sortTitle: string;
   year: number | null;
   posterPath: string | null;
+  /** As LibraryFilm.backdropPath. */
+  backdropPath: string | null;
   certification: string | null;
   ownedEpisodeCount: number;
   totalEpisodeCount: number;
@@ -723,6 +731,7 @@ export async function getShows(limit: AgeLimit): Promise<ShowSummary[]> {
         sortTitle: s.sortTitle,
         year: s.year,
         posterPath: s.posterPath,
+        backdropPath: s.backdropPath,
         certification: s.certification,
         ownedEpisodeCount,
         totalEpisodeCount,
