@@ -114,9 +114,15 @@ existing `SignInFlow` (the iPhone keyboard prompt helps here).
   approval produces no session.
 - **`/device` page.** Member-gated (not in `PUBLIC_PATHS`), in the
   chromeless card style of `/consent`: the code to compare, what is asking
-  (from the device-code row's user agent), Approve / Deny, and the
-  outcome. Invalid, expired and already-used codes get plain messages.
-- **Audit.** `device.approve` / `device.deny` rows, alongside sign-in.
+  (named from its client id — the plugin's row records no user agent),
+  Approve / Deny, and the outcome. Invalid, expired and already-used codes
+  get plain messages; with no code in the URL it asks for one.
+- **No pre-bound codes.** The plugin lets `/device/code` bind a code to a
+  `user_id` up front; a `hooks.before` refuses that, since nothing of ours
+  needs it and it only helps target one person with an approval request.
+- **Audit.** `device.approve` / `device.deny` rows, written from the same
+  `hooks.after`, so approvals from the iOS app are recorded as well as the
+  web page's.
 - **AASA.** `app/.well-known/apple-app-site-association/route.ts`
   (JSON, no extension), public in `src/proxy.ts`, listing
   `2Y2TMF4L4P.com.markrwatts.mediavault` under `applinks` for `/device`
@@ -142,9 +148,10 @@ existing `SignInFlow` (the iPhone keyboard prompt helps here).
   10-minute code life, member-only approval, the single allowed client id,
   and the audit row. Worth a line in the prompt: "Only approve a TV you
   are in front of."
-- **Rate limiting.** Polling hits `/api/auth/*`, which BetterAuth rate
-  limits by IP. The plugin's own `interval` (5 s) is well inside the
-  window; verify with the default config before relying on it.
+- **Rate limiting.** Polling hits `/api/auth/*`. BetterAuth's own limiter
+  is fine with a 5 s interval, but DEPLOYMENT.md's planned Cloudflare rule
+  (10 a minute on `/api/auth/*`) is not: `/api/auth/device/token` has to
+  be left out of it.
 
 ## Playback contract
 
