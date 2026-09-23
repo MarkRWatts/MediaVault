@@ -8,6 +8,7 @@
 import { NextResponse } from "next/server";
 import { resolveVideoStream } from "@/lib/video-cache";
 import { serveFile } from "@/lib/serve-file";
+import { DIRECT_PLAY_MAX_RANGE_BYTES } from "@/lib/constants";
 import { requireMemberOrResponse } from "@/lib/require-member";
 import { ageGate } from "@/lib/age-gate";
 import { uhdGate } from "@/lib/uhd-gate";
@@ -39,5 +40,5 @@ export async function GET(req: Request, ctx: { params: Promise<{ versionId: stri
   if (resolved.kind === "needs-prepare") {
     return NextResponse.json({ error: "this file is served as HLS; use hls/<variant>/index.m3u8" }, { status: 409 });
   }
-  return serveFile(req, resolved.absPath, resolved.contentType, "no-store");
+  return serveFile(req, resolved.absPath, resolved.contentType, "no-store", { maxRangeBytes: DIRECT_PLAY_MAX_RANGE_BYTES });
 }
