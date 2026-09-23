@@ -244,15 +244,26 @@ no per-app `cloudflared` and no tunnel token in this repository.
    turn on the Cloudflare Managed Ruleset; rate-limit `/api/auth/*` to
    10 requests a minute per IP with a 10-minute block and `/api/*` to 300 a
    minute per IP; bypass the cache for `/api/video/*`, `/api/tv-video/*`,
-   `/api/audio/*` and `/api/auth/*`.
-4. **The LAN path.** Pi-hole local DNS records point
+   `/api/audio/*` and `/api/auth/*`. Leave `/api/auth/device/token` out of
+   the 10-a-minute rule: an Apple TV waiting for its sign-in to be
+   approved polls it every 5 seconds (TVOS_PLAN.md), which would trip that
+   rule within a minute and then lock the TV out for ten. The `/api/*`
+   limit still covers it.
+4. **`/.well-known/apple-app-site-association` must reach the app.** Apple's
+   CDN fetches it with no session to learn that the iOS app may open
+   `/device` links (the Apple TV's sign-in QR code) and share passkeys
+   (`src/lib/apple-app-site.ts`). The proxy serves it publicly; nothing in
+   front of the Tunnel may redirect, challenge or cache-rewrite it. Check
+   with `curl -si https://mediavault.markrwatts.com/.well-known/apple-app-site-association`:
+   a `200` with `application/json`, not a `3xx`.
+5. **The LAN path.** Pi-hole local DNS records point
    `mediavault.markrwatts.com` and `jellyfin.markrwatts.com` straight at
    the VM, 192.168.6.53, bypassing Cloudflare entirely. This keeps in-home
    streaming off the Cloudflare round trip and is why the admin block above
    can be unconditional. If Chrome on the LAN shows an SSL protocol error,
    the resolver is leaking an AAAA record to Cloudflare; add a
    `local=/mediavault.markrwatts.com/` override.
-5. **Verify** from outside the LAN:
+6. **Verify** from outside the LAN:
    ```bash
    curl -sSI https://mediavault.markrwatts.com/signin | grep -iE "strict-transport|x-frame|content-security|cf-ray"
    curl -sS -o /dev/null -w "%{http_code}\n" -H 'Cookie: __Secure-better-auth.session_token=forged' https://mediavault.markrwatts.com/api/films   # 401

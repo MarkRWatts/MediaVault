@@ -19,6 +19,10 @@ import { bearerTokenFromHeader, verifySessionCookie } from "@/lib/session-cookie
 // routes used to be, for next/image's cookie-less server-side optimizer
 // fetch; the app renders plain <img> tags now, so they're gated too.
 const PUBLIC_PATH_PREFIXES = [...PAGE_PUBLIC_PATH_PREFIXES, "/api/auth/"];
+// Also proxy-only: the file Apple's CDN fetches, with no session, to learn
+// which apps may open this site's links and use its passkeys
+// (src/lib/apple-app-site.ts). Exact path, not a prefix.
+const PUBLIC_FILES = ["/.well-known/apple-app-site-association"];
 
 // BetterAuth plugin HTTP endpoints this app never calls from a browser —
 // every organization operation goes through server actions (which call
@@ -72,6 +76,7 @@ export async function proxy(request: NextRequest) {
     (await verifySessionCookie(bearerTokenFromHeader(request.headers.get("authorization")), secret));
   const isPublic =
     PUBLIC_PATHS.includes(pathname) ||
+    PUBLIC_FILES.includes(pathname) ||
     PUBLIC_PATH_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 
   if (!isPublic && !authenticated) {

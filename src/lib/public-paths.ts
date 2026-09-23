@@ -15,10 +15,11 @@ export function isPreAuthPath(pathname: string): boolean {
 // Signed-in pages that still render as a bare card with no app chrome.
 // /consent is the OIDC consent screen for Jellyfin SSO: the person is
 // signed in and has a household, so AppShell's own no-session/no-household
-// checks wouldn't catch it. Deliberately a SEPARATE list from PUBLIC_PATHS
+// checks wouldn't catch it. /device is the same for the Apple TV's
+// sign-in approval (TVOS_PLAN.md). Deliberately a SEPARATE list from PUBLIC_PATHS
 // — adding a path here hides the nav, it does NOT make it reachable
 // signed out.
-export const CHROMELESS_PATHS = ["/consent"];
+export const CHROMELESS_PATHS = ["/consent", "/device"];
 
 export function isChromelessPath(pathname: string): boolean {
   return CHROMELESS_PATHS.includes(pathname);

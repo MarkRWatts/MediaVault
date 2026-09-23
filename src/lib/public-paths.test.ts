@@ -8,13 +8,15 @@ describe("isPreAuthPath", () => {
     expect(isPreAuthPath("/invite/abc123")).toBe(true);
     expect(isPreAuthPath("/")).toBe(false);
     expect(isPreAuthPath("/consent")).toBe(false);
+    expect(isPreAuthPath("/device")).toBe(false);
     expect(isPreAuthPath("/signinx")).toBe(false);
   });
 });
 
 describe("isChromelessPath", () => {
-  it("hides the app shell on the OIDC consent card", () => {
+  it("hides the app shell on the OIDC consent and device sign-in cards", () => {
     expect(isChromelessPath("/consent")).toBe(true);
+    expect(isChromelessPath("/device")).toBe(true);
     expect(isChromelessPath("/")).toBe(false);
     expect(isChromelessPath("/account")).toBe(false);
   });

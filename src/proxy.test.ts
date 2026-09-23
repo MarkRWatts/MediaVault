@@ -57,4 +57,23 @@ describe("proxy", () => {
     const res = await proxy(request);
     expect(res.status).toBe(404);
   });
+
+  it("serves the apple-app-site-association file with no session", async () => {
+    const res = await proxy(new NextRequest("http://localhost/.well-known/apple-app-site-association"));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("location")).toBeNull();
+  });
+
+  it("keeps the rest of /.well-known behind the gate", async () => {
+    const res = await proxy(new NextRequest("http://localhost/.well-known/other"));
+    expect(res.status).toBe(307);
+  });
+
+  it("sends a signed-out phone from /device to sign-in and back", async () => {
+    const res = await proxy(new NextRequest("http://localhost/device?user_code=ABCDEFGH"));
+    expect(res.status).toBe(307);
+    const location = new URL(res.headers.get("location")!);
+    expect(location.pathname).toBe("/signin");
+    expect(location.searchParams.get("callbackURL")).toBe("/device?user_code=ABCDEFGH");
+  });
 });
