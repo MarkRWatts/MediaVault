@@ -186,25 +186,35 @@ describe("parseDirectPlayRequest", () => {
 describe("canDirectPlay", () => {
   const plan = (videoCodec: string, container: string, codec: string) =>
     planVideoPlayback({ videoCodec, container, audioTracks: [{ streamIdx: 1, codec, profile: null, channels: 6, isDefault: true }] })!;
+  const src = (videoCodec: string, container: string, codec: string, extra: string[] = []) => ({
+    plan: plan(videoCodec, container, codec),
+    fileAudioCodecs: [codec, ...extra],
+  });
   const h264 = new Set(["h264"]);
   const both = new Set(["h264", "hevc"]);
 
   it("takes an MP4 the planner already calls direct, for a client that declared its video", () => {
-    expect(canDirectPlay({ plan: plan("h264", "mp4", "aac") }, h264, null)).toBe(true);
-    expect(canDirectPlay({ plan: plan("hevc", "mp4", "aac") }, both, null)).toBe(true);
+    expect(canDirectPlay(src("h264", "mp4", "aac"), h264, null)).toBe(true);
+    expect(canDirectPlay(src("hevc", "mp4", "aac"), both, null)).toBe(true);
   });
 
   it("refuses a video family the client didn't declare", () => {
-    expect(canDirectPlay({ plan: plan("hevc", "mp4", "aac") }, h264, null)).toBe(false);
+    expect(canDirectPlay(src("hevc", "mp4", "aac"), h264, null)).toBe(false);
   });
 
   it("refuses anything the planner doesn't call direct: MKV, or audio that needs transcoding", () => {
-    expect(canDirectPlay({ plan: plan("h264", "mkv", "aac") }, both, null)).toBe(false);
-    expect(canDirectPlay({ plan: plan("h264", "mp4", "ac3") }, both, null)).toBe(false);
+    expect(canDirectPlay(src("h264", "mkv", "aac"), both, null)).toBe(false);
+    expect(canDirectPlay(src("h264", "mp4", "ac3"), both, null)).toBe(false);
+  });
+
+  it("refuses any file carrying a TrueHD track, even behind a playable AAC default (WebKit rejects the whole file)", () => {
+    expect(canDirectPlay(src("h264", "mp4", "aac", ["truehd"]), both, null)).toBe(false);
+    // Other kept lossless tracks are fine -- checked in WebKit: DTS-HD MA, PCM, DTS-ES.
+    expect(canDirectPlay(src("h264", "mp4", "aac", ["dts", "pcm_s16le"]), both, null)).toBe(true);
   });
 
   it("allows the default audio track asked for by index, but not a different one", () => {
-    expect(canDirectPlay({ plan: plan("h264", "mp4", "aac") }, h264, 1)).toBe(true);
-    expect(canDirectPlay({ plan: plan("h264", "mp4", "aac") }, h264, 2)).toBe(false);
+    expect(canDirectPlay(src("h264", "mp4", "aac"), h264, 1)).toBe(true);
+    expect(canDirectPlay(src("h264", "mp4", "aac"), h264, 2)).toBe(false);
   });
 });

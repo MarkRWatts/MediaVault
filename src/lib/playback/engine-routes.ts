@@ -60,14 +60,24 @@ export function parseDirectPlayRequest(params: URLSearchParams): Set<string> | n
  *  audio track -- planVideoPlayback's "direct" tier), its video is a family
  *  the client declared, and the caller isn't asking for a different audio
  *  track than the file's default (switching tracks needs the engine; a
- *  browser can't pick one out of the file). */
+ *  browser can't pick one out of the file).
+ *
+ *  And the file carries no TrueHD track, even an unplayed one. WebKit
+ *  (Safari, and AVPlayer behind it) refuses an MP4 *outright* -- error 4,
+ *  "source not supported" -- once its TrueHD track passes ~8.4M samples:
+ *  TrueHD stores 1200 samples a second, so that is any film over about two
+ *  hours (No Time to Die, 23 Sep 2026). Measured in WebKit against the
+ *  library: John Wick at 7.33M samples plays, Blade Runner at 8.47M doesn't
+ *  -- straddling 2^23. Chrome plays all of them. The engine's HLS never
+ *  carries the TrueHD track, so those files play fine that way. */
 export function canDirectPlay(
-  source: Pick<ResolvedSource, "plan">,
+  source: Pick<ResolvedSource, "plan" | "fileAudioCodecs">,
   clientVideoFamilies: Set<string>,
   requestedAudioStreamIndex: number | null,
 ): boolean {
   const { plan } = source;
   if (plan.tier !== "direct") return false;
+  if (source.fileAudioCodecs.includes("truehd")) return false;
   if (requestedAudioStreamIndex !== null && requestedAudioStreamIndex !== plan.audioStreamIndex) return false;
   const family = DIRECT_VIDEO_FAMILIES[plan.outputVideoCodec ?? ""];
   return family !== undefined && clientVideoFamilies.has(family);
