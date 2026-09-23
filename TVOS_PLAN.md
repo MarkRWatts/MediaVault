@@ -153,6 +153,37 @@ existing `SignInFlow` (the iPhone keyboard prompt helps here).
   (10 a minute on `/api/auth/*`) is not: `/api/auth/device/token` has to
   be left out of it.
 
+## One Apple TV, several people
+
+Apple TV profiles are how a household shares one TV, and each person's
+MediaVault account carries their own progress, Continue Watching,
+favourites and playlists. The TV app keeps them apart by letting tvOS do
+it:
+
+- **User Management → Runs as Current User**
+  (`com.apple.developer.user-management` = `runs-as-current-user`, tvOS
+  16+). tvOS gives each Apple TV profile its own copy of the app's data,
+  Keychain included. Each person scans the QR code once on their own
+  profile; switching profiles in Control Center brings MediaVault up as
+  that person, and a profile that has never signed in sees the QR screen.
+- **Not** `runs-as-current-user-with-user-independent-keychain` /
+  `kSecUseUserIndependentKeychain`: that shares one sign-in across
+  profiles, the opposite of the point.
+- **No in-app account switcher.** An app that keeps several accounts in
+  one shared container and switches between them itself (YouTube's is the
+  familiar example) is how people end up watching on each other's
+  accounts. The Apple TV profile *is* the MediaVault profile.
+- **The one way to cross accounts** is approving the QR code while the TV
+  is on the other person's profile. A "Signed in as …" confirmation after
+  every fresh sign-in makes that obvious at once; Settings → Sign out
+  fixes it.
+- Nothing server-side: each profile holds its own session, and everything
+  per-user on the server is already keyed on it.
+- To verify on a real Apple TV with two profiles (needs the paid team for
+  a device build): each profile signs in separately; switching profiles
+  relaunches the app as the other person; music playing on one profile
+  stops on a switch.
+
 ## Playback contract
 
 Unchanged from iOS (IOS_PLAN.md "Video"), served by `engine-routes.ts`
