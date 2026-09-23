@@ -175,6 +175,21 @@ function hasNativePlayerBridge(): boolean {
   return typeof window !== "undefined" && Boolean(window.webkit?.messageHandlers?.mediaVaultPlayer);
 }
 
+// Session query declaring what this browser can play straight from an MP4
+// URL (UHD_PLAN.md phase B, "Direct-play routing"): for a file that is
+// already playable as-is, the session route then answers with the file's
+// own /stream URL instead of an engine stream -- no segments, no cache.
+// Empty inside the iOS app's web view: the native player it hands off to
+// keeps getting HLS until direct play has been verified on the device.
+function directPlayQuery(): string {
+  if (typeof document === "undefined" || hasNativePlayerBridge()) return "";
+  const probe = document.createElement("video");
+  const families: string[] = [];
+  if (probe.canPlayType('video/mp4; codecs="avc1.640028,mp4a.40.2"') !== "") families.push("h264");
+  if (probe.canPlayType('video/mp4; codecs="hvc1.2.4.L153.B0,mp4a.40.2"') !== "") families.push("hevc");
+  return families.length > 0 ? `&direct=1&vcodecs=${families.join(",")}` : "";
+}
+
 // Native HLS or hls.js? Only Apple's WebKit is a candidate for native at
 // all: Chromium-based browsers answer "maybe" to the HLS MIME type but
 // their built-in support is partial and doesn't honour an event playlist
@@ -237,7 +252,9 @@ export default function VideoPlayer({
   // Jellyfin mode: the current playback session (its proxied playlist URL
   // and the id to stop it with). Null until /jf/session has answered, and
   // replaced on a quality switch.
-  const [jfSession, setJfSession] = useState<{ playlistUrl: string; playSessionId: string } | null>(null);
+  // A direct play (the file itself, no engine stream) has no session to
+  // stop, so its playSessionId is null.
+  const [jfSession, setJfSession] = useState<{ playlistUrl: string; playSessionId: string | null } | null>(null);
   // Chosen audio stream index for Jellyfin mode; null = Jellyfin's default.
   const [audioIdx, setAudioIdx] = useState<number | null>(null);
   // Audio tracks as Jellyfin lists them for the item, from /jf/session --
@@ -311,7 +328,7 @@ export default function VideoPlayer({
     async function check() {
       const [statusRes, progressRes] = await Promise.all([
         source === "jellyfin"
-          ? fetch(`${basePath}/${versionId}/jf/session?variant=${variant}`, { method: "POST", cache: "no-store" })
+          ? fetch(`${basePath}/${versionId}/jf/session?variant=${variant}${directPlayQuery()}`, { method: "POST", cache: "no-store" })
           : fetch(`${basePath}/${versionId}/status?variant=${variant}`, { cache: "no-store" }),
         // Best-effort: if this fails for any reason we just don't resume —
         // not worth blocking playback over. Skipped entirely when this
@@ -336,15 +353,18 @@ export default function VideoPlayer({
       if (cancelled) return;
 
       if (source === "jellyfin") {
-        // A complete VOD playlist: the duration is final and every seek is
-        // instant, so the in-progress machinery is inert. Native HLS is the
-        // better player wherever it exists (mseMime null keeps Safari on it).
-        setTier("prepare");
+        // A complete VOD playlist, or the file itself: either way the
+        // duration is final and every seek is instant, so the in-progress
+        // machinery is inert. Native HLS is the better player wherever it
+        // exists (mseMime null keeps Safari on it). A "direct" answer's URL
+        // is this player's own streamUrl, so the attach effect gives it a
+        // plain src rather than hls.js.
+        setTier(status.mode === "direct" ? "direct" : "prepare");
         durationIsFinalRef.current = true;
         knownDurationRef.current =
           typeof status.durationSecs === "number" && status.durationSecs > 0 ? status.durationSecs : null;
         mseMimeRef.current = null;
-        setJfSession({ playlistUrl: status.playlistUrl, playSessionId: status.playSessionId });
+        setJfSession({ playlistUrl: status.playlistUrl, playSessionId: status.playSessionId ?? null });
         if (Array.isArray(status.audioTracks)) setSessionAudio(status.audioTracks);
       }
 
@@ -578,7 +598,10 @@ export default function VideoPlayer({
     // and can land after this request, and the server must not count the
     // old session against this viewer's stream allowance.
     const replacesParam = old ? `&replaces=${encodeURIComponent(old)}` : "";
-    fetch(`${basePath}/${versionId}/jf/session?variant=${nextVariant}${audioParam}${replacesParam}`, { method: "POST", cache: "no-store" })
+    fetch(`${basePath}/${versionId}/jf/session?variant=${nextVariant}${audioParam}${replacesParam}${directPlayQuery()}`, {
+      method: "POST",
+      cache: "no-store",
+    })
       .then(async (res) => {
         const body = await res.json().catch(() => null);
         if (!res.ok || typeof body?.playlistUrl !== "string") {
@@ -586,7 +609,8 @@ export default function VideoPlayer({
           setMessage(typeof body?.error === "string" ? body.error : "Could not restart playback.");
           return;
         }
-        setJfSession({ playlistUrl: body.playlistUrl, playSessionId: body.playSessionId });
+        setTier(body.mode === "direct" ? "direct" : "prepare");
+        setJfSession({ playlistUrl: body.playlistUrl, playSessionId: body.playSessionId ?? null });
       })
       .catch(() => {
         setUiState("error");
