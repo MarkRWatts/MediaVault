@@ -1,14 +1,8 @@
-// Small mono chip in FormatBadge's visual register, but for audio codec
-// rather than disc format: lossless codecs (ALAC/FLAC) borrow the blu
-// tokens, lossy codecs (MP3/AAC) borrow the dvd tokens, and FairPlay DRM
-// (.m4p — cannot play outside iTunes/Apple Music, never probed) borrows the
-// missing tokens so it reads as a real gap rather than just "another codec".
-// Anything unrecognised falls back to the neutral dvd tokens.
-//
-// Optional `quality` renders as a second font-mono segment inside the same
-// chip, separated by a middle dot (e.g. "ALAC · 16/44.1", "MP3 · ~320k") —
-// see qualityLabel in @/lib/audio-quality for how that string is derived.
-// Omitted entirely when quality is null/undefined (DRM, or not computable).
+// A music track's codec in SpecChip's one style, optionally with its
+// quality as a second segment after a middle dot ("ALAC · 16/44.1",
+// "MP3 · ~320k" — see qualityLabel in @/lib/audio-quality). FairPlay DRM
+// (.m4p — won't play outside iTunes/Apple Music, never probed) keeps the
+// "missing" colours: it's a real gap, not just another codec.
 
 const LABELS: Record<string, string> = {
   alac: "ALAC",
@@ -17,16 +11,6 @@ const LABELS: Record<string, string> = {
   aac: "AAC",
   drm: "DRM",
 };
-
-const LOSSLESS = new Set(["alac", "flac"]);
-const LOSSY = new Set(["mp3", "aac"]);
-
-function styleFor(codec: string): string {
-  if (LOSSLESS.has(codec)) return "text-blu bg-blu-bg border-blu-border";
-  if (LOSSY.has(codec)) return "text-dvd bg-dvd-bg border-dvd-border";
-  if (codec === "drm") return "text-missing bg-missing-bg border-missing-border";
-  return "text-dvd bg-dvd-bg border-dvd-border"; // unknown
-}
 
 export default function AudioCodecBadge({
   codec,
@@ -42,7 +26,9 @@ export default function AudioCodecBadge({
 
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-widest leading-none ${styleFor(key)} ${className}`}
+      className={`inline-flex items-center gap-1 whitespace-nowrap rounded-[3px] border px-1.5 py-px text-[11px] font-semibold leading-tight ${
+        key === "drm" ? "border-missing-border bg-missing-bg text-missing" : "border-text-muted/60 text-text-muted"
+      } ${className}`}
     >
       <span>{label}</span>
       {quality != null && (

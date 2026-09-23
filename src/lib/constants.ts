@@ -50,7 +50,7 @@ export function classifyFormat(width?: number | null): Format {
 }
 
 const FORMAT_LABELS: Record<string, string> = {
-  UHD: "4K UHD",
+  UHD: "Ultra HD Blu-ray",
   BLURAY: "Blu-ray",
   DVD: "DVD",
   HD: "HD",

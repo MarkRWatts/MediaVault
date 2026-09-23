@@ -95,8 +95,13 @@ export default async function ShowPage({
                   {show.title}
                 </h1>
                 <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-sm text-text-muted">
-                  <CertificationBadge certification={show.certification} />
                   <span>{show.year ?? "Year unknown"}</span>
+                  {show.certification && (
+                    <>
+                      <span className="text-text-faint">·</span>
+                      <CertificationBadge certification={show.certification} />
+                    </>
+                  )}
                   {show.status && (
                     <>
                       <span className="text-text-faint">·</span>

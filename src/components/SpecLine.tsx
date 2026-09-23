@@ -4,22 +4,12 @@ import HdrBadge from "@/components/HdrBadge";
 import type { Spec } from "@/lib/episode-specs";
 
 // The line a show or season header carries for whatever every file under it
-// agrees on — the disc mark, the real resolution, the HDR mark, and each
-// audio track's mark — and, on an episode row, whatever that header couldn't
-// say. Same marks and the same reading order as a film's version card, so a
-// show page and a film page say the same things the same way; it's only the
-// place that differs.
-//
-// This is the only place a disc mark and an audio mark sit side by side, and
-// their default heights were each tuned among their own kind, so they don't
-// balance here: a Dolby lockup stacks "Dolby" over a smaller DIGITAL/ATMOS,
-// which at the default 15 makes its block 20px against the DVD mark's 14 —
-// half again as tall, and it reads as the wrong scale even though the two
-// wordmarks match. Raising the disc mark to 16 evens the blocks up. Doing it
-// from the other end instead (shrinking the audio marks) fixes this pair but
-// leaves the single-line marks — dts-HD, TrueHD — too small beside the
-// Blu-ray mark, which is 1.5x its box to begin with.
-const DISC_MARK_HEIGHT = 16;
+// agrees on — the disc, the real resolution, the HDR range, and each audio
+// track — and, on an episode row, whatever that header couldn't say. Same
+// chips and the same reading order as a film's version card, so a show page
+// and a film page say the same things the same way; it's only the place
+// that differs.
+
 export default function SpecLine({
   spec,
   className = "",
@@ -34,9 +24,9 @@ export default function SpecLine({
   const { format, resolution, videoRange, audio } = spec;
   return (
     <div className={`flex flex-wrap items-center gap-x-3 gap-y-1.5 ${className}`}>
-      {format && <FormatBadge kind={format} logoHeight={DISC_MARK_HEIGHT} />}
+      {format && <FormatBadge kind={format} />}
       {resolution && <span className="font-mono text-xs text-text-muted">{resolution}</span>}
-      <HdrBadge videoRange={videoRange} logoHeight={DISC_MARK_HEIGHT} />
+      <HdrBadge videoRange={videoRange} />
       {audio &&
         (audio.tracks.length > 0 ? (
           audio.tracks.map((badge, i) => (
