@@ -16,6 +16,18 @@
 // copy isn't there yet. See the route for why that is a probe. Tracks that are already lossy (AAC, MP3) are never re-encoded —
 // that would cost quality to save nothing — and go out as the original.
 //
+// ?quality=gapless is the other copy: an MP3 decoded and stored as ALAC.
+// Every MP3 starts with the encoder's priming samples and ends with padding
+// (LAME: 1105 samples in front — 25 ms — and up to a frame behind), and
+// records both in its header. Decoders honour it — ffmpeg and AVFoundation
+// both return the exact sample count — but AVQueuePlayer's hand-over from
+// one MP3 item to the next isn't seamless (it is for ALAC and gapless-tagged
+// AAC), so the native apps heard a blip at every join of a continuous MP3
+// album; the web player, which schedules decoded PCM itself, never did. The
+// copy is decoded (trimmed) and stored as ALAC — no priming, no further loss
+// — which AVQueuePlayer joins without a gap. Anything that isn't MP3 is
+// gapless as it is and goes out as the original.
+//
 // The cache is bounded (AUDIO_CACHE_MAX_BYTES, least recently served first
 // out) and self-healing: the source's mtime is in the file name, so a
 // re-ripped track simply misses and the stale copy ages out.
@@ -27,17 +39,20 @@ import { detectLocalFfmpeg, resolveTrackPath, trackFileContentType } from "@/lib
 import { audioSemaphore } from "@/lib/semaphore";
 import { ffmpegPath } from "@/lib/ffmpeg-bin";
 
-export type AudioQuality = "original" | "aac";
+export type AudioQuality = "original" | "aac" | "gapless";
 
 export function parseAudioQuality(raw: string | null): AudioQuality | null {
   if (raw === null || raw === "" || raw === "original") return "original";
-  return raw === "aac" ? "aac" : null;
+  return raw === "aac" || raw === "gapless" ? raw : null;
 }
 
-/** Only lossless sources are worth converting. */
-export function needsTranscode(codec: string | null | undefined): boolean {
+/** Whether `quality` means a converted copy of a `codec` source: the small
+ *  AAC copy only of lossless tracks, the gapless ALAC copy only of MP3s. */
+export function needsTranscode(codec: string | null | undefined, quality: AudioQuality = "aac"): boolean {
   const c = (codec ?? "").toLowerCase();
-  return c === "alac" || c === "flac";
+  if (quality === "aac") return c === "alac" || c === "flac";
+  if (quality === "gapless") return c === "mp3";
+  return false;
 }
 
 const AAC_BITRATE = "256k";
@@ -52,9 +67,24 @@ function audioCacheMaxBytes(): number {
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_BYTES;
 }
 
-/** `<trackId>-<source mtime>-aac256.m4a` — see the header on why mtime. */
-export function transcodeFileName(trackId: number, sourceMtimeMs: number): string {
-  return `${trackId}-${Math.floor(sourceMtimeMs)}-aac${AAC_BITRATE.replace("k", "")}.m4a`;
+/** `<trackId>-<source mtime>-aac256.m4a` (or `-alac.m4a` for the gapless
+ *  copy) — see the header on why mtime. */
+export function transcodeFileName(trackId: number, sourceMtimeMs: number, quality: AudioQuality = "aac"): string {
+  const kind = quality === "gapless" ? "alac" : `aac${AAC_BITRATE.replace("k", "")}`;
+  return `${trackId}-${Math.floor(sourceMtimeMs)}-${kind}.m4a`;
+}
+
+/** ffmpeg's output options for each converted copy. */
+function encodeArgs(quality: AudioQuality): string[] {
+  // -movflags +faststart puts the index at the front, so a player can start
+  // (and seek) on the first bytes of a range request.
+  if (quality === "gapless") {
+    // 16-bit, as the MP3 was mastered; ffmpeg's MP3 decoder has already
+    // dropped the priming and padding the LAME header describes.
+    return ["-map", "0:a:0", "-vn", "-c:a", "alac", "-sample_fmt", "s16p", "-movflags", "+faststart", "-f", "mp4"];
+  }
+  // The fast coder halves the time and is transparent at this bitrate.
+  return ["-map", "0:a:0", "-vn", "-c:a", "aac", "-aac_coder", "fast", "-b:a", AAC_BITRATE, "-movflags", "+faststart", "-f", "mp4"];
 }
 
 /** Which cached files to delete to get back under the limit: least
@@ -96,13 +126,13 @@ export async function resolveTrackFileForQuality(
   if (!resolved) return null;
   const { track, absPath, musicRoot } = resolved;
 
-  if (quality === "original" || !needsTranscode(track.codec)) {
+  if (quality === "original" || !needsTranscode(track.codec, quality)) {
     const contentType = trackFileContentType(track.codec);
     return contentType ? { absPath, contentType, transcoded: false, needsTranscode: false } : null;
   }
 
   const stat = await fs.stat(absPath);
-  const name = transcodeFileName(trackId, stat.mtimeMs);
+  const name = transcodeFileName(trackId, stat.mtimeMs, quality);
   const dir = audioCacheDir();
   const target = path.join(dir, name);
 
@@ -124,7 +154,7 @@ export async function resolveTrackFileForQuality(
       const contentType = trackFileContentType(track.codec);
       return contentType ? { absPath, contentType, transcoded: false, needsTranscode: true } : null;
     }
-    job = transcode(absPath, musicRoot, dir, name)
+    job = transcode(absPath, musicRoot, dir, name, quality)
       .finally(() => {
         release();
         inFlight.delete(name);
@@ -141,13 +171,10 @@ export async function resolveTrackFileForQuality(
   return made ? { absPath: made, contentType: "audio/mp4", transcoded: true, needsTranscode: true } : null;
 }
 
-async function transcode(absPath: string, musicRoot: string, dir: string, name: string): Promise<string | null> {
+async function transcode(absPath: string, musicRoot: string, dir: string, name: string, quality: AudioQuality): Promise<string | null> {
   await fs.mkdir(dir, { recursive: true });
   const partial = `${name}.${process.pid}.part`;
-  // -movflags +faststart puts the index at the front, so a player can start
-  // (and seek) on the first bytes of a range request.
-  // The fast coder halves the time and is transparent at this bitrate.
-  const encode = ["-map", "0:a:0", "-vn", "-c:a", "aac", "-aac_coder", "fast", "-b:a", AAC_BITRATE, "-movflags", "+faststart", "-f", "mp4"];
+  const encode = encodeArgs(quality);
   const input = ["-nostdin", "-v", "error", "-y", "-i"];
 
   let cmd: string;

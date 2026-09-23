@@ -25,6 +25,9 @@ export async function GET(req: Request, ctx: { params: Promise<{ trackId: string
     return NextResponse.json({ error: "invalid track id" }, { status: 400 });
   }
 
+  // ?quality=gapless — an MP3 decoded to ALAC, its encoder priming and
+  // padding trimmed, so native players join tracks without a blip (see
+  // audio-transcode.ts). Any other source goes out as the original.
   // ?quality=aac — a smaller copy of a lossless track for mobile data,
   // converted once and cached (src/lib/audio-transcode.ts). Anything
   // already lossy comes back as the original either way.
