@@ -1,10 +1,11 @@
 // One-off backfill for KeyframeIndex (V4_PLAN.md "Keyframe index") — every
 // probed film Version and EpisodeFile that has no fresh cached index yet.
-// Cues-only by default, same as the scanner hook (scanner.ts); pass
-// --ffprobe to also run the whole-file ffprobe fallback for anything with
-// no usable Cues (an MKV muxed without them, or a non-Matroska container) —
-// slow, since it reads every packet of every such file, so it's opt-in
-// rather than the default for a run over the whole library.
+// Container index only by default (Matroska Cues or MP4 sync samples), same
+// as the scanner hook (scanner.ts); pass --ffprobe to also run the
+// whole-file ffprobe fallback for anything with no usable index (an MKV
+// muxed without Cues, a fragmented MP4, or another container) — slow, since
+// it reads every packet of every such file, so it's opt-in rather than the
+// default for a run over the whole library.
 //
 // Idempotent: a file whose cached index already matches its current
 // mtime/size is left alone.
@@ -16,13 +17,14 @@
 import "dotenv/config";
 import path from "node:path";
 import { prisma } from "@/lib/db";
-import { getCuesKeyframes, getKeyframes, type KeyframesResult } from "@/lib/playback/keyframes";
+import { getIndexKeyframes, getKeyframes, type KeyframesResult } from "@/lib/playback/keyframes";
 import { loadKeyframeIndex, saveKeyframeIndex, type KeyframeKind } from "@/lib/playback/keyframe-store";
 
 const useFfprobe = process.argv.slice(2).includes("--ffprobe");
 
 interface Summary {
   cues: number;
+  stss: number;
   ffprobe: number;
   noIndex: number;
   errors: number;
@@ -31,8 +33,8 @@ interface Summary {
 
 async function resolveKeyframes(absPath: string): Promise<KeyframesResult | null> {
   if (useFfprobe) return getKeyframes(absPath);
-  const cues = await getCuesKeyframes(absPath);
-  return cues ? { keyframeSecs: cues.keyframeSecs, source: "cues" } : null;
+  const indexed = await getIndexKeyframes(absPath);
+  return indexed ? { keyframeSecs: indexed.keyframeSecs, source: indexed.source } : null;
 }
 
 async function backfillOne(
@@ -69,8 +71,8 @@ async function backfillOne(
 }
 
 async function main(): Promise<void> {
-  console.log(`keyframe backfill${useFfprobe ? " (ffprobe fallback enabled)" : " (cues only — pass --ffprobe for the rest)"}`);
-  const summary: Summary = { cues: 0, ffprobe: 0, noIndex: 0, errors: 0, alreadyFresh: 0 };
+  console.log(`keyframe backfill${useFfprobe ? " (ffprobe fallback enabled)" : " (container index only — pass --ffprobe for the rest)"}`);
+  const summary: Summary = { cues: 0, stss: 0, ffprobe: 0, noIndex: 0, errors: 0, alreadyFresh: 0 };
 
   const moviesPath = process.env.MOVIES_PATH;
   if (moviesPath) {
@@ -103,7 +105,7 @@ async function main(): Promise<void> {
   }
 
   console.log(
-    `\ncues: ${summary.cues}, ffprobe: ${summary.ffprobe}, no index: ${summary.noIndex}, errors: ${summary.errors}, already fresh: ${summary.alreadyFresh}`,
+    `\ncues: ${summary.cues}, stss: ${summary.stss}, ffprobe: ${summary.ffprobe}, no index: ${summary.noIndex}, errors: ${summary.errors}, already fresh: ${summary.alreadyFresh}`,
   );
 }
 

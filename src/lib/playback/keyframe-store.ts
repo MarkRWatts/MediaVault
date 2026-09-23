@@ -10,7 +10,9 @@ import { prisma } from "@/lib/db";
  *  "episode" covers EpisodeFile, which isn't wired into MediaKind yet. */
 export type KeyframeKind = "film" | "episode" | "scene";
 
-export type KeyframeSource = "cues" | "ffprobe";
+/** Where an index came from: Matroska Cues, MP4's sync-sample table (stss),
+ *  or the whole-file ffprobe fallback -- see keyframes.ts. */
+export type KeyframeSource = "cues" | "stss" | "ffprobe";
 
 export interface KeyframeCacheKey {
   mtimeMs: number;

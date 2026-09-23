@@ -1,5 +1,8 @@
+import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { fixedSegmentTable, segmentTableFromKeyframes } from "./keyframes";
+import { fixedSegmentTable, getIndexKeyframes, getKeyframes, segmentTableFromKeyframes } from "./keyframes";
+
+const FIXTURES_DIR = path.join(import.meta.dirname, "__fixtures__");
 
 describe("segmentTableFromKeyframes", () => {
   it("cuts at the first keyframe >= 6s after the previous cut", () => {
@@ -111,5 +114,35 @@ describe("fixedSegmentTable -- sub-second remainder", () => {
   });
   it("never folds away the only segment", () => {
     expect(fixedSegmentTable(0.5)).toEqual([{ index: 0, start: 0, duration: 0.5 }]);
+  });
+});
+
+describe("getIndexKeyframes", () => {
+  it("reads Matroska Cues for an .mkv", async () => {
+    const result = await getIndexKeyframes(path.join(FIXTURES_DIR, "normal.mkv"));
+    expect(result?.source).toBe("cues");
+    expect(result!.keyframeSecs.length).toBeGreaterThan(0);
+  });
+
+  it("reads the sync-sample table for an .mp4", async () => {
+    const result = await getIndexKeyframes(path.join(FIXTURES_DIR, "mp4-normal.mp4"));
+    expect(result?.source).toBe("stss");
+    expect(result!.keyframeSecs.length).toBeGreaterThan(0);
+  });
+
+  it("returns null for an MP4 with no usable index (fragmented) and for other containers", async () => {
+    expect(await getIndexKeyframes(path.join(FIXTURES_DIR, "mp4-fragmented.mp4"))).toBeNull();
+    expect(await getIndexKeyframes(path.join(FIXTURES_DIR, "README.md"))).toBeNull();
+  });
+
+  it("returns null rather than throwing for a missing file", async () => {
+    expect(await getIndexKeyframes(path.join(FIXTURES_DIR, "does-not-exist.mp4"))).toBeNull();
+  });
+});
+
+describe("getKeyframes", () => {
+  it("answers an MP4 from its own index, without the whole-file ffprobe pass", async () => {
+    const result = await getKeyframes(path.join(FIXTURES_DIR, "mp4-normal.mp4"));
+    expect(result?.source).toBe("stss");
   });
 });

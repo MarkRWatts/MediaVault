@@ -22,7 +22,7 @@ merging changes nothing until the flag is set.
 | Phase | State |
 |---|---|
 | 0 Hardware and binary | Done: iGPU in the VM, bookworm image with pinned jellyfin-ffmpeg, `FFMPEG_PATH`/`FFPROBE_PATH`, compose device wiring; the render-node support for the deploy playbook is on its own branch in `ansible-homelab` and must go out with (or before) the new compose file. |
-| 1 Keyframe index | Done: Cues reader, `KeyframeIndex`, scanner hook, `scripts/backfill-keyframes.ts`; measured against the whole library. |
+| 1 Keyframe index | Done: Cues reader, MP4 sync-sample reader, `KeyframeIndex`, scanner hook, `scripts/backfill-keyframes.ts`; measured against the whole library. |
 | 2 Engine | Done: `src/lib/playback/` — segment tables, playlists, head arguments, head processes, sessions, throttle, cache budget, hardware self-test. Real-ffmpeg integration tests pass on Homebrew ffmpeg and on jellyfin-ffmpeg 8.1.2. |
 | 3 Hardware pipeline | Done: the real VAAPI argument lines verified on the VM (382 segments, every boundary within a frame). |
 | 4 Routes and cut-over flag | The session routes (`/jf/session`, `/jf/stop`, `/jf/e/<key>/…`) serve from the engine when `PLAYBACK_ENGINE=local`, with the contract the web player and the native apps already speak; `playable` and `features.playback` follow the flag; the admin page shows the engine and its hardware self-test. The `play/*` names and the single-mode player come with phase 6, when the Jellyfin branch is deleted. |
@@ -171,6 +171,18 @@ cache key, packed keyframe timestamps).
   ffprobe's keyframe packets exactly on the title checked. Blu-ray remuxes
   have a keyframe every ~1 s; the smaller re-encodes have GOPs up to 10 s,
   so copy-tier segments there run to 10 s and `TARGETDURATION` follows.
+- MP4 (nearly the whole library since the Sep 2026 conversion to MP4/H.264/AAC):
+  read the video track's own sample tables from `moov` — `stss` (sync
+  samples), `stts`/`ctts` (timing) and the edit list — via
+  `mp4-sync-samples.ts`. Only box headers and those few tables are read,
+  never `mdat` and never another track's tables (a Blu-ray remux's TrueHD
+  tables alone can be 60 MB of a 70 MB `moov`). Measured 23 Sep 2026 over
+  the SMB share: No Time to Die (38.5 GB) read 3.0 MB in 92 ms, against a
+  whole-file ffprobe pass of several minutes; on ten real files (DVD and
+  Blu-ray, copied and re-encoded, 25p and 50p, cropped) every keyframe
+  matched ffprobe's to within ffprobe's own 6-decimal rounding. Fragmented
+  MP4 (samples in `moof`) and unusual edit lists return no index and fall
+  back to ffprobe.
 - Anything else, or an MKV without cues: `ffprobe -show_entries
   packet=pts_time,flags` restricted to the video stream. This reads the
   whole file, so it runs at scan time in the background, never in a

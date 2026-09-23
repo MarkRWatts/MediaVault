@@ -305,7 +305,7 @@ model KeyframeIndex {
   fileId    Int
   mtimeMs   Float // probe-cache key, same shape as Version/EpisodeFile.mtimeMs
   sizeBytes BigInt
-  source    String // "cues" | "ffprobe" — see keyframes.ts
+  source    String // "cues" | "stss" | "ffprobe" — see keyframes.ts
   count     Int
   data      Bytes // packed little-endian Float64 seconds, sorted ascending
   createdAt DateTime @default(now())
