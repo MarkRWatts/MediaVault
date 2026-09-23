@@ -54,6 +54,7 @@ let root: string;
 let versionId: number;
 let mp4VersionId: number;
 let uhdVersionId: number;
+let staleVersionId: number;
 let episodeFileId: number;
 let sessionRoute: typeof import("./session/route");
 let filmStreamRoute: typeof import("../stream/route");
@@ -134,6 +135,7 @@ describe.skipIf(!hasFfmpeg)("local-engine /jf/* routes (real ffmpeg, real handle
     buildDirectPlayable(path.join(movies, "Direct Film (2021).mp4"));
     // Stands in for a 4K rip: what matters to the routes is the format.
     buildDirectPlayable(path.join(movies, "UHD Film (2022).mp4"));
+    buildDirectPlayable(path.join(movies, "Remuxed Film (2023).mp4"));
     const tv = path.join(root, "tv");
     await mkdir(path.join(tv, "Test Show (2010)", "Season 01"), { recursive: true });
     process.env.TVSHOWS_PATH = tv;
@@ -192,6 +194,30 @@ describe.skipIf(!hasFfmpeg)("local-engine /jf/* routes (real ffmpeg, real handle
       },
     });
     uhdVersionId = uhdVersion.id;
+
+    // Remuxed on the share since the last scan: the row still lists the
+    // TrueHD + AC-3 the file used to have; the file is H.264 + AAC now.
+    const staleFilm = await testPrisma.film.create({
+      data: { title: "Remuxed Film", sortTitle: "remuxed film", year: 2023, owned: true },
+    });
+    const staleVersion = await testPrisma.version.create({
+      data: {
+        filmId: staleFilm.id,
+        filePath: "Remuxed Film (2023).mp4",
+        fileName: "Remuxed Film (2023).mp4",
+        format: "UHD",
+        videoCodec: "h264",
+        container: "mp4",
+        durationSecs: DURATION_SECS,
+        audioTracks: {
+          create: [
+            { streamIdx: 1, codec: "truehd", channels: 8, isDefault: true },
+            { streamIdx: 2, codec: "ac3", channels: 6 },
+          ],
+        },
+      },
+    });
+    staleVersionId = staleVersion.id;
 
     const show = await testPrisma.show.create({ data: { title: "Test Show", sortTitle: "test show", folder: "Test Show (2010)" } });
     const season = await testPrisma.showSeason.create({ data: { showId: show.id, seasonNumber: 1 } });
@@ -384,6 +410,16 @@ describe.skipIf(!hasFfmpeg)("local-engine /jf/* routes (real ffmpeg, real handle
       { params: Promise.resolve({ versionId: String(uhdVersionId) }) },
     );
     expect(stream.status).toBe(206);
+  }, 60_000);
+
+  it("judges /stream by the file, not a library row a remux has left behind", async () => {
+    asUser(USER_A);
+    expect((await filmSession(staleVersionId, "variant=original&direct=1&vcodecs=h264,hevc")).mode).toBe("direct");
+    const res = await filmStreamRoute.GET(
+      new Request(`http://localhost/api/video/${staleVersionId}/stream`, { headers: { Range: "bytes=0-99" } }),
+      { params: Promise.resolve({ versionId: String(staleVersionId) }) },
+    );
+    expect(res.status).toBe(206);
   }, 60_000);
 
   it("serves the direct-play file with byte ranges, and refuses a file that needs the engine", async () => {
