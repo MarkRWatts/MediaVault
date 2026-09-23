@@ -56,6 +56,14 @@ export async function GET(req: Request, ctx: { params: Promise<{ versionId: stri
       }
       const res = await serveFile(req, source.absPath, "video/mp4", "no-store", { maxRangeBytes: DIRECT_PLAY_MAX_RANGE_BYTES });
       if (res.status >= 400) logRefusal(versionId, res.status, req, "serveFile");
+      // Temporary: every UHD response, while the Apple TV's -12939 is unexplained.
+      else if (source.plan.hevcTag) {
+        console.warn(
+          `[film-stream] ${versionId} → ${res.status} (range ${req.headers.get("range") ?? "none"}) ` +
+            `content-range ${res.headers.get("content-range") ?? "-"} length ${res.headers.get("content-length") ?? "-"} ` +
+            `ua ${req.headers.get("user-agent") ?? "-"}`,
+        );
+      }
       return res;
     } catch (err) {
       if (err instanceof PlaybackError) {
