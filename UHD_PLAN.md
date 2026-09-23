@@ -14,10 +14,19 @@ All three already exist as 1080p Blu-ray rips, so nothing is unplayable
 today — but they are the first files the engine cannot serve to an Apple
 client at full quality, and they expose the general problem.
 
-## Status (20 Sep 2026)
+## Status (23 Sep 2026)
 
-Not started. No branch, nothing deployed. Everything below is analysis of
-`main` plus decisions taken on 20 Sep. Implementation is phases A–E.
+Not started in code. **Revised 23 Sep** after the library was converted to
+MP4 (22–23 Sep): every film and episode is now MP4 with H.264 video (HEVC for
+the three UHD films), a default AAC track, faststart, no subtitles. The three
+UHD films were remuxed on 23 Sep — HEVC Main10 copied untouched (tagged
+`hvc1`), AAC 5.1 made from the TrueHD Atmos as the default track, the TrueHD
+Atmos kept beside it; the DD 5.1 core, audio description and PGS dropped.
+
+That conversion changes the shape of this plan: **direct play replaces
+phases A and C for HEVC-capable clients** (see the first decision below), and
+phase B becomes the one load-bearing piece. The 20 Sep analysis below is kept
+where it still holds and marked where it doesn't.
 
 ## The household
 
@@ -144,6 +153,35 @@ isn't receiving Atmos from Infuse either.
 
 ## Decisions
 
+**Direct play, not fMP4 HLS, for the UHD Versions (23 Sep 2026).** Phase A
+existed because the UHD films were MKV: Apple's players can't open MKV, so
+the only route to them was HLS, and Apple's HLS won't take HEVC in TS
+segments. Now the files are MP4 — HEVC Main10 HDR10 in a faststart MP4 is
+exactly what AVFoundation (Safari, iOS, tvOS) plays natively from a URL with
+byte ranges, and `/api/video/:versionId/stream` already serves that (auth,
+range support; it only ever refused non-MP4 containers). Consequences:
+
+- **Phase A is dropped** (3–5 days, and this document's least certain
+  estimate). Revive it only if 4K must ever stream *as HLS* — to hls.js, say.
+- **Phase C loses its 4K motivation.** A direct-played file never touches the
+  segment cache, so a 60–75 Mbit/s film can't thrash it. C remains worth its
+  day for the 1080p remuxes on the engine.
+- **Phase B carries the weight** and grows one decision: for a client that
+  can take a Version as-is, hand it the file; otherwise the engine. See B.
+- **Audio is unchanged by this.** AVFoundation lists the kept TrueHD track
+  but won't decode it (checked 22 Sep: `mlpa`, not playable, disabled) and
+  doesn't list DTS at all, so an Apple client plays the default AAC 5.1 —
+  the same AAC the engine would send. Constraints 3 and 4 stand. The same
+  check showed the extra lossless tracks don't stop the file playing on
+  AVFoundation or Chromium: both play the AAC and ignore the rest.
+- **It applies to the whole library, not only UHD.** Every converted 1080p
+  film is H.264 + AAC in faststart MP4 — direct-playable on every client in
+  the household. Today the session route sends all of them through the
+  engine's HLS copy tier anyway (the web player has a `direct` tier; the
+  session path never selects it). Direct play at home would skip segments,
+  cache and keyframe index for everything; the engine would remain for the
+  Remote variant and for anything that isn't already playable as-is.
+
 **Keep 4K and HDR; do not tone-map.** All three films exist as 1080p Blu-ray
 rips. The studio's own SDR grade beats any automatic tone-map, so a Mac-side
 HDR→SDR transcode buys nothing that isn't already on the shelf. `Version`
@@ -160,7 +198,9 @@ and 50 GB free make the cache behaviour annoying rather than dangerous. A
 `hevc_videotoolbox` re-encode on the Mac is held as a documented fallback —
 see "If the cache thrash grates".
 
-**The tvOS app uses AVPlayer and fMP4 HLS, not VLCKit.** A VLCKit app would
+**The tvOS app uses AVPlayer, not VLCKit** — with the 23 Sep amendment that
+the UHD Versions reach it by direct play (a plain MP4 URL) rather than fMP4
+HLS. The original reasoning: A VLCKit app would
 direct-play the MKV and preserve lossless audio and PGS subtitles, but the
 Atmos argument for it collapsed when the AVR reported "Multi-Ch In" — Infuse
 isn't bitstreaming either. What remains is a lossless-versus-lossy step, and
@@ -213,14 +253,15 @@ phase B.
 
 | # | Work | Est. |
 |---|---|---|
-| A | fMP4 segments for HEVC | 3–5 days |
-| B | Version-first capability negotiation | 2–3 days |
-| C | Byte-aware cache limits | 1 day |
+| A | ~~fMP4 segments for HEVC~~ — **dropped 23 Sep**, superseded by direct play | — |
+| B | Version-first capability negotiation, **plus direct-play routing** | 3–4 days |
+| C | Byte-aware cache limits — no longer driven by 4K | 1 day |
 | D | tvOS app | separate effort — see [IOS_PLAN.md](IOS_PLAN.md) |
 | E | Verification | 2 days |
 
-A, B and C are independent of each other. C is worth doing on its own
-merits: it improves the 1080p remuxes already in production.
+B and C are independent. C is worth doing on its own merits: it improves
+the 1080p remuxes that still go through the engine. Section A is kept below
+for the record, in case 4K ever has to stream as HLS.
 
 ### A. fMP4 segments
 
@@ -287,6 +328,21 @@ one *this client can take*, and only then pick the variant:
   Wi-Fi clients, while leaving the wired Apple TV at 5.1. It also puts the
   downmix under our control rather than the client's.
 
+**Direct-play routing (added 23 Sep).** Having chosen the Version, the
+session route decides how to deliver it:
+
+- If the Version is already playable by this client as-is — MP4-like
+  container, a video codec/range the client declared, and a default audio
+  track it can decode (AAC, now true of every converted file) — return the
+  `/api/video/:versionId/stream` URL. That is the only route for a UHD
+  Version (constraint 1: nothing can transcode it).
+- Otherwise, or for the Remote variant, the engine as today.
+- `planVideoPlayback` already computes `tier: "direct"` for exactly these
+  files; the work is making the session path honour it (today it always
+  opens an engine stream) and teaching the native apps the same contract the
+  web player's `direct` tier already speaks. Progress/resume uses the
+  existing `/progress` route either way.
+
 Open design question: whether link quality should feed into this (4K HDR on
 the sofa, 1080p over Tailscale) or whether the existing Original/Remote
 variant choice already covers it. [V4_PLAN.md](V4_PLAN.md) anticipates the
@@ -317,8 +373,9 @@ this is a margin problem rather than a live bug.
 
 Built on AVPlayer against the same session → playlist → progress → stop
 contract the iOS app uses. Not in this plan's estimates; see
-[IOS_PLAN.md](IOS_PLAN.md). It depends on phase A for the 4K titles and on
-phase B to pick the right Version.
+[IOS_PLAN.md](IOS_PLAN.md). It depends on phase B to pick the right Version
+and to hand the UHD titles over as direct play (phase A is no longer
+needed for them).
 
 ### E. Verification
 
@@ -340,19 +397,38 @@ and 4K actually change:
 
 ## Open questions — resolve against the first rip
 
-1. **Dolby Vision profile.** Most UHD discs carry DV profile 7. A copy tier
-   preserves the RPU (it lives in the bitstream), but Apple's HLS signals
+1. **Answered 23 Sep: none.** None of the three carries Dolby Vision — no
+   DOVI configuration record on any of them; they are HDR10 (BT.2020, PQ).
+   The original question, kept for the next UHD disc: most UHD discs carry
+   DV profile 7. A copy tier preserves the RPU (it lives in the bitstream), but Apple's HLS signals
    only profiles 5 and 8.1, so a P7 disc falls back to its HDR10 base layer
    on Apple clients. Check with `ffprobe` before designing DV signalling.
 2. **HDR10 static metadata** (mastering display, MaxCLL/MaxFALL) surviving
    into segments — `ffprobe -show_frames -select_streams v -read_intervals %+#1`.
+   **Answered 23 Sep:** the static metadata is carried in-band
+   (HEVC SEI), not by the container, so it survives any copy of the video.
+   On all three MP4 remuxes the first frame's mastering display and
+   MaxCLL/MaxFALL are identical to the source's — Maleficent 0.005–4000 nits,
+   823/312; Mistress of Evil 0.0001–1000 nits, 0/0 (as on the disc); Man of
+   Steel 0.005–4000 nits, 7770/1468 — and the MP4s carry BT.2020/PQ colour
+   tags. Segments are moot for direct play.
 3. **Actual bitrate and segment size**, replacing the 55–85 Mbit/s
-   projection with a measurement.
-4. **Keyframe cadence** in the rip. UHD remuxes are typically ~1 s, which
-   the copy-tier segment table handles, but a long-GOP re-encode would push
+   projection with a measurement. **Measured 23 Sep:** Maleficent 48.5 GB /
+   97 min = 71.3 Mbit/s; Mistress of Evil 49.0 GB / 119 min = 59.0 Mbit/s;
+   Man of Steel 60.0 GB / 143 min = 60.1 Mbit/s (whole file, audio
+   included). Segment size is moot for direct play.
+4. **Keyframe cadence** in the rip. **Measured 23 Sep:** a fixed ~1 s —
+   0.88 s (Maleficent), 1.00 s (Mistress of Evil), 0.92 s (Man of Steel),
+   with no variation, read from the MP4s' own sync-sample tables in 1.4–2.2
+   MB each. The original note: UHD remuxes are typically ~1 s, which the
+   copy-tier segment table handles, but a long-GOP re-encode would push
    `TARGETDURATION` out.
 5. **Whether the lossless-to-AAC step is audible** on the AVR for a DTS-HD
-   MA or TrueHD title. If it is, "Later → direct play" moves up.
+   MA or TrueHD title. If it is, "Later → direct play" moves up. *(23 Sep:
+   direct play has moved up for the video, but it doesn't settle this — the
+   files keep their lossless track, yet AVPlayer can't decode TrueHD or DTS,
+   so an Apple client plays the AAC either way. The speakers on that AVR are
+   5.1, so a 7.1 or Atmos source is folded to 5.1 regardless.)*
 
 ## If the cache thrash grates
 
@@ -386,7 +462,11 @@ discards the Dolby Vision RPU. Verify the HDR10 side data survives first.
 
 ## Later
 
-- **Direct play as a max-quality escape hatch.** For the ~75 films with
+- ~~**Direct play as a max-quality escape hatch.**~~ **Promoted 23 Sep** —
+  see the first decision; the MP4 conversion removed the container gate. The
+  lossless-audio half of the original idea still doesn't happen on Apple
+  clients (AVPlayer can't decode TrueHD/DTS), so it's direct play for the
+  *video*, with the AAC. The original note: For the ~75 films with
   lossless soundtracks, a client that can decode MKV (VLCKit, or the iOS
   app's native hand-off) could fetch the original bytes and keep lossless
   audio and PGS subtitles. `/api/video/:versionId/stream` already exists on
