@@ -53,6 +53,7 @@ vi.mock("@/lib/auth", () => ({
 let root: string;
 let versionId: number;
 let mp4VersionId: number;
+let uhdVersionId: number;
 let episodeFileId: number;
 let sessionRoute: typeof import("./session/route");
 let filmStreamRoute: typeof import("../stream/route");
@@ -131,6 +132,8 @@ describe.skipIf(!hasFfmpeg)("local-engine /jf/* routes (real ffmpeg, real handle
 
     buildFilm(path.join(movies, "Test Film (2020).mkv"));
     buildDirectPlayable(path.join(movies, "Direct Film (2021).mp4"));
+    // Stands in for a 4K rip: what matters to the routes is the format.
+    buildDirectPlayable(path.join(movies, "UHD Film (2022).mp4"));
     const tv = path.join(root, "tv");
     await mkdir(path.join(tv, "Test Show (2010)", "Season 01"), { recursive: true });
     process.env.TVSHOWS_PATH = tv;
@@ -172,6 +175,23 @@ describe.skipIf(!hasFfmpeg)("local-engine /jf/* routes (real ffmpeg, real handle
       },
     });
     mp4VersionId = mp4Version.id;
+
+    const uhdFilm = await testPrisma.film.create({
+      data: { title: "UHD Film", sortTitle: "uhd film", year: 2022, owned: true },
+    });
+    const uhdVersion = await testPrisma.version.create({
+      data: {
+        filmId: uhdFilm.id,
+        filePath: "UHD Film (2022).mp4",
+        fileName: "UHD Film (2022).mp4",
+        format: "UHD",
+        videoCodec: "h264",
+        container: "mp4",
+        durationSecs: DURATION_SECS,
+        audioTracks: { create: [{ streamIdx: 1, codec: "aac", channels: 1, isDefault: true }] },
+      },
+    });
+    uhdVersionId = uhdVersion.id;
 
     const show = await testPrisma.show.create({ data: { title: "Test Show", sortTitle: "test show", folder: "Test Show (2010)" } });
     const season = await testPrisma.showSeason.create({ data: { showId: show.id, seasonNumber: 1 } });
@@ -340,6 +360,30 @@ describe.skipIf(!hasFfmpeg)("local-engine /jf/* routes (real ffmpeg, real handle
     expect((await filmSession(mp4VersionId, "variant=original&audio=1&direct=1&vcodecs=h264")).mode).toBe("direct");
     // An MKV (AC-3 audio, Matroska) needs the engine whatever the client says.
     expect((await filmSession(versionId, "variant=original&direct=1&vcodecs=h264")).mode).toBe("hls");
+  }, 60_000);
+
+  it("plays a UHD Version only as the file itself, and refuses to convert one", async () => {
+    asUser(USER_A);
+    const direct = await filmSession(uhdVersionId, "variant=original&direct=1&vcodecs=h264,hevc");
+    expect(direct.mode).toBe("direct");
+    expect(direct.playlistUrl).toBe(`/api/video/${uhdVersionId}/stream`);
+
+    // Anything that would need the engine is a 403 with the machine-readable
+    // reason, not an HLS stream the server couldn't finish for a real 4K file.
+    for (const query of ["variant=original", "variant=remote&direct=1&vcodecs=h264", "variant=original&direct=1&vcodecs=hevc"]) {
+      const res = await sessionRoute.POST(
+        new Request(`http://localhost/api/video/${uhdVersionId}/jf/session?${query}`, { method: "POST" }),
+        { params: Promise.resolve({ versionId: String(uhdVersionId) }) },
+      );
+      expect(res.status, query).toBe(403);
+      await expect(res.json()).resolves.toEqual({ error: "uhd_playback_disabled" });
+    }
+
+    const stream = await filmStreamRoute.GET(
+      new Request(`http://localhost/api/video/${uhdVersionId}/stream`, { headers: { Range: "bytes=0-99" } }),
+      { params: Promise.resolve({ versionId: String(uhdVersionId) }) },
+    );
+    expect(stream.status).toBe(206);
   }, 60_000);
 
   it("serves the direct-play file with byte ranges, and refuses a file that needs the engine", async () => {

@@ -11,7 +11,6 @@ import { serveFile } from "@/lib/serve-file";
 import { DIRECT_PLAY_MAX_RANGE_BYTES } from "@/lib/constants";
 import { requireMemberOrResponse } from "@/lib/require-member";
 import { ageGate } from "@/lib/age-gate";
-import { uhdGate } from "@/lib/uhd-gate";
 
 export async function GET(req: Request, ctx: { params: Promise<{ versionId: string }> }) {
   const gate = await requireMemberOrResponse();
@@ -30,8 +29,8 @@ export async function GET(req: Request, ctx: { params: Promise<{ versionId: stri
   const blocked = await ageGate(gate.ageLimit, "film", versionId);
   if (blocked) return blocked;
 
-  const uhd = await uhdGate("film", versionId);
-  if (uhd) return uhd;
+  // No UHD gate: this is the file itself, untouched — the one way a UHD
+  // Version plays (uhdPlaybackBlocked, src/lib/constants.ts).
 
   const resolved = await resolveVideoStream("film", versionId);
   if (resolved.kind === "not-found") {

@@ -17,7 +17,7 @@ vi.mock("@/lib/db", () => ({
 }));
 
 const { uhdGate } = await import("@/lib/uhd-gate");
-const { UHD_PLAYBACK_ENABLED, uhdPlaybackBlocked } = await import("@/lib/constants");
+const { uhdPlaybackBlocked } = await import("@/lib/constants");
 
 const VERSION = { uhd: 1, bluray: 2, unknown: 3 };
 
@@ -45,10 +45,6 @@ afterAll(async () => {
 });
 
 describe("uhdGate", () => {
-  it("is still switched off — the rest of these tests assume it", () => {
-    expect(UHD_PLAYBACK_ENABLED).toBe(false);
-  });
-
   it("agrees with the pure rule the UI disables buttons from", () => {
     expect(uhdPlaybackBlocked({ format: "UHD" })).toBe(true);
     expect(uhdPlaybackBlocked({ format: "BLURAY" })).toBe(false);
