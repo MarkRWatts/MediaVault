@@ -392,6 +392,8 @@ describe.skipIf(!hasFfmpeg)("local-engine /jf/* routes (real ffmpeg, real handle
     expect((await filmSession(mp4VersionId, "variant=original&audio=1&direct=1&vcodecs=h264")).mode).toBe("direct");
     // An MKV (AC-3 audio, Matroska) needs the engine whatever the client says.
     expect((await filmSession(versionId, "variant=original&direct=1&vcodecs=h264")).mode).toBe("hls");
+    // The Apple TV declares its codecs but asks never to be given the file.
+    expect((await filmSession(mp4VersionId, "variant=original&direct=1&vcodecs=h264,hevc&prefer=hls")).mode).toBe("hls");
   }, 60_000);
 
   it("streams a UHD Version only with its video copied, and refuses to convert one", async () => {
