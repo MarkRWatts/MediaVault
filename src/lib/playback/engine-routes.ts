@@ -269,6 +269,12 @@ export async function engineSession(
   const replaces = replacesParam && /^[0-9a-f]{32}$/i.test(replacesParam) ? replacesParam : null;
 
   const directFamilies = parseDirectPlayRequest(params);
+  // `prefer=hls`: the client decodes what it declared but wants it as HLS,
+  // never as the file itself. The Apple TV's AVPlayer keeps only ~2 s of a
+  // direct-played file loaded and, after its first stall, never fetches
+  // again -- 4K and 1080p alike (Man of Steel, Maleficent, The Lego Movie,
+  // 24 Sep 2026) -- so the TV app asks for this.
+  const prefersHls = params.get("prefer") === "hls";
 
   try {
     // Direct play only ever replaces the Original rendition: Remote exists to
@@ -276,7 +282,7 @@ export async function engineSession(
     if (opts.uhd) {
       const source = await resolveSource(kind, id, variant, audioStreamIndex);
       if (!source || !canStreamUhd(source, variant, directFamilies)) return uhdRefusal();
-    } else if (directFamilies && variant === "original") {
+    } else if (directFamilies && variant === "original" && !prefersHls) {
       const source = await resolveSource(kind, id, variant, audioStreamIndex);
       if (source && canDirectPlay(source, directFamilies, audioStreamIndex)) {
         return NextResponse.json({
