@@ -149,12 +149,37 @@ export async function getShowIdsState(userId: string): Promise<{ favouriteIds: n
   return { favouriteIds: favs.map((f) => f.showId), watchedIds: [...watched] };
 }
 
+/** How far this person got through one episode file, for the show page's
+ *  episode rows: a progress bar along the still, or a "Watched" tick. */
+export interface EpisodeFileProgress {
+  episodeFileId: number;
+  positionSecs: number;
+  /** The file's own length when the scanner measured it, for the bar. */
+  durationSecs: number | null;
+  completed: boolean;
+}
+
+export async function getShowEpisodeProgress(userId: string, showId: number): Promise<EpisodeFileProgress[]> {
+  const rows = await prisma.watchProgress.findMany({
+    where: { userId, episodeFile: { episode: { season: { showId } } } },
+    select: { episodeFileId: true, positionSecs: true, completed: true, episodeFile: { select: { durationSecs: true } } },
+  });
+  return rows.map((r) => ({
+    episodeFileId: r.episodeFileId!,
+    positionSecs: r.positionSecs,
+    durationSecs: r.episodeFile?.durationSecs ?? null,
+    completed: r.completed,
+  }));
+}
+
 export interface NextEpisode {
   episodeFileId: number;
   label: string;
   /** The season it sits in, so the show page can open that season's fold
    *  rather than work it out from the label. */
   seasonNumber: number;
+  /** With seasonNumber, the button's "S2 E8". */
+  episodeNumber: number;
   /** They stopped part-way through this episode rather than finishing it, so
    *  the button offers to carry on rather than to start. The player picks the
    *  position itself from its own progress GET; this only decides the word. */
@@ -215,6 +240,7 @@ export async function getNextEpisodeFile(
       episodeFileId: started.file.id,
       label: label(started.file),
       seasonNumber: started.file.episode.season.seasonNumber,
+      episodeNumber: started.file.episode.episodeNumber,
       resume: true,
     };
 
@@ -226,6 +252,7 @@ export async function getNextEpisodeFile(
     episodeFileId: next.id,
     label: label(next),
     seasonNumber: next.episode.season.seasonNumber,
+    episodeNumber: next.episode.episodeNumber,
     resume: false,
   };
 }
