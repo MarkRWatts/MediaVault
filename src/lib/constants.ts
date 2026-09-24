@@ -159,8 +159,3 @@ export function isLosslessCodec(codec?: string | null): boolean {
 export const MUSIC_GAP_MIN_OWNED = 2;
 export const MUSIC_GAP_MIN_PCT = 0.2;
 
-/** The most one /stream (direct play) byte-range response carries — see
- *  serveFile's `maxRangeBytes` for why. 4 MiB is about a second of a
- *  high-bitrate 1080p film: small enough that no response lingers
- *  half-read, large enough that a player's request rate stays modest. */
-export const DIRECT_PLAY_MAX_RANGE_BYTES = 4 * 1024 * 1024;

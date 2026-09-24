@@ -1,6 +1,5 @@
-// serveFile's byte ranges, and the cap the direct-play /stream routes use
-// (see serveFile's doc comment for why an uncapped open-ended range starves
-// AVFoundation's audio reads).
+// serveFile's byte ranges: every 206 is exactly the range asked for, since
+// AVFoundation rejects a shorter one (see serveFile's doc comment).
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -24,30 +23,27 @@ function get(range?: string) {
 }
 
 describe("serveFile", () => {
-  it("serves a requested range whole when there's no cap", async () => {
+  it("serves an open-ended range to the end of the file", async () => {
     const res = await serveFile(get("bytes=100-"), file, "video/mp4", "no-store");
     expect(res.status).toBe(206);
     expect(res.headers.get("content-range")).toBe(`bytes 100-${SIZE - 1}/${SIZE}`);
     expect((await res.arrayBuffer()).byteLength).toBe(SIZE - 100);
   });
 
-  it("caps an open-ended range and says so in Content-Range", async () => {
-    const res = await serveFile(get("bytes=100-"), file, "video/mp4", "no-store", { maxRangeBytes: 1000 });
+  it("serves the whole of a whole-file range, as AVFoundation asks for it", async () => {
+    const res = await serveFile(get(`bytes=0-${SIZE - 1}`), file, "video/mp4", "no-store");
     expect(res.status).toBe(206);
-    expect(res.headers.get("content-range")).toBe(`bytes 100-1099/${SIZE}`);
-    expect(res.headers.get("content-length")).toBe("1000");
-    const body = new Uint8Array(await res.arrayBuffer());
-    expect(body.byteLength).toBe(1000);
-    expect(body[0]).toBe(100 % 256);
+    expect(res.headers.get("content-range")).toBe(`bytes 0-${SIZE - 1}/${SIZE}`);
+    expect(res.headers.get("content-length")).toBe(String(SIZE));
   });
 
-  it("leaves a range smaller than the cap alone", async () => {
-    const res = await serveFile(get("bytes=0-1"), file, "video/mp4", "no-store", { maxRangeBytes: 1000 });
+  it("serves a small range as asked", async () => {
+    const res = await serveFile(get("bytes=0-1"), file, "video/mp4", "no-store");
     expect(res.headers.get("content-range")).toBe(`bytes 0-1/${SIZE}`);
   });
 
-  it("never caps a plain 200", async () => {
-    const res = await serveFile(get(), file, "video/mp4", "no-store", { maxRangeBytes: 1000 });
+  it("serves a plain 200 without a Range header", async () => {
+    const res = await serveFile(get(), file, "video/mp4", "no-store");
     expect(res.status).toBe(200);
     expect((await res.arrayBuffer()).byteLength).toBe(SIZE);
   });

@@ -13,7 +13,6 @@
 
 import { NextResponse } from "next/server";
 import { serveFile } from "@/lib/serve-file";
-import { DIRECT_PLAY_MAX_RANGE_BYTES } from "@/lib/constants";
 import { requireMemberOrResponse } from "@/lib/require-member";
 import { ageGate } from "@/lib/age-gate";
 import { PlaybackError, resolveSource } from "@/lib/playback/source";
@@ -38,7 +37,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ episodeFileId: 
     if (source.plan.tier !== "direct") {
       return NextResponse.json({ error: "this file is served by the playback engine; start a session instead" }, { status: 409 });
     }
-    return serveFile(req, source.absPath, "video/mp4", "no-store", { maxRangeBytes: DIRECT_PLAY_MAX_RANGE_BYTES });
+    return serveFile(req, source.absPath, "video/mp4", "no-store");
   } catch (err) {
     if (err instanceof PlaybackError) {
       const { status, message } = mapPlaybackError(err);
