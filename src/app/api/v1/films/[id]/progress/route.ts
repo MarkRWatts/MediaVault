@@ -26,6 +26,7 @@ export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string 
     const body: ResetWatchedResponse = await resetFilmWatched(gate.userId, id);
     revalidatePath(`/film/${id}`);
     revalidatePath("/");
+    revalidatePath("/films");
     return NextResponse.json(body);
   } catch (err) {
     return apiV1Error(err);

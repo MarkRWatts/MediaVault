@@ -24,6 +24,7 @@ export async function toggleFilmFavourite(filmId: number): Promise<{ favourite: 
   const result = await filmUserState.toggleFilmFavourite(userId, filmId);
   revalidatePath(`/film/${filmId}`);
   revalidatePath("/");
+  revalidatePath("/films");
   return result;
 }
 
@@ -32,6 +33,7 @@ export async function resetFilmWatched(filmId: number): Promise<{ cleared: numbe
   const result = await filmUserState.resetFilmWatched(userId, filmId);
   revalidatePath(`/film/${filmId}`);
   revalidatePath("/");
+  revalidatePath("/films");
   return result;
 }
 

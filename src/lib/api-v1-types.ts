@@ -10,6 +10,7 @@
 // decoding. Nothing here carries Adult media-type data — that type is
 // entirely out of scope for the app (IOS_PLAN.md "Out of scope").
 
+import type { HomeData } from "@/lib/home-rows";
 import type {
   LibraryFilm,
   PlayableCollection,
@@ -57,7 +58,7 @@ export interface MeResponse {
   server: { version: string; minAppBuild: number };
 }
 
-/** GET /api/v1/films — the "/" page's shelves plus the full grid, trimmed
+/** GET /api/v1/films — the "/films" page's shelves plus the full grid, trimmed
  *  to LibraryFilm's card fields (same shape /api/films already sends). */
 export interface FilmsResponse {
   shelves: { continueWatching: LibraryFilm[]; favourites: LibraryFilm[] };
@@ -212,6 +213,9 @@ export type PlaylistDetailResponse = PlaylistDetail;
 export interface FavouriteResponse {
   favourite: boolean;
 }
+
+/** GET /api/v1/home — Home's rows (src/lib/home-rows.ts). */
+export type HomeResponse = HomeData;
 
 /** DELETE /api/v1/films/:id/progress and /api/v1/shows/:id/progress —
  *  "reset watch status": how many saved positions were dropped (0 when

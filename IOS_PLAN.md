@@ -144,6 +144,7 @@ query or action body that already exists:
 |---|---|---|
 | `GET /api/v1/me` | session + `Member` + `networkKind()` | `{ user, household, network: "lan"\|"remote", features: { tv, music, jellyfin }, server: { version, minAppBuild } }`. `minAppBuild` lets the server refuse a stale client with a clear message. |
 | `GET /api/v1/films` | `getLibraryFilms`, `getContinueWatchingFilms`, `getFavouriteFilms` | Shelves + the grid, trimmed to card fields. Replaces `/api/films` for the app; the old route stays for tvOS until it moves. |
+| `GET /api/v1/home` | `getHomeRows` (`home-rows.ts`) | Home's rows — Top Picks, Favourites, Collections, one per genre (≥ 6 films), New Shows, New Music — decided once for the web's "/", the iPhone and the Apple TV. Rows name films by id; `films` carries each once, with `overview` and `runtimeLabel`. |
 | `GET /api/v1/films/:id` | `getFilmDetail` + `film-user-state` | Versions with their `jellyfinId` presence as `playable`, audio tracks, saved progress. |
 | `PUT/DELETE /api/v1/films/:id/favourite` | `film-state.ts` toggle | |
 | `GET /api/v1/shows`, `GET /api/v1/shows/:id` | `getShows`, `getShowDetail`, `getContinueWatchingEpisodes` | Episode files carry `playable` + progress. |

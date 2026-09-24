@@ -27,6 +27,7 @@ async function setFavourite(idParam: string, favourite: boolean) {
     const result = await setFilmFavourite(gate.userId, id, favourite);
     revalidatePath(`/film/${id}`);
     revalidatePath("/");
+    revalidatePath("/films");
     const body: FavouriteResponse = result;
     return NextResponse.json(body);
   } catch (err) {

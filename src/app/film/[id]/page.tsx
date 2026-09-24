@@ -101,7 +101,7 @@ export default async function FilmPage({
           {/* A concert is a Film row, but it's browsed from Music — send
               people back where they came from. */}
           <Link
-            href={isConcert ? "/music" : "/"}
+            href={isConcert ? "/music" : "/films"}
             className="w-fit text-xs font-medium text-text-muted hover:text-text"
           >
             ← {isConcert ? "Music" : "Movies"}

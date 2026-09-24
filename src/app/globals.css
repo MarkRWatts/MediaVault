@@ -313,3 +313,20 @@ body:has(#app-player-bar) {
     filter: brightness(1.08);
   }
 }
+
+/* Home's open card (components/home/ExpandingRow.tsx): the backdrop, title
+   artwork and badges fade in over the poster as the card widens, and the
+   row's details fade in beneath it — the Apple TV's 0.25s ease-out. */
+@keyframes home-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .home-fade {
+    animation: home-fade-in 250ms ease-out;
+  }
+}

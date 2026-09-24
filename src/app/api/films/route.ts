@@ -3,7 +3,7 @@
 // WebKit/WKWebView available to third-party apps at all (confirmed directly
 // against the tvOS SDK — no WebKit.framework ships for tvOS), so a native
 // shell needs its own catalog UI, not a wrapped webpage. This wraps the same
-// getLibraryFilms() the "/" page already uses, trimmed to what a simple list
+// getLibraryFilms() the "/films" page already uses, trimmed to what a simple list
 // screen needs.
 
 import { NextResponse } from "next/server";
