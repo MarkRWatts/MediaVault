@@ -299,12 +299,14 @@ export async function engineSession(
     }
 
     const session = await startSession({ kind, id, variant, audioStreamIndex, deviceId, replaces });
-    // fMP4 (copied HEVC) goes straight to the media playlist. Through a
-    // master, AVPlayer first judges the variant against the display, and a
-    // Mac turned 4K HDR HEVC away there (CoreMedia -12927) while playing
-    // the very same media playlist opened directly -- which also lets it
-    // read the HDR format from the video itself, as it does from a file.
-    const playlist = session.container === "fmp4" ? MAIN_PLAYLIST_NAME : "master.m3u8";
+    // fMP4 (copied HEVC): the master, with VIDEO-RANGE, only for a client
+    // that asked for HLS (the Apple TV) -- it's the master that switches
+    // the TV into HDR; opened directly, the media playlist played in SDR
+    // mode. Anyone else gets the media playlist: through a master, AVPlayer
+    // judges the variant against the display first, and a Mac turned 4K
+    // HDR HEVC away there (CoreMedia -12927). The TV app falls back to the
+    // media playlist itself if the master is refused.
+    const playlist = session.container === "fmp4" && !prefersHls ? MAIN_PLAYLIST_NAME : "master.m3u8";
     return NextResponse.json({
       mode: "hls",
       playlistUrl: `${basePath}/${id}/jf/e/${session.key}/${playlist}?ps=${session.playSessionId}`,

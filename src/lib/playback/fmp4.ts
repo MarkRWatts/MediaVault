@@ -183,6 +183,31 @@ export function alignAudioToVideo(media: Buffer, tracks: Map<number, { handler: 
 }
 
 /**
+ * The RFC 6381 CODECS value for an init segment's HEVC track, read from its
+ * `hvcC` exactly (ISO/IEC 14496-15 Annex E): e.g. Man of Steel's 4K file is
+ * `hvc1.2.4.H153.90` -- Main 10, High tier, level 5.1 -- which no rule of
+ * thumb built from pixel format and height gets right. Null when the init
+ * has no `hvcC`.
+ */
+export function hevcCodecFromInit(init: Buffer): string | null {
+  const at = init.indexOf("hvcC", 0, "latin1");
+  if (at < 4 || at + 4 + 13 > init.length) return null;
+  const c = init.subarray(at + 4);
+  const profileSpace = c[1] >> 6;
+  const tier = (c[1] >> 5) & 1;
+  const profileIdc = c[1] & 0x1f;
+  // The 32 compatibility flags, written bit-reversed, in hex.
+  const flags = c.readUInt32BE(2);
+  let reversed = 0;
+  for (let bit = 0; bit < 32; bit++) if (flags & (1 << bit)) reversed |= 1 << (31 - bit);
+  const constraints = [...c.subarray(6, 12)].map((b) => b.toString(16).toUpperCase());
+  while (constraints.length > 0 && constraints[constraints.length - 1] === "0") constraints.pop();
+  const level = c[12];
+  const space = profileSpace === 0 ? "" : "ABC"[profileSpace - 1];
+  return [`hvc1.${space}${profileIdc}`, (reversed >>> 0).toString(16).toUpperCase(), `${tier ? "H" : "L"}${level}`, ...constraints].join(".");
+}
+
+/**
  * Promote one staged fMP4 segment into `target` as media only, first saving
  * its header as the stream's `init.mp4` if there isn't one yet, and with its
  * audio aligned to its picture (alignAudioToVideo; `keyframeStart` is the

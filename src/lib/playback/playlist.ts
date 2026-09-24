@@ -49,8 +49,8 @@ export function hevcCodecString(facts: { pixFmt: string | null; height: number }
  *  to Match Content to switch the display into HDR before playing.
  *
  *  Only for fMP4 segments: AVPlayer refuses a PQ variant of this engine's
- *  MPEG-TS segments outright (-1002), so getMasterPlaylist doesn't use it
- *  yet. */
+ *  MPEG-TS segments outright (-1002), so getMasterPlaylist gives it to fMP4
+ *  streams alone. */
 export function videoRangeFor(colorTransfer: string | null | undefined): "PQ" | "HLG" | undefined {
   if (colorTransfer === "smpte2084") return "PQ";
   if (colorTransfer === "arib-std-b67") return "HLG";
@@ -64,6 +64,8 @@ export interface MasterPlaylistInput {
   codecs: string;
   /** See videoRangeFor. */
   videoRange?: "PQ" | "HLG";
+  /** Frames per second, for the Apple TV's Match Frame Rate. */
+  frameRate?: number;
   mainUri: string;
 }
 
@@ -80,6 +82,9 @@ export function renderMasterPlaylist(input: MasterPlaylistInput): string {
     attrs.push(`RESOLUTION=${width}x${height}`);
   }
   attrs.push(`CODECS="${input.codecs}"`);
+  if (input.frameRate && Number.isFinite(input.frameRate) && input.frameRate > 0) {
+    attrs.push(`FRAME-RATE=${input.frameRate.toFixed(3)}`);
+  }
   if (input.videoRange) attrs.push(`VIDEO-RANGE=${input.videoRange}`);
 
   return [

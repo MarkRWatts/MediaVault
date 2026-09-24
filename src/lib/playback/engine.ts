@@ -45,11 +45,11 @@ import {
   type StreamCacheEntry,
   type TrimCandidateStream,
 } from "./decisions";
-import { INIT_SEGMENT_NAME } from "./fmp4";
+import { hevcCodecFromInit, INIT_SEGMENT_NAME } from "./fmp4";
 import { buildHeadArgs } from "./head-args";
 import { startHead, type Head, type HeadStopReason } from "./head";
 import { resolveHwAccel } from "./hwaccel";
-import { hevcCodecString, hlsCodecs, renderMainPlaylist, renderMasterPlaylist } from "./playlist";
+import { hevcCodecString, hlsCodecs, renderMainPlaylist, renderMasterPlaylist, videoRangeFor } from "./playlist";
 import { PlaybackError, resolveSource, transcodeReasonsFor, type PlaybackAudioTrack } from "./source";
 import { buildStreamKey, parseStreamKey } from "./stream-key";
 import {
@@ -760,15 +760,24 @@ export async function getMasterPlaylist(
   const copied = ctx.variant === "original" && ctx.source.plan.videoAction === "copy";
   let codecs = hlsCodecs(videoCodec, audioCodec);
   if (copied && (videoCodec === "hevc" || videoCodec === "h265")) {
-    codecs = [hevcCodecString(ctx.source.facts), ...codecs.split(",").slice(1)].join(",");
+    // fMP4: the init segment's own hvcC says exactly what the video is.
+    let hevc = hevcCodecString(ctx.source.facts);
+    if (ctx.container === "fmp4" && playSessionId) {
+      const init = await getInitSegment(key, playSessionId).then((p) => fs.readFile(p)).catch(() => null);
+      hevc = (init && hevcCodecFromInit(init)) ?? hevc;
+    }
+    codecs = [hevc, ...codecs.split(",").slice(1)].join(",");
   }
   return renderMasterPlaylist({
     bandwidth: bandwidthFor(ctx),
     resolution: resolutionFor(ctx),
     codecs,
-    // No VIDEO-RANGE: AVPlayer refuses a PQ variant whose segments are
+    frameRate: copied ? (ctx.source.facts.fps ?? undefined) : undefined,
+    // HDR only on fMP4: AVPlayer refuses a PQ variant whose segments are
     // MPEG-TS outright (-1002 "unsupported URL", Apple TV and Mac alike, 24
-    // Sep 2026) -- HDR over HLS wants fMP4 segments. See videoRangeFor.
+    // Sep 2026). It's what switches an Apple TV set to Match Content into
+    // HDR -- opened without a master, the same stream played in SDR mode.
+    videoRange: copied && ctx.container === "fmp4" ? videoRangeFor(ctx.source.facts.colorTransfer) : undefined,
     mainUri,
   });
 }
