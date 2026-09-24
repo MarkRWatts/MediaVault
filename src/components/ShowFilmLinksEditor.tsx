@@ -15,13 +15,13 @@ const MAX_MATCHES = 8;
 /** The app owner's control for saying which films belong with a show —
  *  Serenity with Firefly, the 1994 Stargate with all three SG series. There
  *  is nothing to derive this from (TMDB has no movie-to-show relation), so
- *  it is typed in by hand. It lives on the show page, under the Films
- *  shelf: FILM_PAGE_PLAN.md took owner tools off the film page, and a show
- *  is where the handful of films that need it are looked for.
+ *  it is typed in by hand. It lives in the show page's owner-only ⋯ menu
+ *  (SHOW_PAGE_PLAN.md "Owner tools"): FILM_PAGE_PLAN.md took owner tools off
+ *  the film page, and a show is where the handful of films that need it are
+ *  looked for.
  *
  *  Only rendered for the owner, which is cosmetic; both actions call
- *  requireOwner() themselves. Collapsed to a single button until used, so
- *  the page doesn't grow a form nobody asked for. */
+ *  requireOwner() themselves. */
 export default function ShowFilmLinksEditor({
   showId,
   linked,
@@ -33,7 +33,6 @@ export default function ShowFilmLinksEditor({
   /** Every film that can be linked — the pool to search. */
   allFilms: LinkableFilm[];
 }) {
-  const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [linkState, linkAction, linking] = useActionState<FilmShowLinkState, FormData>(
     linkFilmToShow,
@@ -51,20 +50,8 @@ export default function ShowFilmLinksEditor({
     : [];
   const error = linkState?.error ?? unlinkState?.error;
 
-  if (!open) {
-    return (
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="w-fit rounded-full border border-border px-3 py-1 text-xs text-text-faint transition-colors hover:border-accent hover:text-accent"
-      >
-        {linked.length > 0 ? "Edit linked films" : "Link to a film"}
-      </button>
-    );
-  }
-
   return (
-    <div className="flex w-full max-w-lg flex-col gap-3 rounded-lg border border-border bg-bg-elevated p-3">
+    <div className="flex w-full flex-col gap-3">
       {linked.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5">
           {linked.map((f) => (
@@ -122,14 +109,6 @@ export default function ShowFilmLinksEditor({
       )}
 
       {error && <p className="text-xs text-missing">{error}</p>}
-
-      <button
-        type="button"
-        onClick={() => setOpen(false)}
-        className="w-fit text-xs font-medium text-text-muted transition-colors hover:text-text"
-      >
-        Done
-      </button>
     </div>
   );
 }

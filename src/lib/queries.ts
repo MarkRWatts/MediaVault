@@ -778,6 +778,8 @@ export interface ShowSummary {
   /** When the show first entered the library (ISO), for "recently added"
    *  ordering — same role as LibraryFilm.createdAt. */
   createdAt: string;
+  /** TMDB genres, for a show page's More like this. */
+  genres: string[];
 }
 
 /** A show is rated by its own Show.certification — episodes carry none of
@@ -814,6 +816,7 @@ export async function getShows(limit: AgeLimit): Promise<ShowSummary[]> {
         totalEpisodeCount,
         complete: totalEpisodeCount > 0 && ownedEpisodeCount === totalEpisodeCount,
         createdAt: s.createdAt.toISOString(),
+        genres: splitGenres(s.genres),
       };
     });
 }

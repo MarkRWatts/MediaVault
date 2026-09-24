@@ -22,7 +22,7 @@ function Dot() {
   );
 }
 
-/** `lead`, in bold, starts the same three lines (an episode's "Series 2,
+/** `lead`, in bold, starts the same three lines (an episode's "Season 2,
  *  Episode 4 · Name"), so an episode's details take no more room than a
  *  film's. */
 function Overview({ text, lead }: { text: string | null; lead?: string }) {

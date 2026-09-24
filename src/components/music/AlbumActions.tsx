@@ -2,7 +2,7 @@
 
 // The album page's action row, in the meta block beside the year/kind
 // chips: a round favourite heart, same styling and optimistic-toggle-then-
-// router.refresh() pattern as FilmActions' favourite button, plus a second
+// router.refresh() pattern as FilmPlayActions' favourite button, plus a second
 // button that opens the shared playlist chooser (AddToPlaylistMenu) to add
 // every track on the album.
 

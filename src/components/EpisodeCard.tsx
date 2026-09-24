@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { episodeCode } from "@/lib/show-page";
 import PosterImage from "@/components/PosterImage";
 import PlayButton from "@/components/PlayButton";
 import type { ContinueEpisode } from "@/lib/queries";
@@ -8,7 +9,7 @@ import type { ContinueEpisode } from "@/lib/queries";
 // title and episode, a Play button that resumes it in-app, and a link to
 // the show.
 export default function EpisodeCard({ item }: { item: ContinueEpisode }) {
-  const code = `S${String(item.seasonNumber).padStart(2, "0")}E${String(item.episodeNumber).padStart(2, "0")}`;
+  const code = episodeCode(item.seasonNumber, item.episodeNumber);
   const pct =
     item.durationSecs && item.durationSecs > 0
       ? Math.min(100, Math.round((item.positionSecs / item.durationSecs) * 100))

@@ -16,7 +16,7 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
-const { getNextEpisodeFile } = await import("@/lib/film-user-state");
+const { getNextEpisodeFile, getShowEpisodeProgress } = await import("@/lib/film-user-state");
 
 const VIEWER = "viewer-1";
 
@@ -120,7 +120,12 @@ describe("getNextEpisodeFile", () => {
     // S01E03 never started, S02E05 stopped half-way last night.
     await watch(showId, 2, 5, { positionSecs: 900, completed: false, minutesAgo: 10 });
     await watch(showId, 2, 4, { positionSecs: 700, completed: false, minutesAgo: 6000 });
-    expect(await getNextEpisodeFile(VIEWER, showId)).toMatchObject({ label: "S02E05", resume: true });
+    expect(await getNextEpisodeFile(VIEWER, showId)).toMatchObject({
+      label: "S02E05",
+      seasonNumber: 2,
+      episodeNumber: 5,
+      resume: true,
+    });
   });
 
   it("treats a few seconds of playback as not started", async () => {
@@ -160,5 +165,24 @@ describe("getNextEpisodeFile", () => {
   it("has nothing to offer for a show with no playable files", async () => {
     const showId = await seedShow([]);
     expect(await getNextEpisodeFile(VIEWER, showId)).toBeNull();
+  });
+});
+
+describe("getShowEpisodeProgress", () => {
+  it("lists this viewer's progress on this show's files only", async () => {
+    const showId = await seedShow([[1, 3]]);
+    const otherShowId = await seedShow([[1, 1]]);
+    await watch(showId, 1, 1, { positionSecs: 1400, completed: true });
+    await watch(showId, 1, 2, { positionSecs: 600, completed: false });
+    await watch(otherShowId, 1, 1, { positionSecs: 600, completed: false });
+    await testPrisma.watchProgress.create({
+      data: { userId: "someone-else", episodeFileId: await fileFor(showId, 1, 3), positionSecs: 300 },
+    });
+
+    const rows = await getShowEpisodeProgress(VIEWER, showId);
+    expect(rows.sort((a, b) => a.episodeFileId - b.episodeFileId)).toEqual([
+      { episodeFileId: await fileFor(showId, 1, 1), positionSecs: 1400, durationSecs: null, completed: true },
+      { episodeFileId: await fileFor(showId, 1, 2), positionSecs: 600, durationSecs: null, completed: false },
+    ]);
   });
 });

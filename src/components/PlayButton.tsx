@@ -3,7 +3,7 @@
 // Small client island so a server component (VersionCard, the film page's
 // action row) can open the in-app player without becoming "use client".
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { Play } from "lucide-react";
 import VideoPlayer, { type PlaybackSource } from "@/components/VideoPlayer";
 
@@ -16,6 +16,7 @@ export default function PlayButton({
   basePath,
   label = "Play",
   disabledReason,
+  onClosed,
 }: {
   /** Version id for films; EpisodeFile id with basePath "/api/tv-video". */
   versionId: number;
@@ -34,8 +35,16 @@ export default function PlayButton({
    *  anyway (see src/lib/uhd-gate.ts); this is so the viewer isn't led into
    *  an error. */
   disabledReason?: string;
+  /** After the player closes — the show page re-reads where you got to. */
+  onClosed?: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  // Stable (given a stable onClosed), so the player's start-up effect, which
+  // lists onClose, runs once.
+  const close = useCallback(() => {
+    setOpen(false);
+    onClosed?.();
+  }, [onClosed]);
 
   const className =
     size === "overlay"
@@ -76,7 +85,7 @@ export default function PlayButton({
             source={source}
             audioTracks={audioTracks}
             basePath={basePath}
-            onClose={() => setOpen(false)}
+            onClose={close}
           />
         )}
       </>
@@ -96,7 +105,7 @@ export default function PlayButton({
           source={source}
           audioTracks={audioTracks}
           basePath={basePath}
-          onClose={() => setOpen(false)}
+          onClose={close}
         />
       )}
     </>

@@ -134,6 +134,9 @@ export interface ShowDetailResponse extends Omit<ShowDetail, "seasons"> {
   seasons: SeasonV1[];
   favourite: boolean;
   progress: EpisodeFileProgress[];
+  /** Films linked to the show (Stargate: Continuum on SG-1), as cards —
+   *  the show page's row under the episodes (SHOW_PAGE_PLAN.md). */
+  films: LibraryFilm[];
 }
 
 /** GET /api/v1/music — the "/music" index page's data in one call: the

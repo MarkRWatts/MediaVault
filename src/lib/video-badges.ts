@@ -63,3 +63,15 @@ export function videoBadges(source: BadgeSource): string[] {
   if (label) out.push(label);
   return out;
 }
+
+/** A show's chips (SHOW_PAGE_PLAN.md "Chips"): the badges every one of its
+ *  files earns, in videoBadges' order. The same rule the show's old spec
+ *  line hoisted by — a mark goes up top only
+ *  when it's true of every episode — so a show that's half DVD and half
+ *  Blu-ray claims neither HD nor SD, and Sharpe's two 5.1 episodes among
+ *  sixteen stereo ones don't make the show "Surround 5.1". */
+export function sharedBadges(sources: BadgeSource[]): string[] {
+  if (sources.length === 0) return [];
+  const [first, ...rest] = sources.map(videoBadges);
+  return first.filter((badge) => rest.every((badges) => badges.includes(badge)));
+}
