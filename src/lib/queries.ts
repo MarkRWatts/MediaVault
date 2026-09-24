@@ -94,6 +94,8 @@ export interface LibraryFilm {
   backdropPath: string | null;
   /** TMDB title artwork (Film.logoPath), for the Apple TV's featured row. */
   logoPath: string | null;
+  /** TMDB genres ("Action", "Comedy"…), for the Apple TV Home's genre rows. */
+  genres: string[];
   collectionId: number | null;
   collectionName: string | null;
   /** The collection's own TMDB poster, for the stacked card on the library
@@ -134,6 +136,7 @@ export const FILM_CARD_SELECT = {
   posterPath: true,
   backdropPath: true,
   logoPath: true,
+  genres: true,
   collectionId: true,
   collection: { select: { name: true, posterPath: true } },
   releaseDate: true,
@@ -160,6 +163,7 @@ export type FilmCardSource = {
   posterPath: string | null;
   backdropPath: string | null;
   logoPath: string | null;
+  genres: string | null;
   collectionId: number | null;
   collection: { name: string; posterPath: string | null } | null;
   releaseDate: Date | null;
@@ -176,6 +180,11 @@ export type FilmCardSource = {
   }[];
 };
 
+/** Film.genres is stored comma-separated. */
+function splitGenres(genres: string | null): string[] {
+  return genres ? genres.split(",").map((g) => g.trim()).filter(Boolean) : [];
+}
+
 export function shapeLibraryFilm(f: FilmCardSource): LibraryFilm {
   return {
     id: f.id,
@@ -186,6 +195,7 @@ export function shapeLibraryFilm(f: FilmCardSource): LibraryFilm {
     posterPath: f.posterPath,
     backdropPath: f.backdropPath,
     logoPath: f.logoPath,
+    genres: splitGenres(f.genres),
     collectionId: f.collectionId,
     collectionName: f.collection?.name ?? null,
     collectionPosterPath: f.collection?.posterPath ?? null,
@@ -514,7 +524,7 @@ export async function getFilmDetail(id: number, limit: AgeLimit): Promise<FilmDe
     runtimeLabel: formatRuntimeMins(film.runtimeMins),
     rating: film.rating,
     certification: film.certification,
-    genres: film.genres ? film.genres.split(",").map((g) => g.trim()).filter(Boolean) : [],
+    genres: splitGenres(film.genres),
     matchConfidence: film.matchConfidence,
     versions,
     physicalCopies: film.physicalCopies.map((c) => ({
@@ -610,6 +620,8 @@ export interface PlayableCollection {
   name: string;
   overview: string | null;
   posterPath: string | null;
+  /** For the Apple TV Home's collections row, whose open card is wide. */
+  backdropPath: string | null;
   filmIds: number[];
 }
 
@@ -621,6 +633,7 @@ export async function getPlayableCollections(limit: AgeLimit): Promise<PlayableC
       name: true,
       overview: true,
       posterPath: true,
+      backdropPath: true,
       films: {
         where: { ...NOT_CONCERT, owned: true },
         orderBy: [{ releaseDate: "asc" }, { year: "asc" }],
@@ -634,7 +647,14 @@ export async function getPlayableCollections(limit: AgeLimit): Promise<PlayableC
     // franchise whose only visible entries are one U and three 18s stops
     // being a collection for this viewer rather than becoming a one-item one.
     .filter((c) => c.films.length >= 2)
-    .map((c) => ({ id: c.id, name: c.name, overview: c.overview, posterPath: c.posterPath, filmIds: c.films.map((f) => f.id) }));
+    .map((c) => ({
+      id: c.id,
+      name: c.name,
+      overview: c.overview,
+      posterPath: c.posterPath,
+      backdropPath: c.backdropPath,
+      filmIds: c.films.map((f) => f.id),
+    }));
 }
 
 export interface CollectionDetail {
