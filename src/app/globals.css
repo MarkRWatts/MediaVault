@@ -327,6 +327,6 @@ body:has(#app-player-bar) {
 }
 @media (prefers-reduced-motion: no-preference) {
   .home-fade {
-    animation: home-fade-in 250ms ease-out;
+    animation: home-fade-in 375ms ease-out;
   }
 }
