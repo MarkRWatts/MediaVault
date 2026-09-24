@@ -79,7 +79,7 @@ function bestResolutionTier(
 }
 
 // ---------------------------------------------------------------------------
-// Library ("/")
+// Library ("/films")
 // ---------------------------------------------------------------------------
 
 export interface LibraryFilm {
@@ -241,7 +241,7 @@ export async function getLibraryFilms(limit: AgeLimit): Promise<LibraryData> {
 }
 
 // ---------------------------------------------------------------------------
-// Continue watching ("/" — signed-in user's in-progress films)
+// Continue watching ("/films" — signed-in user's in-progress films)
 // ---------------------------------------------------------------------------
 
 // The signed-in user's own in-progress films (HOUSEHOLDS_PLAN.md's "Watch
@@ -289,7 +289,7 @@ export async function getContinueWatchingFilms(userId: string, limit: AgeLimit):
 }
 
 // ---------------------------------------------------------------------------
-// Favourites ("/" — signed-in user's hearted films, newest first)
+// Favourites ("/films" — signed-in user's hearted films, newest first)
 // ---------------------------------------------------------------------------
 
 export async function getFavouriteFilms(userId: string, limit: AgeLimit): Promise<LibraryFilm[]> {

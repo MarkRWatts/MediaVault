@@ -19,7 +19,7 @@ function readDismissed(): string {
   }
 }
 
-/** One-time strip on the library page after an email-code sign-in
+/** One-time strip on Home after an email-code sign-in
  *  (PASSKEYS_PLAN.md Phase 4) — the page renders it only when verifyOTP's
  *  cookie is present, and it renders itself only on a device that can
  *  actually make a passkey, and only until dismissed here. "Add a
