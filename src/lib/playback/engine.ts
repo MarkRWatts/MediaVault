@@ -549,6 +549,9 @@ export interface StartedSession {
   /** The source's frames per second, when known: what the Apple TV switches
    *  its display to (Match Frame Rate). */
   frameRate: number | null;
+  /** What the picture will be: the source's own range when its video is
+   *  copied, SDR when the engine encodes it (8-bit H.264). */
+  videoRange: "SDR" | "PQ" | "HLG";
   transcodeReasons: string[];
   audioTracks: PlaybackAudioTrack[];
 }
@@ -650,6 +653,10 @@ export async function startSession(input: StartSessionInput): Promise<StartedSes
     container: ctx.container,
     durationSecs: source.durationSecs,
     frameRate: source.facts.fps,
+    videoRange:
+      input.variant === "original" && source.plan.videoAction === "copy"
+        ? (videoRangeFor(source.facts.colorTransfer) ?? "SDR")
+        : "SDR",
     transcodeReasons: transcodeReasonsFor(source.plan, input.variant),
     audioTracks: source.audioTracks,
   };

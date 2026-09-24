@@ -31,6 +31,7 @@ import {
   startSession,
   stopSession,
 } from "./engine";
+import { videoRangeFor } from "./playlist";
 import { PlaybackError, resolveSource, type PlaybackErrorCode, type ResolvedSource } from "./source";
 import { INIT_SEGMENT_NAME } from "./fmp4";
 import { parseSegmentUrlName, parseStreamKey, SEGMENT_URL_RE } from "./stream-key";
@@ -293,6 +294,7 @@ export async function engineSession(
           playSessionId: null,
           durationSecs: source.durationSecs,
           frameRate: source.facts.fps,
+          videoRange: videoRangeFor(source.facts.colorTransfer) ?? "SDR",
           transcodeReasons: [],
           audioTracks: source.audioTracks,
         });
@@ -314,6 +316,10 @@ export async function engineSession(
       playSessionId: session.playSessionId,
       durationSecs: session.durationSecs,
       frameRate: session.frameRate,
+      // Before the player opens anything, the Apple TV sets its display to
+      // this and frameRate: AVPlayer turns an HDR master away while the set
+      // is still in SDR ("Cannot open", 24 Sep 2026).
+      videoRange: session.videoRange,
       transcodeReasons: session.transcodeReasons,
       audioTracks: session.audioTracks,
     });
