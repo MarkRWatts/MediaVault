@@ -44,7 +44,11 @@ export function hevcCodecString(facts: { pixFmt: string | null; height: number }
 /** The master playlist's VIDEO-RANGE for a source's transfer function:
  *  "PQ" for HDR10/Dolby Vision's SMPTE ST 2084, "HLG" for ARIB STD-B67,
  *  nothing (SDR, the attribute's default) otherwise. Tells an Apple TV set
- *  to Match Content to switch the display into HDR before playing. */
+ *  to Match Content to switch the display into HDR before playing.
+ *
+ *  Only for fMP4 segments: AVPlayer refuses a PQ variant of this engine's
+ *  MPEG-TS segments outright (-1002), so getMasterPlaylist doesn't use it
+ *  yet. */
 export function videoRangeFor(colorTransfer: string | null | undefined): "PQ" | "HLG" | undefined {
   if (colorTransfer === "smpte2084") return "PQ";
   if (colorTransfer === "arib-std-b67") return "HLG";

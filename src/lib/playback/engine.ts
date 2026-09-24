@@ -47,7 +47,7 @@ import {
 import { buildHeadArgs } from "./head-args";
 import { startHead, type Head, type HeadStopReason } from "./head";
 import { resolveHwAccel } from "./hwaccel";
-import { hevcCodecString, hlsCodecs, renderMainPlaylist, renderMasterPlaylist, videoRangeFor } from "./playlist";
+import { hevcCodecString, hlsCodecs, renderMainPlaylist, renderMasterPlaylist } from "./playlist";
 import { PlaybackError, resolveSource, transcodeReasonsFor, type PlaybackAudioTrack } from "./source";
 import { buildStreamKey, parseStreamKey } from "./stream-key";
 import {
@@ -757,7 +757,9 @@ export async function getMasterPlaylist(
     bandwidth: bandwidthFor(ctx),
     resolution: resolutionFor(ctx),
     codecs,
-    videoRange: copied ? videoRangeFor(ctx.source.facts.colorTransfer) : undefined,
+    // No VIDEO-RANGE: AVPlayer refuses a PQ variant whose segments are
+    // MPEG-TS outright (-1002 "unsupported URL", Apple TV and Mac alike, 24
+    // Sep 2026) -- HDR over HLS wants fMP4 segments. See videoRangeFor.
     mainUri,
   });
 }
