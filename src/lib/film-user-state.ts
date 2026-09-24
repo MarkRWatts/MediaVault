@@ -178,7 +178,7 @@ export interface NextEpisode {
   /** The season it sits in, so the show page can open that season's fold
    *  rather than work it out from the label. */
   seasonNumber: number;
-  /** With seasonNumber, the button's "S2 E8". */
+  /** With seasonNumber, the button's "Season 2, Episode 8". */
   episodeNumber: number;
   /** They stopped part-way through this episode rather than finishing it, so
    *  the button offers to carry on rather than to start. The player picks the

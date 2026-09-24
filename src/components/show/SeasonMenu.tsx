@@ -1,6 +1,6 @@
 "use client";
 
-// The show page's `Series 1 ⌄` (SHOW_PAGE_PLAN.md "Season menu"): a button
+// The show page's `Season 1 ⌄` (SHOW_PAGE_PLAN.md "Season menu"): a button
 // naming the season on show, opening a short list of the seasons you have
 // episodes in. A listbox popup, so it works from the keyboard the way a
 // native select does — arrows move, Home/End jump, Enter or Space picks,

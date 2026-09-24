@@ -28,15 +28,15 @@ auto-plays a clip at the top; we never do.
    format.
 
 4. **Play and actions (blend).** As the film page: one full-width amber
-   button with ▶ — `Play S1 E1` for a show you haven't started, `Resume S2 E8`
-   (or `Play S2 E9`, the next one) for one you have — then a centred row of
+   button with ▶ — `Play – Season 1, Episode 1` for a show you haven't started, `Resume – Season 2, Episode 8`
+   (or `Play – Season 2, Episode 9`, the next one) for one you have — then a centred row of
    labelled icon buttons: **Favourite** · **Watched** (reset every episode's
    progress, with a confirmation, only when there is some).
 
 5. **Synopsis (Netflix).** After the actions, three lines then "More", so
    the episodes start on the first screen.
 
-6. **Season menu (Netflix).** A `Series 1 ⌄` menu button above the episodes
+6. **Season menu (Netflix).** A `Season 1 ⌄` menu button above the episodes
    (phone and web): a menu of the seasons you have episodes in, in order,
    specials last; it opens on the season you're partway through. Only when
    there's more than one. The Apple TV keeps its row of text tabs.

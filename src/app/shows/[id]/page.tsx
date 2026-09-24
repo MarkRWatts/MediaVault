@@ -5,7 +5,7 @@
 // line of years · seasons · genres · rating; one amber Play naming the
 // episode (Resume – Season 2, Episode 8) with Favourite · Watched under it;
 // three lines of synopsis; the episodes, a season at a time under a
-// `Series 1 ⌄` menu; then Films and More like this. No poster, no logo bar
+// `Season 1 ⌄` menu; then Films and More like this. No poster, no logo bar
 // (top-nav.tsx drops it here too) and nothing technical — no disc,
 // resolution or codec. "Link to a film" lives in the owner's ⋯.
 

@@ -1,7 +1,7 @@
 "use client";
 
 // The show page's episodes (SHOW_PAGE_PLAN.md "Season menu" and "Episode
-// rows"): one season at a time under a `Series 1 ⌄` menu — replacing the
+// rows"): one season at a time under a `Season 1 ⌄` menu — replacing the
 // stack of folding seasons — opening on the one you're partway through.
 // Only the seasons you have episodes in, only the episodes you have; with a
 // single season there's nothing to choose, so no menu.
