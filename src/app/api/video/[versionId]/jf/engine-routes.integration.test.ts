@@ -367,6 +367,12 @@ describe.skipIf(!hasFfmpeg)("local-engine /jf/* routes (real ffmpeg, real handle
     return (await res.json()) as { mode: string; playlistUrl: string; playSessionId: string | null; durationSecs: number; audioTracks: unknown[] };
   }
 
+  async function filmProxy(id: number, pathParts: string[], ps: string | null) {
+    return proxyRoute.GET(new Request(`http://localhost/api/video/${id}/jf/${pathParts.join("/")}?ps=${ps}`), {
+      params: Promise.resolve({ versionId: String(id), path: pathParts }),
+    });
+  }
+
   it("hands a direct-playable MP4 back as the file itself -- but only to a client that asked", async () => {
     asUser(USER_A);
     const direct = await filmSession(mp4VersionId, "variant=original&direct=1&vcodecs=h264,hevc");
@@ -388,14 +394,22 @@ describe.skipIf(!hasFfmpeg)("local-engine /jf/* routes (real ffmpeg, real handle
     expect((await filmSession(versionId, "variant=original&direct=1&vcodecs=h264")).mode).toBe("hls");
   }, 60_000);
 
-  it("plays a UHD Version only as the file itself, and refuses to convert one", async () => {
+  it("streams a UHD Version only with its video copied, and refuses to convert one", async () => {
     asUser(USER_A);
-    const direct = await filmSession(uhdVersionId, "variant=original&direct=1&vcodecs=h264,hevc");
-    expect(direct.mode).toBe("direct");
-    expect(direct.playlistUrl).toBe(`/api/video/${uhdVersionId}/stream`);
+    // HLS, not the file itself, even though the file could be direct-played:
+    // the Apple TV stalls on a direct-played UHD file (canStreamUhd).
+    const copied = await filmSession(uhdVersionId, "variant=original&direct=1&vcodecs=h264,hevc");
+    expect(copied.mode).toBe("hls");
+    const key = /\/jf\/e\/([^/]+)\//.exec(copied.playlistUrl)?.[1] ?? "";
+    expect(key).toMatch(/-original-/);
+    const master = await filmProxy(uhdVersionId, ["e", key, "master.m3u8"], copied.playSessionId);
+    expect(master.status).toBe(200);
+    // Another rendition of it is refused even with a live session in hand.
+    const remote = await filmProxy(uhdVersionId, ["e", key.replace("-original-", "-remote-"), "master.m3u8"], copied.playSessionId);
+    expect(remote.status).toBe(403);
 
-    // Anything that would need the engine is a 403 with the machine-readable
-    // reason, not an HLS stream the server couldn't finish for a real 4K file.
+    // Anything that would need a conversion -- or a client that didn't say it
+    // can decode the video -- is a 403 with the machine-readable reason.
     for (const query of ["variant=original", "variant=remote&direct=1&vcodecs=h264", "variant=original&direct=1&vcodecs=hevc"]) {
       const res = await sessionRoute.POST(
         new Request(`http://localhost/api/video/${uhdVersionId}/jf/session?${query}`, { method: "POST" }),
@@ -414,7 +428,9 @@ describe.skipIf(!hasFfmpeg)("local-engine /jf/* routes (real ffmpeg, real handle
 
   it("judges /stream by the file, not a library row a remux has left behind", async () => {
     asUser(USER_A);
-    expect((await filmSession(staleVersionId, "variant=original&direct=1&vcodecs=h264,hevc")).mode).toBe("direct");
+    // The row's TrueHD would need converting; the file's AAC copies. A UHD
+    // Version streams as copied HLS, so a session at all means the file won.
+    expect((await filmSession(staleVersionId, "variant=original&direct=1&vcodecs=h264,hevc")).mode).toBe("hls");
     const res = await filmStreamRoute.GET(
       new Request(`http://localhost/api/video/${staleVersionId}/stream`, { headers: { Range: "bytes=0-99" } }),
       { params: Promise.resolve({ versionId: String(staleVersionId) }) },

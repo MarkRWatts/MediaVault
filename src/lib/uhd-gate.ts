@@ -1,9 +1,11 @@
 // The server-enforced half of the UltraHD rule, in the same posture as the
 // age gate next door (src/lib/age-gate.ts): something the playback routes
-// call, not something a client can decline to apply. A UHD Version plays
-// only as the file itself (direct play) — the rule and its reasoning live on
-// uhdPlaybackBlocked in src/lib/constants.ts — so this refuses the routes
-// that would convert one. Disabling a button is a courtesy, not a boundary — the iOS
+// call, not something a client can decline to apply. A UHD Version is never
+// converted — only repackaged, its video copied into HLS for a client that
+// declared HEVC (the rule and its reasoning live on uhdPlaybackBlocked in
+// src/lib/constants.ts) — so this refuses the routes that would convert one.
+// The local engine's session and segment routes make the finer call
+// themselves (canStreamUhd in playback/engine-routes.ts). Disabling a button is a courtesy, not a boundary — the iOS
 // and tvOS clients hit these routes by id with catalogues they cached.
 //
 // Unlike the age gate this answers 403, not 404. Hiding a UHD version would

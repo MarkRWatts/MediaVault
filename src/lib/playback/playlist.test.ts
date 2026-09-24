@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hlsCodecs, renderMainPlaylist, renderMasterPlaylist } from "./playlist";
+import { hevcCodecString, hlsCodecs, renderMainPlaylist, renderMasterPlaylist, videoRangeFor } from "./playlist";
 import type { SegmentEntry } from "./types";
 
 describe("hlsCodecs", () => {
@@ -151,5 +151,29 @@ describe("renderMainPlaylist", () => {
     expect(() => renderMainPlaylist([{ index: 0, start: 0, duration: 0 }])).toThrow(/duration/);
     expect(() => renderMainPlaylist([{ index: 0, start: 0, duration: -1 }])).toThrow(/duration/);
     expect(() => renderMainPlaylist([{ index: 0, start: 0, duration: Number.NaN }])).toThrow(/duration/);
+  });
+});
+
+describe("copied HEVC in the master playlist", () => {
+  it("names Main 10 and level 5.1 for a 10-bit Ultra HD source", () => {
+    expect(hevcCodecString({ pixFmt: "yuv420p10le", height: 2160 })).toBe("hvc1.2.4.L153.B0");
+    expect(hevcCodecString({ pixFmt: "yuv420p", height: 1080 })).toBe("hvc1.1.6.L123.B0");
+    expect(hevcCodecString({ pixFmt: null, height: 0 })).toBe("hvc1.1.6.L123.B0");
+  });
+
+  it("marks HDR for the display, and leaves SDR unsaid", () => {
+    expect(videoRangeFor("smpte2084")).toBe("PQ");
+    expect(videoRangeFor("arib-std-b67")).toBe("HLG");
+    expect(videoRangeFor("bt709")).toBeUndefined();
+    expect(videoRangeFor(null)).toBeUndefined();
+    expect(
+      renderMasterPlaylist({
+        bandwidth: 54_000_000,
+        resolution: { width: 3840, height: 2160 },
+        codecs: "hvc1.2.4.L153.B0,mp4a.40.2",
+        videoRange: "PQ",
+        mainUri: "main.m3u8",
+      }),
+    ).toContain('#EXT-X-STREAM-INF:BANDWIDTH=54000000,RESOLUTION=3840x2160,CODECS="hvc1.2.4.L153.B0,mp4a.40.2",VIDEO-RANGE=PQ\n');
   });
 });

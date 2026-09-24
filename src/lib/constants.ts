@@ -70,13 +70,16 @@ export function seasonSortRank(seasonNumber: number): number {
   return seasonNumber === 0 ? Number.MAX_SAFE_INTEGER : seasonNumber;
 }
 
-/** UltraHD rips play only as the file itself — direct play, to a client
- *  that declared HEVC (UHD_PLAN.md phase B). Nothing on the server can
- *  transcode a 4K HEVC 10-bit source: the engine can't hand it to Apple's
- *  players as HLS, and the box has neither the tone-mapping nor the cache
- *  headroom. So the conversion routes refuse a UHD Version
- *  (src/lib/uhd-gate.ts) and /stream serves it untouched; the iOS and
- *  Apple TV apps, which decode HEVC HDR in hardware, get it that way.
+/** UltraHD rips are never converted — only repackaged. Nothing on the
+ *  server can transcode a 4K HEVC 10-bit source: the box has neither the
+ *  tone-mapping nor the headroom. What it can do is copy the video into HLS
+ *  segments, a remux far faster than realtime, for a client that declared
+ *  HEVC: that is how the iOS and Apple TV apps, which decode HEVC HDR in
+ *  hardware, play a UHD Version (canStreamUhd in playback/engine-routes.ts).
+ *  Not as the file itself: the Apple TV's AVPlayer keeps ~2.5 s of a
+ *  direct-played UHD file loaded and stops fetching after its first stall
+ *  (24 Sep 2026). Every route that would convert refuses a UHD Version
+ *  (src/lib/uhd-gate.ts); /stream still serves the file untouched.
  *
  *  The web player doesn't declare HEVC, so for the web UI a UHD Version
  *  stays unplayable: this is what the film page and VersionCard read. */

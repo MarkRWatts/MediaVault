@@ -47,7 +47,7 @@ import {
 import { buildHeadArgs } from "./head-args";
 import { startHead, type Head, type HeadStopReason } from "./head";
 import { resolveHwAccel } from "./hwaccel";
-import { hlsCodecs, renderMainPlaylist, renderMasterPlaylist } from "./playlist";
+import { hevcCodecString, hlsCodecs, renderMainPlaylist, renderMasterPlaylist, videoRangeFor } from "./playlist";
 import { PlaybackError, resolveSource, transcodeReasonsFor, type PlaybackAudioTrack } from "./source";
 import { buildStreamKey, parseStreamKey } from "./stream-key";
 import {
@@ -746,10 +746,18 @@ export async function getMasterPlaylist(
   const ctx = await contextFor(key, playSessionId);
   const videoCodec = ctx.variant === "remote" ? "h264" : ctx.source.plan.outputVideoCodec;
   const audioCodec = ctx.variant === "remote" ? (ctx.source.audioCodec === null ? null : "aac") : ctx.source.audioCodec;
+  // Copied video is the source's own picture, HDR and bit depth included;
+  // anything the engine encodes is 8-bit SDR H.264.
+  const copied = ctx.variant === "original" && ctx.source.plan.videoAction === "copy";
+  let codecs = hlsCodecs(videoCodec, audioCodec);
+  if (copied && (videoCodec === "hevc" || videoCodec === "h265")) {
+    codecs = [hevcCodecString(ctx.source.facts), ...codecs.split(",").slice(1)].join(",");
+  }
   return renderMasterPlaylist({
     bandwidth: bandwidthFor(ctx),
     resolution: resolutionFor(ctx),
-    codecs: hlsCodecs(videoCodec, audioCodec),
+    codecs,
+    videoRange: copied ? videoRangeFor(ctx.source.facts.colorTransfer) : undefined,
     mainUri,
   });
 }
