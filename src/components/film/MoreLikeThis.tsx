@@ -25,7 +25,6 @@ export default function MoreLikeThis({ films }: { films: SimilarFilm[] }) {
               year={f.year}
               className="aspect-2/3 w-full rounded-lg border border-border transition-colors hover:border-accent-border"
             />
-            <span className="sr-only">{f.title}</span>
           </Link>
         ))}
       </div>
