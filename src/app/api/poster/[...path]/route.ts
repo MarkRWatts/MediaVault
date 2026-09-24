@@ -40,15 +40,15 @@ function contentTypeFor(file: string): string {
   return file.toLowerCase().endsWith(".png") ? "image/png" : "image/jpeg";
 }
 
-/** Is "/<file>" the poster/backdrop/still of anything we know about? Only
+/** Is "/<file>" the poster/backdrop/logo/still of anything we know about? Only
  *  consulted on a cache miss without a session, so the cost is bounded to
  *  the first fetch of each real image at each size. */
 async function isReferencedImage(file: string): Promise<boolean> {
   const p = `/${file}`;
   const [film, collection, show, season, episode] = await Promise.all([
-    prisma.film.findFirst({ where: { OR: [{ posterPath: p }, { backdropPath: p }] }, select: { id: true } }),
+    prisma.film.findFirst({ where: { OR: [{ posterPath: p }, { backdropPath: p }, { logoPath: p }] }, select: { id: true } }),
     prisma.collection.findFirst({ where: { OR: [{ posterPath: p }, { backdropPath: p }] }, select: { id: true } }),
-    prisma.show.findFirst({ where: { OR: [{ posterPath: p }, { backdropPath: p }] }, select: { id: true } }),
+    prisma.show.findFirst({ where: { OR: [{ posterPath: p }, { backdropPath: p }, { logoPath: p }] }, select: { id: true } }),
     prisma.showSeason.findFirst({ where: { posterPath: p }, select: { id: true } }),
     prisma.episode.findFirst({ where: { stillPath: p }, select: { id: true } }),
   ]);

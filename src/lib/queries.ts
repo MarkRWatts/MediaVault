@@ -92,6 +92,8 @@ export interface LibraryFilm {
   /** The film's TMDB backdrop — the Apple TV's screen fades to it as the
    *  card takes focus (TVOS_PLAN.md). */
   backdropPath: string | null;
+  /** TMDB title artwork (Film.logoPath), for the Apple TV's featured row. */
+  logoPath: string | null;
   collectionId: number | null;
   collectionName: string | null;
   /** The collection's own TMDB poster, for the stacked card on the library
@@ -131,6 +133,7 @@ export const FILM_CARD_SELECT = {
   year: true,
   posterPath: true,
   backdropPath: true,
+  logoPath: true,
   collectionId: true,
   collection: { select: { name: true, posterPath: true } },
   releaseDate: true,
@@ -156,6 +159,7 @@ export type FilmCardSource = {
   year: number | null;
   posterPath: string | null;
   backdropPath: string | null;
+  logoPath: string | null;
   collectionId: number | null;
   collection: { name: string; posterPath: string | null } | null;
   releaseDate: Date | null;
@@ -181,6 +185,7 @@ export function shapeLibraryFilm(f: FilmCardSource): LibraryFilm {
     year: f.year,
     posterPath: f.posterPath,
     backdropPath: f.backdropPath,
+    logoPath: f.logoPath,
     collectionId: f.collectionId,
     collectionName: f.collection?.name ?? null,
     collectionPosterPath: f.collection?.posterPath ?? null,
@@ -431,6 +436,8 @@ export interface FilmDetail {
   year: number | null;
   posterPath: string | null;
   backdropPath: string | null;
+  /** As LibraryFilm.logoPath. */
+  logoPath: string | null;
   overview: string | null;
   releaseDate: string | null;
   runtimeLabel: string;
@@ -501,6 +508,7 @@ export async function getFilmDetail(id: number, limit: AgeLimit): Promise<FilmDe
     year: film.year,
     posterPath: film.posterPath,
     backdropPath: film.backdropPath,
+    logoPath: film.logoPath,
     overview: film.overview,
     releaseDate: film.releaseDate ? film.releaseDate.toISOString() : null,
     runtimeLabel: formatRuntimeMins(film.runtimeMins),
@@ -695,6 +703,8 @@ export interface ShowSummary {
   posterPath: string | null;
   /** As LibraryFilm.backdropPath. */
   backdropPath: string | null;
+  /** As LibraryFilm.logoPath. */
+  logoPath: string | null;
   certification: string | null;
   ownedEpisodeCount: number;
   totalEpisodeCount: number;
@@ -732,6 +742,7 @@ export async function getShows(limit: AgeLimit): Promise<ShowSummary[]> {
         year: s.year,
         posterPath: s.posterPath,
         backdropPath: s.backdropPath,
+        logoPath: s.logoPath,
         certification: s.certification,
         ownedEpisodeCount,
         totalEpisodeCount,
@@ -801,6 +812,8 @@ export interface ShowDetail {
   year: number | null;
   posterPath: string | null;
   backdropPath: string | null;
+  /** As LibraryFilm.logoPath. */
+  logoPath: string | null;
   overview: string | null;
   status: string | null;
   rating: number | null;
@@ -900,6 +913,7 @@ export async function getShowDetail(id: number, limit: AgeLimit): Promise<ShowDe
     year: show.year,
     posterPath: show.posterPath,
     backdropPath: show.backdropPath,
+    logoPath: show.logoPath,
     overview: show.overview,
     status: show.status,
     rating: show.rating,

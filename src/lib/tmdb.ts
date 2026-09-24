@@ -23,6 +23,27 @@ function authMode(key: string): "bearer" | "query" {
   return key.length > 60 || key.includes(".") ? "bearer" : "query";
 }
 
+/** Asked alongside a film's or show's details (append_to_response=images):
+ *  only English and language-neutral artwork, which is all a title logo
+ *  here can use. TMDB applies it to the appended images, not the details. */
+const LOGO_LANGUAGES = { include_image_language: "en,null" };
+
+/** The title artwork to show in place of the plain title: TMDB's logos are
+ *  transparent PNGs (or SVGs, which the poster route doesn't serve), so the
+ *  best-voted English PNG, else the best language-neutral one. Null when
+ *  there is none — the apps then show the title as text. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function pickLogo(images: any): string | null {
+  const logos: { file_path?: string; iso_639_1?: string | null; vote_average?: number }[] = images?.logos ?? [];
+  const pngs = logos.filter((l) => typeof l.file_path === "string" && l.file_path.toLowerCase().endsWith(".png"));
+  const best = (candidates: typeof pngs) =>
+    candidates.reduce<(typeof pngs)[number] | null>(
+      (top, l) => (top === null || (l.vote_average ?? 0) > (top.vote_average ?? 0) ? l : top),
+      null,
+    );
+  return (best(pngs.filter((l) => l.iso_639_1 === "en")) ?? best(pngs.filter((l) => !l.iso_639_1)))?.file_path ?? null;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function tmdbFetch(pathname: string, params: Record<string, string> = {}): Promise<any> {
   const key = process.env.TMDB_API_KEY;
@@ -272,7 +293,7 @@ export async function findOrCreateFilmByTmdbId(tmdbId: number): Promise<FilmRef>
     };
   }
 
-  const details = await tmdbFetch(`/movie/${tmdbId}`, { append_to_response: "release_dates" });
+  const details = await tmdbFetch(`/movie/${tmdbId}`, { append_to_response: "release_dates,images", ...LOGO_LANGUAGES });
   const releaseDate = details.release_date ? new Date(details.release_date) : null;
   const year = releaseDate && !Number.isNaN(releaseDate.getTime()) ? releaseDate.getFullYear() : null;
 
@@ -286,6 +307,7 @@ export async function findOrCreateFilmByTmdbId(tmdbId: number): Promise<FilmRef>
       overview: details.overview ?? null,
       posterPath: details.poster_path ?? null,
       backdropPath: details.backdrop_path ?? null,
+      logoPath: pickLogo(details.images),
       releaseDate,
       runtimeMins: details.runtime ?? null,
       rating: details.vote_average ?? null,
@@ -422,7 +444,7 @@ async function enrichOneFilm(
     return "unmatched";
   }
 
-  const details = await tmdbFetch(`/movie/${tmdbId}`, { append_to_response: "release_dates" });
+  const details = await tmdbFetch(`/movie/${tmdbId}`, { append_to_response: "release_dates,images", ...LOGO_LANGUAGES });
 
   if (refreshOnly) {
     log.push(`Refreshed "${film.title}"${film.year ? ` (${film.year})` : ""} (tmdb:${tmdbId})`);
@@ -436,6 +458,7 @@ async function enrichOneFilm(
     overview: details.overview ?? null,
     posterPath: details.poster_path ?? null,
     backdropPath: details.backdrop_path ?? null,
+    logoPath: pickLogo(details.images),
     releaseDate: details.release_date ? new Date(details.release_date) : null,
     runtimeMins: details.runtime ?? null,
     rating: details.vote_average ?? null,
@@ -677,7 +700,7 @@ async function enrichOneShow(show: Show, log: string[], refreshOnly = false): Pr
     return "unmatched";
   }
 
-  const details = await tmdbFetch(`/tv/${tmdbId}`, { append_to_response: "external_ids,content_ratings" });
+  const details = await tmdbFetch(`/tv/${tmdbId}`, { append_to_response: "external_ids,content_ratings,images", ...LOGO_LANGUAGES });
 
   if (refreshOnly) {
     log.push(`Refreshed "${show.title}"${show.year ? ` (${show.year})` : ""} (tmdb:${tmdbId})`);
@@ -691,6 +714,7 @@ async function enrichOneShow(show: Show, log: string[], refreshOnly = false): Pr
     overview: details.overview ?? null,
     posterPath: details.poster_path ?? null,
     backdropPath: details.backdrop_path ?? null,
+    logoPath: pickLogo(details.images),
     firstAirDate: details.first_air_date ? new Date(details.first_air_date) : null,
     status: details.status ?? null,
     rating: details.vote_average ?? null,

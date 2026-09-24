@@ -63,6 +63,9 @@ model Film {
   overview        String?
   posterPath      String? // TMDB path; cached locally under /api/poster
   backdropPath    String?
+  /// TMDB title artwork (transparent PNG) — the film's own title styling,
+  /// shown in place of the plain title where there is one. See tmdb.ts's pickLogo.
+  logoPath        String?
   releaseDate     DateTime?
   runtimeMins     Int?
   rating          Float? // TMDB vote_average
@@ -192,6 +195,8 @@ model Show {
   overview        String?
   posterPath      String?
   backdropPath    String?
+  /// As Film.logoPath.
+  logoPath        String?
   firstAirDate    DateTime?
   status          String? // "Ended", "Returning Series", …
   certification   String? // UK rating from TMDB content_ratings (BBFC certificate where one exists)
