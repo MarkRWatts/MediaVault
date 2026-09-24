@@ -70,6 +70,7 @@ import {
   type Variant,
   type VideoPlaybackPlan,
 } from "../video-playback";
+import type { SegmentContainer } from "./decisions";
 import type { HwAccel, SegmentEntry, SourceFacts } from "./types";
 
 export const DEFAULT_RENDER_DEVICE = "/dev/dri/renderD128";
@@ -133,6 +134,8 @@ export interface BuildHeadArgsInput {
   keyframes?: number[];
   /** Render node path for `-vaapi_device`/`-qsv_device`. */
   renderDevice?: string;
+  /** decisions.ts's segmentContainerFor. Defaults to MPEG-TS. */
+  container?: SegmentContainer;
 }
 
 function formatSeconds(t: number): string {
@@ -284,7 +287,13 @@ export function buildHeadArgs(input: BuildHeadArgsInput): string[] {
 
   // --- video ---
   if (doVideoCopy) {
-    args.push("-c:v", "copy", "-bsf:v", annexBBitstreamFilter(plan.outputVideoCodec));
+    if (input.container === "fmp4") {
+      // MP4 keeps the source's length-prefixed NAL units as they are (no
+      // Annex B), under the `hvc1` sample entry Apple's players require.
+      args.push("-c:v", "copy", "-tag:v", "hvc1");
+    } else {
+      args.push("-c:v", "copy", "-bsf:v", annexBBitstreamFilter(plan.outputVideoCodec));
+    }
   } else {
     const futureBoundaries = futureBoundaryTimes(segments, N);
 
@@ -348,22 +357,38 @@ export function buildHeadArgs(input: BuildHeadArgsInput): string[] {
   }
 
   // --- segment muxer output (see the file header for the full contract) ---
-  args.push("-f", "segment", "-segment_format", "mpegts");
-  // The top-level -copyts above only governs the demux/decode/encode path;
-  // the mpegts muxer has its *own* separate timestamp-rebasing switch
-  // (`ffmpeg -h muxer=mpegts`: "-mpegts_copyts <boolean> don't offset
-  // dts/pts (default auto)"), and its "auto" default still rebased the
-  // first segment to start near a fixed ~1.4s offset in a real test here
-  // rather than 0 -- confirmed against a real ffmpeg build (Homebrew
-  // 9.0.2, 19 Sep 2026) by probing a produced segment's own first frame
-  // pts. A bare top-level `-mpegts_copyts 1` does not reach the segment
-  // muxer's per-file mpegts writer either; it has to be threaded through
-  // as a segment-format option. With this, a restarted head's segment
-  // carries the *same* absolute video PTS (verified: identical, frame for
-  // frame) as the equivalent segment from a head that ran straight through
-  // from 0 -- the "Heads" restart-consistency claim this file's contract
-  // depends on.
-  args.push("-segment_format_options", "mpegts_copyts=1");
+  if (input.container === "fmp4") {
+    // Each file a complete fragmented MP4 (fmp4.ts splits it into the
+    // shared init.mp4 and a moof/mdat media segment on promotion).
+    // empty_moov: the moov carries track setup only, so it is the same in
+    // every segment. frag_discont + avoid_negative_ts=disabled, threaded
+    // through to the per-file MP4 writer like mpegts_copyts below: without
+    // them each file's tfdt restarts at 0; with them it is the source's
+    // absolute decode time, identical to what ffmpeg's own hls muxer
+    // writes (verified on Man of Steel's UHD file, 24 Sep 2026).
+    args.push("-f", "segment", "-segment_format", "mp4");
+    args.push(
+      "-segment_format_options",
+      "movflags=+frag_keyframe+empty_moov+default_base_moof+frag_discont:avoid_negative_ts=disabled",
+    );
+  } else {
+    args.push("-f", "segment", "-segment_format", "mpegts");
+    // The top-level -copyts above only governs the demux/decode/encode path;
+    // the mpegts muxer has its *own* separate timestamp-rebasing switch
+    // (`ffmpeg -h muxer=mpegts`: "-mpegts_copyts <boolean> don't offset
+    // dts/pts (default auto)"), and its "auto" default still rebased the
+    // first segment to start near a fixed ~1.4s offset in a real test here
+    // rather than 0 -- confirmed against a real ffmpeg build (Homebrew
+    // 9.0.2, 19 Sep 2026) by probing a produced segment's own first frame
+    // pts. A bare top-level `-mpegts_copyts 1` does not reach the segment
+    // muxer's per-file mpegts writer either; it has to be threaded through
+    // as a segment-format option. With this, a restarted head's segment
+    // carries the *same* absolute video PTS (verified: identical, frame for
+    // frame) as the equivalent segment from a head that ran straight through
+    // from 0 -- the "Heads" restart-consistency claim this file's contract
+    // depends on.
+    args.push("-segment_format_options", "mpegts_copyts=1");
+  }
   args.push("-segment_start_number", String(N));
   // The muxer cuts at the first keyframe whose pts, *relative to this
   // head's first video packet*, is >= cut - delta. For copied video the

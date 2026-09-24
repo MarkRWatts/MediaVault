@@ -28,9 +28,11 @@ import { loadKeyframeIndex, saveKeyframeIndex } from "./keyframe-store";
 import { getIndexKeyframes, getKeyframes, fixedSegmentTable, segmentTableFromKeyframes } from "./keyframes";
 import {
   isPlanStale,
+  segmentContainerFor,
   segmentTableHash,
   tierFor,
   PLAN_VERSION,
+  type SegmentContainer,
   type StreamCacheEntry,
   type StreamPlanFile,
   type StreamTier,
@@ -49,6 +51,8 @@ export interface StreamContext {
   dir: string;
   variant: Variant;
   tier: StreamTier;
+  /** decisions.ts's segmentContainerFor: MPEG-TS, or fMP4 for copied HEVC. */
+  container: SegmentContainer;
   segments: SegmentEntry[];
   /** Source keyframe times, for restarting a copy-tier head at a boundary.
    *  Empty on the transcode tier, which needs none. */
@@ -198,12 +202,13 @@ export function streamTier(source: ResolvedSource, variant: Variant): StreamTier
   return tierFor(variant, source.plan.videoAction);
 }
 
-function planIdentity(key: string, source: ResolvedSource, segments: SegmentEntry[]) {
+function planIdentity(key: string, source: ResolvedSource, segments: SegmentEntry[], container: SegmentContainer) {
   return {
     key,
     sourceMtimeMs: source.mtimeMs,
     sourceSizeBytes: source.sizeBytes,
     segmentCount: segments.length,
+    container,
     tableHash: segmentTableHash(segments),
   };
 }
@@ -242,7 +247,8 @@ export async function openStream(source: ResolvedSource, variant: Variant): Prom
     throw new PlaybackError("not-playable", `${key} produced an empty segment table`);
   }
 
-  const identity = planIdentity(key, source, segments);
+  const container = segmentContainerFor(variant, source.plan);
+  const identity = planIdentity(key, source, segments, container);
   const stored = await readPlan(dir);
   if (stored !== null && isPlanStale(stored, identity)) {
     console.log(`[playback] ${key}: source or table changed, discarding cached segments`);
@@ -267,7 +273,7 @@ export async function openStream(source: ResolvedSource, variant: Variant): Prom
     if (index !== null && index < segments.length) present.add(index);
   }
 
-  return { key, dir, variant, tier, segments, keyframes, source, present };
+  return { key, dir, variant, tier, container, segments, keyframes, source, present };
 }
 
 /** Record a promoted segment and, when the table is finished, drop the

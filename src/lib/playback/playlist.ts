@@ -7,7 +7,9 @@
 // touches ffmpeg or the filesystem.
 
 import { MSE_AUDIO_CODEC, MSE_VIDEO_CODEC } from "../video-playback";
-import { segmentFileName } from "./stream-key";
+import type { SegmentContainer } from "./decisions";
+import { INIT_SEGMENT_NAME } from "./fmp4";
+import { segmentUrlName } from "./stream-key";
 import type { SegmentEntry } from "./types";
 
 /**
@@ -104,10 +106,11 @@ export function renderMasterPlaylist(input: MasterPlaylistInput): string {
  * needs >= 5, and so on. EXT-X-INDEPENDENT-SEGMENTS is *not* in that table
  * -- it has been usable since version 1 -- so it doesn't force a bump on
  * its own. This playlist's EXTINF values are fractional (six decimals), so
- * version 3 is the correct, and sufficient, value; there is no fMP4
- * EXT-X-MAP here (segments are MPEG-TS, V4_PLAN.md "Heads") to require 6.
+ * version 3 is the correct, and sufficient, value for MPEG-TS segments; an
+ * fMP4 stream (copied HEVC -- decisions.ts's segmentContainerFor) adds
+ * EXT-X-MAP, which needs 6, and is written as 7.
  */
-export function renderMainPlaylist(segments: SegmentEntry[]): string {
+export function renderMainPlaylist(segments: SegmentEntry[], container: SegmentContainer = "ts"): string {
   if (segments.length === 0) throw new Error("cannot render a playlist with no segments");
   segments.forEach((s, i) => {
     if (s.index !== i) throw new Error(`segment table is not a complete 0-based sequence at position ${i}`);
@@ -122,17 +125,20 @@ export function renderMainPlaylist(segments: SegmentEntry[]): string {
   // two candidates).
   const targetDuration = Math.ceil(Math.max(...segments.map((s) => s.duration)));
 
+  // fMP4 segments need EXT-X-MAP, which needs version 6; 7 is what
+  // ffmpeg's own fMP4 HLS writes and what Apple's tools expect.
   const lines = [
     "#EXTM3U",
-    "#EXT-X-VERSION:3",
+    container === "fmp4" ? "#EXT-X-VERSION:7" : "#EXT-X-VERSION:3",
     `#EXT-X-TARGETDURATION:${targetDuration}`,
     "#EXT-X-MEDIA-SEQUENCE:0",
     "#EXT-X-PLAYLIST-TYPE:VOD",
     "#EXT-X-INDEPENDENT-SEGMENTS",
   ];
+  if (container === "fmp4") lines.push(`#EXT-X-MAP:URI="${INIT_SEGMENT_NAME}"`);
   for (const seg of segments) {
     lines.push(`#EXTINF:${seg.duration.toFixed(6)},`);
-    lines.push(segmentFileName(seg.index));
+    lines.push(segmentUrlName(seg.index, container));
   }
   lines.push("#EXT-X-ENDLIST");
   return lines.join("\n") + "\n";

@@ -58,6 +58,21 @@ export function tierFor(variant: Variant, videoAction: StreamAction): StreamTier
 export const WAIT_AHEAD_TRANSCODE = 3;
 export const WAIT_AHEAD_COPY = 12;
 
+/**
+ * What a key's segments are: MPEG-TS, or fragmented MP4 (a shared
+ * `init.mp4` plus one `moof`/`mdat` media segment each) for copied HEVC.
+ * AVPlayer quietly drops an HEVC video track carried in MPEG-TS -- the
+ * audio plays over a black screen (Apple TV and Mac, 24 Sep 2026) -- and
+ * Apple's HLS takes HEVC and HDR only as fMP4. Everything the engine
+ * encodes is H.264, which MPEG-TS carries fine, so only a copy can need it.
+ */
+export type SegmentContainer = "ts" | "fmp4";
+
+export function segmentContainerFor(variant: Variant, plan: { videoAction: StreamAction; hevcTag: boolean }): SegmentContainer {
+  // hevcTag is exactly "the video is copied HEVC" (video-playback.ts).
+  return variant === "original" && plan.videoAction === "copy" && plan.hevcTag ? "fmp4" : "ts";
+}
+
 export function waitAheadFor(tier: StreamTier): number {
   return tier === "copy" ? WAIT_AHEAD_COPY : WAIT_AHEAD_TRANSCODE;
 }
@@ -338,6 +353,8 @@ export interface StreamPlanFile {
   sourceMtimeMs: number;
   sourceSizeBytes: number;
   segmentCount: number;
+  /** Absent in a plan written before fMP4 existed: those were all "ts". */
+  container?: SegmentContainer;
   /** Hash of the whole table, so a keyframe index that has been rebuilt
    *  differently (or a changed HLS_SEGMENT_SECS) invalidates the directory
    *  even when mtime/size haven't moved. */
@@ -358,6 +375,7 @@ export interface StreamPlanIdentity {
   sourceMtimeMs: number;
   sourceSizeBytes: number;
   segmentCount: number;
+  container: SegmentContainer;
   tableHash: string;
 }
 
@@ -377,6 +395,7 @@ export function isPlanStale(stored: unknown, current: StreamPlanIdentity): boole
     p.sourceMtimeMs !== current.sourceMtimeMs ||
     p.sourceSizeBytes !== current.sourceSizeBytes ||
     p.segmentCount !== current.segmentCount ||
+    (p.container ?? "ts") !== current.container ||
     p.tableHash !== current.tableHash
   );
 }

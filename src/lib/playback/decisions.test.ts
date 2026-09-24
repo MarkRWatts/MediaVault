@@ -17,6 +17,7 @@ import {
   isHeadCaughtUp,
   isPlanStale,
   segmentDurationTolerance,
+  segmentContainerFor,
   segmentTableHash,
   selectSegmentsToTrim,
   selectStreamsToEvict,
@@ -224,6 +225,7 @@ describe("segmentTableHash / isPlanStale", () => {
     sourceMtimeMs: 1_700_000_000_000,
     sourceSizeBytes: 42_000_000,
     segmentCount: 3,
+    container: "ts",
     tableHash: segmentTableHash(table([0, 6, 12])),
     ...over,
   });
@@ -237,6 +239,21 @@ describe("segmentTableHash / isPlanStale", () => {
 
   it("accepts a plan that matches in every field", () => {
     expect(isPlanStale(planFor(identity()), identity())).toBe(false);
+  });
+
+  it("reads a plan from before fMP4 as MPEG-TS, and discards it for an fMP4 stream", () => {
+    const legacy: Record<string, unknown> = { ...planFor(identity()) };
+    delete legacy.container;
+    expect(isPlanStale(legacy, identity())).toBe(false);
+    expect(isPlanStale(legacy, identity({ container: "fmp4" }))).toBe(true);
+    expect(isPlanStale(planFor(identity({ container: "fmp4" })), identity({ container: "fmp4" }))).toBe(false);
+  });
+
+  it("puts only copied HEVC in fMP4", () => {
+    expect(segmentContainerFor("original", { videoAction: "copy", hevcTag: true })).toBe("fmp4");
+    expect(segmentContainerFor("original", { videoAction: "copy", hevcTag: false })).toBe("ts");
+    expect(segmentContainerFor("original", { videoAction: "transcode", hevcTag: false })).toBe("ts");
+    expect(segmentContainerFor("remote", { videoAction: "copy", hevcTag: true })).toBe("ts");
   });
 
   it("rejects a plan whose source file has changed", () => {

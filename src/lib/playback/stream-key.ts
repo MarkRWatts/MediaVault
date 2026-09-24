@@ -12,6 +12,7 @@
 // touching the disk." This file is where both patterns live.
 
 import { VARIANTS, type Variant } from "../video-playback";
+import type { SegmentContainer } from "./decisions";
 import type { MediaKind, StreamKeyParts } from "./types";
 
 const KINDS: readonly MediaKind[] = ["film", "scene", "episode"];
@@ -71,5 +72,21 @@ export function segmentFileName(index: number): string {
 
 export function parseSegmentFileName(name: string): number | null {
   if (!SEGMENT_FILE_RE.test(name)) return null;
+  return Number(name.slice(4, 9));
+}
+
+// A segment's name in a playlist and a URL. On disk every segment is
+// `seg_NNNNN.ts` whatever it holds -- the directory's plan.json says which
+// (decisions.ts's segmentContainerFor) -- but a player is told the truth:
+// an fMP4 media segment is `.m4s`.
+export const SEGMENT_URL_RE = /^seg_\d{5}\.(ts|m4s)$/;
+
+export function segmentUrlName(index: number, container: SegmentContainer): string {
+  const name = segmentFileName(index);
+  return container === "fmp4" ? name.replace(/\.ts$/, ".m4s") : name;
+}
+
+export function parseSegmentUrlName(name: string): number | null {
+  if (!SEGMENT_URL_RE.test(name)) return null;
   return Number(name.slice(4, 9));
 }
