@@ -220,6 +220,7 @@ export default function VideoPlayer({
   onClose,
   basePath = "/api/video",
   trackProgress = true,
+  fromStart = false,
   source = "local",
   audioTracks = [],
 }: {
@@ -239,6 +240,10 @@ export default function VideoPlayer({
    *  SceneProgress model — out of scope, see ADULT_PLAN.md). Skips the
    *  progress GET/POST calls entirely rather than letting them 404. */
   trackProgress?: boolean;
+  /** Start at 0:00 even with a saved position — the film page's "Play from
+   *  the Beginning". Progress is still reported, so the old resume point is
+   *  overwritten as the new viewing goes on. */
+  fromStart?: boolean;
 }) {
   const [uiState, setUiState] = useState<UiState>("checking");
   const [message, setMessage] = useState<string | null>(null);
@@ -394,7 +399,7 @@ export default function VideoPlayer({
           const saved: SavedProgress = { positionSecs: progress.positionSecs, completed: Boolean(progress.completed) };
           // Only resume a position that's a real "in progress" point, not a
           // completed title or a trivial preview (see WATCH_PROGRESS_MIN_SECS).
-          if (!saved.completed && saved.positionSecs >= WATCH_PROGRESS_MIN_SECS) {
+          if (!fromStart && !saved.completed && saved.positionSecs >= WATCH_PROGRESS_MIN_SECS) {
             seekOnLoadRef.current = saved.positionSecs;
           }
         }
