@@ -2,7 +2,7 @@
 
 // The artist page's action row, beside the <h1>: a round favourite heart,
 // same styling and optimistic-toggle-then-router.refresh() pattern as
-// FilmActions' favourite button. No play button here — an artist has no
+// FilmPlayActions' favourite button. No play button here — an artist has no
 // single queue of its own (studio catalogue vs. shelf), unlike a film or
 // an album.
 

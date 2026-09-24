@@ -1,8 +1,7 @@
 "use client";
 
-// One section's open/closed memory, shared by CollapsibleSection (the
-// shelves) and CollapsibleSeason (a show's seasons) so every fold in the app
-// remembers itself the same way and in the same localStorage entries
+// One section's open/closed memory for CollapsibleSection (the shelves), so
+// every fold in the app remembers itself the same way and in the same localStorage entries
 // LibraryBrowser writes.
 
 import { useEffect, useState } from "react";

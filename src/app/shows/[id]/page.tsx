@@ -1,19 +1,41 @@
-import Link from "next/link";
+// A show's page — the one design the iPhone app, the phone web and the
+// Apple TV share (SHOW_PAGE_PLAN.md), laid out exactly as a film's page
+// (DetailHero): floating Back over the backdrop with the TMDB title logo in
+// its fade; the certificate and the chips every episode earns, then a quiet
+// line of years · seasons · genres · rating; one amber Play naming the
+// episode (Resume S2 E8, Play S2 E9) with Favourite · Watched under it;
+// three lines of synopsis; the episodes, a season at a time under a
+// `Series 1 ⌄` menu; then Films and More like this. No poster, no logo bar
+// (top-nav.tsx drops it here too) and nothing technical — no disc,
+// resolution or codec. "Link to a film" lives in the owner's ⋯.
+
 import { notFound } from "next/navigation";
-import PosterImage from "@/components/PosterImage";
-import SeasonSection from "@/components/SeasonSection";
-import ShowFilmsSection from "@/components/ShowFilmsSection";
+import DetailFacts from "@/components/film/DetailFacts";
+import DetailHero from "@/components/film/DetailHero";
+import FilmPlayActions from "@/components/film/FilmPlayActions";
+import MoreLikeThis from "@/components/film/MoreLikeThis";
+import OwnerMenu from "@/components/film/OwnerMenu";
+import Synopsis from "@/components/film/Synopsis";
+import ShowEpisodes, { type ShowSeasonItem } from "@/components/show/ShowEpisodes";
+import type { EpisodeRowItem } from "@/components/EpisodeRow";
 import ShowFilmLinksEditor from "@/components/ShowFilmLinksEditor";
-import SpecLine from "@/components/SpecLine";
-import { sharedSpec, showFiles } from "@/lib/episode-specs";
-import { getShowDetail } from "@/lib/queries";
+import { formatRuntimeMins, getShowDetail, getShows, type EpisodeView } from "@/lib/queries";
 import { initialOpenSeason } from "@/lib/season-collapse";
 import { getLinkableFilms, getShowFilms } from "@/lib/queries-film-shows";
-import { playbackAvailable } from "@/lib/playback/engine-flag";
-import FilmActions from "@/components/FilmActions";
-import CertificationBadge from "@/components/CertificationBadge";
+import { isFilePlayable, playbackAvailable } from "@/lib/playback/engine-flag";
 import { isAppOwner, requireMemberOrRedirect } from "@/lib/require-member";
-import { getNextEpisodeFile, getShowUserState } from "@/lib/film-user-state";
+import {
+  getNextEpisodeFile,
+  getShowEpisodeProgress,
+  getShowUserState,
+  type EpisodeFileProgress,
+} from "@/lib/film-user-state";
+import { sharedBadges } from "@/lib/video-badges";
+import { copyLabel } from "@/lib/copy-quality";
+import { WATCH_PROGRESS_MIN_SECS } from "@/lib/constants";
+import { airYears, episodeCode, seasonLabel, seasonsLabel, similarShows } from "@/lib/show-page";
+
+const TV_VIDEO = "/api/tv-video";
 
 export default async function ShowPage({
   params,
@@ -29,196 +51,181 @@ export default async function ShowPage({
   const show = await getShowDetail(showId, ageLimit);
   if (!show) notFound();
 
-  // Only build deep links when playback is actually available — no error
-  // state in the UI, episodes without a match simply get no chip.
+  // Only build play controls when playback is actually available — no
+  // error state on the rows, an episode that can't play simply has no play
+  // glyph on its still.
   const playable = playbackAvailable();
-  const [userState, next, linkedFilms, owner] = await Promise.all([
+  const [userState, next, progressRows, linkedFilms, allShows, owner] = await Promise.all([
     getShowUserState(userId, show.id),
     playable ? getNextEpisodeFile(userId, show.id) : Promise.resolve(null),
+    getShowEpisodeProgress(userId, show.id),
     getShowFilms(show.id, ageLimit),
+    getShows(ageLimit),
     isAppOwner(userId),
   ]);
   // Which films belong with this show is curated by hand (FilmShowLink),
-  // by the owner only, here rather than on the film page
-  // (FILM_PAGE_PLAN.md "Owner tools"). The picker's pool is only fetched
-  // for them.
+  // by the owner only, from the ⋯ menu (SHOW_PAGE_PLAN.md "Owner tools").
+  // The picker's pool is only fetched for them.
   const linkableFilms = owner ? await getLinkableFilms(ageLimit) : [];
 
-  const complete = show.totalEpisodeCount > 0 && show.ownedEpisodeCount === show.totalEpisodeCount;
+  const progress = new Map(progressRows.map((p) => [p.episodeFileId, p]));
+  const pad = (n: number) => String(n).padStart(2, "0");
 
-  // What every file in the show agrees on, said once here and nowhere else.
-  // The fields the seasons disagree about are missing from it, and each
-  // season header answers for those itself (SeasonSection).
-  const spec = sharedSpec(showFiles(show.seasons));
-
-  // Seasons fold, and a first visit leaves one of them open (season-collapse.ts).
-  const openSeason = initialOpenSeason(
-    show.seasons.map((s) => s.seasonNumber),
+  // The episodes you have, a season at a time; seasons with none are left
+  // out of the menu altogether.
+  const seasons: ShowSeasonItem[] = show.seasons
+    .map((season) => ({
+      seasonNumber: season.seasonNumber,
+      label: seasonLabel(season.seasonNumber),
+      episodes: season.episodes
+        .filter((ep) => ep.owned)
+        .map((ep) =>
+          episodeRow(ep, `${show.title} S${pad(season.seasonNumber)}E${pad(ep.episodeNumber)}`, playable, progress),
+        ),
+    }))
+    .filter((s) => s.episodes.length > 0);
+  // The season you're partway through (where Play points), else the first.
+  const initialSeason = initialOpenSeason(
+    seasons.map((s) => s.seasonNumber),
     next?.seasonNumber ?? null,
+  );
+
+  // Chips: the certificate, then what every file you have earns — the
+  // same words as a film's (video-badges.ts).
+  const files = show.seasons.flatMap((s) => s.episodes.filter((e) => e.owned).flatMap((e) => e.files));
+  const chips = sharedBadges(files);
+
+  const facts = [
+    airYears(show.seasons, show.status, show.year),
+    seasonsLabel(show.seasons.map((s) => s.seasonNumber)),
+    show.genres.length > 0 ? show.genres.join(", ") : null,
+  ].filter((f): f is string => f !== null);
+  const incomplete = show.totalEpisodeCount > 0 && show.ownedEpisodeCount < show.totalEpisodeCount;
+
+  const similar = similarShows(
+    show,
+    allShows.filter((s) => s.ownedEpisodeCount > 0),
   );
 
   return (
     <div className="flex flex-1 flex-col">
-      <div className="relative">
-        {show.backdropPath && (
-          <div className="absolute inset-0 h-72 overflow-hidden sm:h-96">
-            <img
-              src={`/api/poster/w780${show.backdropPath}`}
-              alt=""
-              fetchPriority="high"
-              decoding="async"
-              className="absolute inset-0 h-full w-full scale-105 object-cover opacity-30 blur-sm"
-            />
-            <div className="absolute inset-0 bg-gradient-to-b from-bg/40 via-bg/70 to-bg" />
-          </div>
-        )}
-
-        <div className="relative mx-auto flex max-w-5xl flex-col gap-4 px-4 pt-6 sm:px-6">
-          <Link
-            href="/shows"
-            className="w-fit text-xs font-medium text-text-muted hover:text-text"
-          >
-            ← Shows
-          </Link>
-
-          <div className="flex flex-col gap-6 pb-2 pt-4 sm:flex-row sm:pt-10">
-            <PosterImage
-              posterPath={show.posterPath}
-              title={show.title}
-              year={show.year}
-              size="w780"
-              priority
-              sizes="(min-width: 640px) 224px, 55vw"
-              // self-start: the row stretches its items to the tallest one, and
-              // a stretched height beats aspect-ratio — so a long overview made
-              // the poster box taller than 2:3 and object-cover ate the sides of
-              // the artwork (Sharpe lost the end of its title).
-              className="aspect-2/3 w-40 shrink-0 self-start rounded-lg border border-border-strong shadow-lg shadow-black/40 sm:w-56"
-            />
-
-            <div className="flex flex-1 flex-col gap-3 pt-1">
-              <div>
-                <h1 className="font-display text-4xl leading-none tracking-wide text-balance sm:text-5xl">
-                  {show.title}
-                </h1>
-                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-sm text-text-muted">
-                  <span>{show.year ?? "Year unknown"}</span>
-                  {show.certification && (
-                    <>
-                      <span className="text-text-faint">·</span>
-                      <CertificationBadge certification={show.certification} />
-                    </>
-                  )}
-                  {show.status && (
-                    <>
-                      <span className="text-text-faint">·</span>
-                      <span>{show.status}</span>
-                    </>
-                  )}
-                  {show.rating !== null && (
-                    <>
-                      <span className="text-text-faint">·</span>
-                      <span className="flex items-center gap-1 text-accent">
-                        <svg
-                          aria-hidden
-                          viewBox="0 0 20 20"
-                          className="h-3.5 w-3.5 fill-current"
-                        >
-                          <path d="M10 1.5l2.6 5.6 6.1.6-4.6 4.1 1.3 6-5.4-3.1-5.4 3.1 1.3-6-4.6-4.1 6.1-.6z" />
-                        </svg>
-                        {show.rating.toFixed(1)}
-                      </span>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <span
-                  className={`font-mono text-sm ${complete ? "text-text-muted" : "text-accent"}`}
-                >
-                  {show.ownedEpisodeCount} of {show.totalEpisodeCount} episodes
-                </span>
-                {!complete && (
-                  <span className="text-[10px] font-semibold uppercase tracking-widest text-accent">
-                    Incomplete
-                  </span>
-                )}
-              </div>
-
-              <SpecLine spec={spec} />
-
-              {show.genres.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {show.genres.map((g) => (
-                    <span
-                      key={g}
-                      className="rounded-full border border-border px-2.5 py-0.5 text-xs text-text-muted"
-                    >
-                      {g}
-                    </span>
-                  ))}
-                </div>
-              )}
-
-              <FilmActions
-                kind="show"
-                filmId={show.id}
-                title={show.title}
-                play={
-                  next
-                    ? {
-                        versionId: next.episodeFileId,
-                        source: "jellyfin",
-                        audioTracks: [],
-                        basePath: "/api/tv-video",
-                        label: `${next.resume ? "Continue" : "Play"} ${next.label.split(" · ")[0]}`,
-                        playTitle: `${show.title} ${next.label}`,
-                      }
-                    : null
-                }
-                favourite={userState.favourite}
-                watched={userState.watched}
+      <DetailHero
+        title={show.title}
+        logoPath={show.logoPath}
+        backdropPath={show.backdropPath}
+        posterPath={show.posterPath}
+        back={{ fallbackHref: "/shows", label: "Shows" }}
+        menu={
+          owner && (
+            <OwnerMenu heading="Link to a film">
+              <ShowFilmLinksEditor
+                showId={show.id}
+                linked={linkedFilms.map((f) => ({ id: f.id, title: f.title, year: f.year }))}
+                allFilms={linkableFilms}
               />
+            </OwnerMenu>
+          )
+        }
+      >
+        <DetailFacts
+          certification={show.certification}
+          chips={chips}
+          facts={facts}
+          rating={show.rating}
+          note={incomplete ? `You have ${show.ownedEpisodeCount} of ${show.totalEpisodeCount} episodes` : null}
+        />
 
-              {show.overview && (
-                <p className="max-w-2xl text-sm leading-relaxed text-text-muted">
-                  {show.overview}
-                </p>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="mx-auto flex w-full max-w-5xl flex-col gap-10 px-4 pb-16 pt-8 sm:px-6">
-        {show.seasons.length === 0 ? (
-          <p className="py-16 text-center text-sm text-text-faint">
-            No season data for this show yet.
-          </p>
-        ) : (
-          show.seasons.map((season) => (
-            <SeasonSection
-              key={season.id}
-              season={season}
-              showId={show.id}
-              playable={playable}
-              showTitle={show.title}
-              hoistedSpec={spec}
-              defaultCollapsed={season.seasonNumber !== openSeason}
-            />
-          ))
-        )}
-
-        <ShowFilmsSection films={linkedFilms} />
-        {owner && (
-          <ShowFilmLinksEditor
-            showId={show.id}
-            linked={linkedFilms.map((f) => ({ id: f.id, title: f.title, year: f.year }))}
-            allFilms={linkableFilms}
+        <div className="w-full max-w-md">
+          <FilmPlayActions
+            kind="show"
+            filmId={show.id}
+            title={show.title}
+            copies={
+              next
+                ? [
+                    {
+                      versionId: next.episodeFileId,
+                      label: next.label,
+                      shortLabel: next.label,
+                      source: "jellyfin",
+                      resumeSecs: null,
+                    },
+                  ]
+                : []
+            }
+            defaultCopyId={next?.episodeFileId ?? null}
+            playLabel={
+              next ? `${next.resume ? "Resume" : "Play"} ${episodeCode(next.seasonNumber, next.episodeNumber)}` : undefined
+            }
+            playTitle={next ? `${show.title} ${next.label}` : undefined}
+            basePath={TV_VIDEO}
+            playDisabledReason={!next && show.ownedEpisodeCount > 0 ? "Not ready to play yet" : undefined}
+            favourite={userState.favourite}
+            watched={userState.watched}
           />
+        </div>
+
+        {show.overview && (
+          <div className="w-full">
+            <Synopsis text={show.overview} lines={3} />
+          </div>
         )}
+      </DetailHero>
+
+      <div className="mx-auto flex w-full max-w-5xl flex-col gap-8 pb-16 pt-8">
+        {seasons.length > 0 && (
+          <div className="px-4 sm:px-6">
+            <ShowEpisodes seasons={seasons} initialSeason={initialSeason} />
+          </div>
+        )}
+        <MoreLikeThis heading="Films" items={linkedFilms} />
+        <MoreLikeThis kind="show" items={similar} />
       </div>
     </div>
   );
+}
+
+/** One row's worth of an episode, worked out here because which file can
+ *  play (isFilePlayable) is the server's to say. */
+function episodeRow(
+  ep: EpisodeView,
+  playTitleBase: string,
+  playable: boolean,
+  progress: Map<number, EpisodeFileProgress>,
+): EpisodeRowItem {
+  const playTitle = `${playTitleBase}${ep.name ? ` · ${ep.name}` : ""}`;
+  // The still stands for one file, so it plays the one that can be played —
+  // for the ordinary single-file episode that's simply the file.
+  const playableFiles = playable ? ep.files.filter((f) => isFilePlayable(f)) : [];
+  const primary = playableFiles[0] ?? null;
+
+  // Watched once any cut of it is; partway through the one the still plays
+  // (or, failing that, any other), past the same floor the player resumes
+  // from, so the bar never promises a resume the player would ignore.
+  const rows = ep.files.map((f) => progress.get(f.id)).filter((p): p is EpisodeFileProgress => p !== undefined);
+  const watched = rows.some((p) => p.completed);
+  const started =
+    (primary && progress.get(primary.id)) ?? rows.find((p) => !p.completed && p.positionSecs >= WATCH_PROGRESS_MIN_SECS);
+  const length = started?.durationSecs ?? (ep.runtimeMins ? ep.runtimeMins * 60 : null);
+  const partway =
+    !watched && started && !started.completed && started.positionSecs >= WATCH_PROGRESS_MIN_SECS && length
+      ? Math.min(1, started.positionSecs / length)
+      : null;
+
+  return {
+    id: ep.id,
+    episodeNumber: ep.episodeNumber,
+    name: ep.name,
+    overview: ep.overview,
+    stillPath: ep.stillPath,
+    runtimeMins: ep.runtimeMins,
+    runtimeLabel: ep.runtimeMins ? formatRuntimeMins(ep.runtimeMins) : null,
+    play: primary ? { fileId: primary.id, title: playTitle } : null,
+    progress: partway,
+    watched,
+    extras: playableFiles.slice(1).map((f) => ({
+      fileId: f.id,
+      label: copyLabel({ id: f.id, format: f.format, edition: null }),
+    })),
+  };
 }

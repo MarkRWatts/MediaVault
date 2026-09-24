@@ -1,163 +1,161 @@
-import EndsAt from "@/components/EndsAt";
-import FormatBadge from "@/components/FormatBadge";
-import PlayButton from "@/components/PlayButton";
-import SpecLine from "@/components/SpecLine";
-import { fileSpec, specExcept, type Spec } from "@/lib/episode-specs";
-import { formatRuntimeMins, type EpisodeFileView, type EpisodeView } from "@/lib/queries";
-import { isFilePlayable } from "@/lib/playback/engine-flag";
+"use client";
 
-// One episode: a still you press to play, the title, how long it runs and
-// when it would finish, and what it's about. Deliberately not the specs the
-// header above already states — a season ripped from one boxed set says its
-// format and resolution once (SpecLine / episode-specs.ts), and the row is
-// left with only the fields its files disagree about, often none. Not the
-// file size either, which says nothing you'd choose an episode on.
+// One episode on the show page (SHOW_PAGE_PLAN.md "Episode rows"): a still
+// you press to play — an amber bar along its foot when you're partway, a
+// tick once you've watched it — then "1. Children of the Gods", how long it
+// runs and when it would finish, and two lines of what it's about. Tapping
+// the row's text (not the still) opens the rest of the synopsis. Nothing
+// technical: no resolution, codec or disc — the page's chips say what's
+// true of every episode and that's all anyone needs.
 //
 // The play control sits on the still rather than beside the title: it's the
 // largest target in the row, it's where the eye already is, and it leaves
 // the text column to read as text.
+//
+// Everything that needs the server — which file plays, whether it can play
+// here at all (isFilePlayable reads the server's playback flag), how far
+// through you are — arrives worked out, as an EpisodeRowItem.
 
-/** Reserved even with no artwork, so the text columns line up down the list
- *  and a missing still doesn't reflow the row. */
-function Still({
-  stillPath,
-  dimmed,
-  children,
-}: {
+import { useCallback, useState } from "react";
+import { useRouter } from "next/navigation";
+import { Check } from "lucide-react";
+import EndsAt from "@/components/EndsAt";
+import PlayButton from "@/components/PlayButton";
+
+export interface EpisodeRowItem {
+  id: number;
+  episodeNumber: number;
+  name: string | null;
+  overview: string | null;
   stillPath: string | null;
-  dimmed: boolean;
-  children?: React.ReactNode;
-}) {
-  return (
-    <div className="relative aspect-video w-28 shrink-0 overflow-hidden rounded-md border border-border bg-bg-elevated-2 sm:w-40">
-      {stillPath && (
-        <img
-          src={`/api/poster/w300${stillPath}`}
-          alt=""
-          loading="lazy"
-          decoding="async"
-          className={`absolute inset-0 h-full w-full object-cover ${dimmed ? "opacity-45 grayscale" : ""}`}
-        />
-      )}
-      {children}
-    </div>
-  );
+  runtimeMins: number | null;
+  /** "46m", "1h 06m" — formatted on the server with the rest of the app's. */
+  runtimeLabel: string | null;
+  /** The file the still plays, or null when none of them can play here. */
+  play: { fileId: number; title: string } | null;
+  /** How far through (0–1) when partway, for the bar; null otherwise. */
+  progress: number | null;
+  watched: boolean;
+  /** A multi-cut episode's other playable files — theatrical and extended
+   *  rips of the same episode — which the still can't stand for, named in
+   *  plain words ("High Definition (Blu-ray)"). */
+  extras: { fileId: number; label: string }[];
 }
 
-// A multi-cut episode (theatrical + extended rips of the same episode) keeps
-// a line per extra file: the still's play button can only stand for one of
-// them, so the rest need their own, and the size is the one thing that tells
-// two rips of the same episode apart at a glance.
-function ExtraFile({
-  file,
-  playable,
-  playTitle,
-  hoisted,
-}: {
-  file: EpisodeFileView;
-  playable: boolean;
-  playTitle: string;
-  hoisted: Spec | null;
-}) {
-  return (
-    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
-      <SpecLine spec={specExcept(fileSpec(file), hoisted)} />
-      <span className="font-mono text-[11px] text-text-faint">{file.sizeLabel}</span>
-      {playable && isFilePlayable(file) && (
-        <PlayButton versionId={file.id} title={playTitle} source="jellyfin" basePath="/api/tv-video" />
-      )}
-    </div>
-  );
-}
+const TV_VIDEO = "/api/tv-video";
 
-export default function EpisodeRow({
-  episode,
-  playable,
-  showTitle,
-  seasonNumber,
-  hoisted = null,
-}: {
-  episode: EpisodeView;
-  /** playbackAvailable() — playback is possible at all right now, so
-   *  individually playable files get a Play button. */
-  playable: boolean;
-  showTitle: string;
-  seasonNumber: number;
-  /** The fields a header above already states, which the row therefore
-   *  leaves out. Whatever isn't in here the files disagree about, and the
-   *  row is the only place they can be told apart. */
-  hoisted?: Spec | null;
-}) {
-  const { episodeNumber, name, overview, stillPath, runtimeMins, owned, files } = episode;
-  const playTitle = `${showTitle} S${padded(seasonNumber)}E${padded(episodeNumber)}${name ? ` · ${name}` : ""}`;
-
-  // The still stands for one file, so it plays the one that can be played —
-  // for the ordinary single-file episode that's simply the file.
-  const primary = files.find((f) => isFilePlayable(f)) ?? null;
-  const canPlay = playable && primary !== null;
-  const extras = files.filter((f) => f !== primary);
+export default function EpisodeRow({ episode }: { episode: EpisodeRowItem }) {
+  const { episodeNumber, name, overview, stillPath, runtimeMins, runtimeLabel, play, progress, watched, extras } =
+    episode;
+  const router = useRouter();
+  const [expanded, setExpanded] = useState(false);
+  // The bar and the tick are the server's to say; re-read them once the
+  // player has reported where it stopped. Stable, so the player's start-up
+  // effect runs once.
+  const refresh = useCallback(() => router.refresh(), [router]);
+  const title = `${episodeNumber}. ${name || `Episode ${episodeNumber}`}`;
 
   return (
-    <li className="flex items-start gap-3 p-3 sm:gap-4">
-      <Still stillPath={stillPath} dimmed={!owned}>
-        {canPlay && (
-          <PlayButton
-            versionId={primary.id}
-            title={playTitle}
-            source="jellyfin"
-            basePath="/api/tv-video"
-            size="overlay"
-            label={`Play ${playTitle}`}
-          />
-        )}
-      </Still>
-
-      <div className="flex min-w-0 flex-1 flex-col gap-1 pt-0.5">
-        <span className={`text-sm ${owned ? "text-text" : "text-text-muted"}`}>
-          {name || `Episode ${episodeNumber}`}
-        </span>
-
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[11px] text-text-faint">
-          {runtimeMins !== null && <span>{formatRuntimeMins(runtimeMins)}</span>}
-          {canPlay && runtimeMins !== null && (
-            <>
-              <span aria-hidden className="text-text-faint/50">·</span>
-              <EndsAt mins={runtimeMins} />
-            </>
+    <li className="flex flex-col gap-2 py-3">
+      <div className="flex items-start gap-3 sm:gap-4">
+        {/* Reserved even with no artwork, so the text columns line up down
+            the list and a missing still doesn't reflow the row. */}
+        <div className="relative aspect-video w-32 shrink-0 overflow-hidden rounded-md border border-border bg-bg-elevated-2 sm:w-44">
+          {stillPath && (
+            <img
+              src={`/api/poster/w300${stillPath}`}
+              alt=""
+              loading="lazy"
+              decoding="async"
+              className="absolute inset-0 h-full w-full object-cover"
+            />
           )}
-          {owned ? (
-            files.length === 0 ? (
-              <span>No file info</span>
-            ) : (
-              primary !== null && <SpecLine spec={specExcept(fileSpec(primary), hoisted)} />
-            )
-          ) : (
-            <FormatBadge kind="MISSING" />
+          {play && (
+            <PlayButton
+              versionId={play.fileId}
+              title={play.title}
+              source="jellyfin"
+              basePath={TV_VIDEO}
+              size="overlay"
+              label={`Play ${play.title}`}
+              onClosed={refresh}
+            />
+          )}
+          {progress !== null && (
+            <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-1 bg-black/50">
+              <div className="h-full bg-accent" style={{ width: `${Math.round(progress * 100)}%` }} />
+            </div>
+          )}
+          {watched && (
+            <span
+              title="Watched"
+              className="pointer-events-none absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-accent text-bg shadow shadow-black/40"
+            >
+              <Check aria-hidden className="h-3.5 w-3.5" strokeWidth={3} />
+              <span className="sr-only">Watched</span>
+            </span>
           )}
         </div>
 
-        {overview && (
-          <p className="line-clamp-2 text-xs leading-relaxed text-text-muted">{overview}</p>
-        )}
-
-        {extras.length > 0 && (
-          <div className="mt-0.5 flex flex-col gap-1">
-            {extras.map((f) => (
-              <ExtraFile
-                key={f.id}
-                file={f}
-                playable={playable}
-                playTitle={playTitle}
-                hoisted={hoisted}
-              />
-            ))}
-          </div>
-        )}
+        <button
+          type="button"
+          aria-expanded={overview ? expanded : undefined}
+          disabled={!overview}
+          onClick={() => setExpanded((e) => !e)}
+          className="flex min-w-0 flex-1 cursor-pointer flex-col items-start gap-1 pt-0.5 text-left disabled:cursor-default"
+        >
+          <span className="text-sm font-medium text-text">{title}</span>
+          {(runtimeLabel || (play && runtimeMins !== null)) && (
+            <span className="flex flex-wrap items-center gap-x-1.5 text-xs text-text-faint">
+              {runtimeLabel && <span>{runtimeLabel}</span>}
+              {play && runtimeMins !== null && (
+                <>
+                  <span aria-hidden>·</span>
+                  <EndsAt mins={runtimeMins} />
+                </>
+              )}
+            </span>
+          )}
+          {overview && (
+            <span
+              className={`hidden text-xs leading-relaxed text-text-muted sm:block ${expanded ? "" : "line-clamp-2"}`}
+            >
+              {overview}
+            </span>
+          )}
+        </button>
       </div>
+
+      {/* On a phone the synopsis runs under the still and the title, the
+          row's full width, as Netflix's does — beside a 128px still it
+          would be a column a few words wide. */}
+      {overview && (
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((e) => !e)}
+          className={`text-left text-xs leading-relaxed text-text-muted sm:hidden ${expanded ? "" : "line-clamp-2"}`}
+        >
+          {overview}
+        </button>
+      )}
+
+      {extras.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 sm:pl-48">
+          <span className="text-xs text-text-faint">Also:</span>
+          {extras.map((f) => (
+            <PlayButton
+              key={f.fileId}
+              versionId={f.fileId}
+              title={play?.title ?? title}
+              source="jellyfin"
+              basePath={TV_VIDEO}
+              label={f.label}
+              onClosed={refresh}
+            />
+          ))}
+        </div>
+      )}
     </li>
   );
-}
-
-function padded(n: number): string {
-  return n.toString().padStart(2, "0");
 }

@@ -7,8 +7,9 @@
 // from md up. Keeps the sprocket rule as its bottom edge, as the old header
 // did.
 //
-// Not drawn at all on a film page, which has its own floating Back over
-// the artwork instead of a logo bar (FILM_PAGE_PLAN.md "Top"). Decided off
+// Not drawn at all on a film or show page, which has its own floating Back
+// over the artwork instead of a logo bar (FILM_PAGE_PLAN.md and
+// SHOW_PAGE_PLAN.md "Top"). Decided off
 // usePathname rather than in AppShell because the root layout doesn't
 // re-render on a client-side navigation.
 
@@ -22,7 +23,8 @@ import { isNavItemActive, navItemsFor, type NavFlags, type NavItem } from "./nav
 
 /** Pages that draw their own top controls instead of the logo bar. */
 export function hidesTopNav(pathname: string): boolean {
-  return pathname.startsWith("/film/");
+  // A show's own page, not the Shows grid at /shows.
+  return pathname.startsWith("/film/") || /^\/shows\/[^/]+/.test(pathname);
 }
 
 const menuRow =
