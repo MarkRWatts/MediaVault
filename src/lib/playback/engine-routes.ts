@@ -19,9 +19,11 @@ import { uhdRefusal } from "@/lib/uhd-gate";
 import { serveFile } from "@/lib/serve-file";
 import { parseVariant, type Variant } from "@/lib/video-playback";
 import {
+  getInitSegment,
   getMainPlaylist,
   getMasterPlaylist,
   getSegment,
+  FMP4_CONTENT_TYPE,
   MAIN_PLAYLIST_NAME,
   PLAYLIST_CONTENT_TYPE,
   SEGMENT_CONTENT_TYPE,
@@ -30,7 +32,8 @@ import {
   stopSession,
 } from "./engine";
 import { PlaybackError, resolveSource, type PlaybackErrorCode, type ResolvedSource } from "./source";
-import { parseSegmentFileName, parseStreamKey, SEGMENT_FILE_RE } from "./stream-key";
+import { INIT_SEGMENT_NAME } from "./fmp4";
+import { parseSegmentUrlName, parseStreamKey, SEGMENT_URL_RE } from "./stream-key";
 import type { MediaKind } from "./types";
 
 const PLAY_SESSION_ID_RE = /^[0-9a-f]{32}$/i;
@@ -119,7 +122,9 @@ export function parseEnginePath(subpath: string): EnginePathMatch | null {
   const m = ENGINE_PATH_RE.exec(subpath);
   if (!m) return null;
   const [, key, file] = m;
-  if (file !== "master.m3u8" && file !== MAIN_PLAYLIST_NAME && !SEGMENT_FILE_RE.test(file)) return null;
+  if (file !== "master.m3u8" && file !== MAIN_PLAYLIST_NAME && file !== INIT_SEGMENT_NAME && !SEGMENT_URL_RE.test(file)) {
+    return null;
+  }
   return { key, file };
 }
 
@@ -159,12 +164,19 @@ export function checkEngineAccess(input: {
  * -- so stamping them is this route layer's job, the same division
  * jellyfin-playback.ts's registry draws (Jellyfin's own playlists already
  * arrive carrying a PlaySessionId). Only lines that are exactly a segment
- * file name are touched; the #EXT-X-* tags and EXTINF lines are untouched.
+ * file name are touched, plus an fMP4 playlist's EXT-X-MAP URI (init.mp4
+ * is fetched like a segment); the other #EXT-X-* tags and EXTINF lines are
+ * untouched.
  */
 export function addSessionQuery(playlist: string, playSessionId: string): string {
+  const initMap = `#EXT-X-MAP:URI="${INIT_SEGMENT_NAME}"`;
   return playlist
     .split("\n")
-    .map((line) => (SEGMENT_FILE_RE.test(line) ? `${line}?ps=${playSessionId}` : line))
+    .map((line) => {
+      if (SEGMENT_URL_RE.test(line)) return `${line}?ps=${playSessionId}`;
+      if (line === initMap) return `#EXT-X-MAP:URI="${INIT_SEGMENT_NAME}?ps=${playSessionId}"`;
+      return line;
+    })
     .join("\n");
 }
 
@@ -281,9 +293,15 @@ export async function engineSession(
     }
 
     const session = await startSession({ kind, id, variant, audioStreamIndex, deviceId, replaces });
+    // fMP4 (copied HEVC) goes straight to the media playlist. Through a
+    // master, AVPlayer first judges the variant against the display, and a
+    // Mac turned 4K HDR HEVC away there (CoreMedia -12927) while playing
+    // the very same media playlist opened directly -- which also lets it
+    // read the HDR format from the video itself, as it does from a file.
+    const playlist = session.container === "fmp4" ? MAIN_PLAYLIST_NAME : "master.m3u8";
     return NextResponse.json({
       mode: "hls",
-      playlistUrl: `${basePath}/${id}/jf/e/${session.key}/master.m3u8?ps=${session.playSessionId}`,
+      playlistUrl: `${basePath}/${id}/jf/e/${session.key}/${playlist}?ps=${session.playSessionId}`,
       playSessionId: session.playSessionId,
       durationSecs: session.durationSecs,
       transcodeReasons: session.transcodeReasons,
@@ -353,12 +371,17 @@ export async function engineProxy(
         headers: { "Content-Type": PLAYLIST_CONTENT_TYPE, "Cache-Control": "no-store" },
       });
     }
-    // Anything else that reached here matched SEGMENT_FILE_RE in
+    if (file === INIT_SEGMENT_NAME) {
+      const absPath = await getInitSegment(key, playSessionId, { signal: req.signal });
+      return serveFile(req, absPath, FMP4_CONTENT_TYPE, "private, max-age=31536000, immutable");
+    }
+    // Anything else that reached here matched SEGMENT_URL_RE in
     // parseEnginePath, so this can only fail if the two ever disagree.
-    const index = parseSegmentFileName(file);
+    const index = parseSegmentUrlName(file);
     if (index === null) return new NextResponse("not found", { status: 404 });
     const absPath = await getSegment(key, index, playSessionId, { signal: req.signal });
-    return serveFile(req, absPath, SEGMENT_CONTENT_TYPE, "private, max-age=31536000, immutable");
+    const contentType = file.endsWith(".m4s") ? FMP4_CONTENT_TYPE : SEGMENT_CONTENT_TYPE;
+    return serveFile(req, absPath, contentType, "private, max-age=31536000, immutable");
   } catch (err) {
     logEngineError(`${routeKind} ${routeId} ${key}/${file}`, err);
     const { status, message, retryAfterSecs } = errorPayload(err);

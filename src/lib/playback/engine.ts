@@ -41,9 +41,11 @@ import {
   TRIM_PLAYHEAD_WINDOW_MS,
   TRIM_RECENT_REQUEST_MS,
   type LiveHead,
+  type SegmentContainer,
   type StreamCacheEntry,
   type TrimCandidateStream,
 } from "./decisions";
+import { INIT_SEGMENT_NAME } from "./fmp4";
 import { buildHeadArgs } from "./head-args";
 import { startHead, type Head, type HeadStopReason } from "./head";
 import { resolveHwAccel } from "./hwaccel";
@@ -68,6 +70,8 @@ import type { MediaKind, SegmentEntry } from "./types";
 /** MPEG-TS, always (V4_PLAN.md, "Heads"). Exported so the route doesn't
  *  have to know the container to set a Content-Type. */
 export const SEGMENT_CONTENT_TYPE = "video/mp2t";
+/** An fMP4 stream's init.mp4 and .m4s media segments. */
+export const FMP4_CONTENT_TYPE = "video/mp4";
 export const PLAYLIST_CONTENT_TYPE = "application/vnd.apple.mpegurl";
 
 /** The media playlist's name, as the master playlist points at it. */
@@ -468,6 +472,7 @@ async function spawnHeadAt(rt: StreamRuntime, ctx: StreamContext, index: number,
     sessionId,
     startIndex: index,
     tier: ctx.tier,
+    container: ctx.container,
     hwaccel,
     segments: ctx.segments,
     fps: source.facts.fps,
@@ -491,6 +496,7 @@ async function spawnHeadAt(rt: StreamRuntime, ctx: StreamContext, index: number,
         hwaccel,
         source: source.facts,
         keyframes: ctx.keyframes,
+        container: ctx.container,
       }),
     onSegment: async (i) => {
       await notePresent(ctx, i);
@@ -537,6 +543,8 @@ export interface StartSessionInput {
 export interface StartedSession {
   playSessionId: string;
   key: string;
+  /** What its segments are (decisions.ts's segmentContainerFor). */
+  container: SegmentContainer;
   durationSecs: number;
   transcodeReasons: string[];
   audioTracks: PlaybackAudioTrack[];
@@ -636,6 +644,7 @@ export async function startSession(input: StartSessionInput): Promise<StartedSes
   return {
     playSessionId,
     key,
+    container: ctx.container,
     durationSecs: source.durationSecs,
     transcodeReasons: transcodeReasonsFor(source.plan, input.variant),
     audioTracks: source.audioTracks,
@@ -768,7 +777,7 @@ export async function getMasterPlaylist(
  *  request whether or not a single segment exists yet. */
 export async function getMainPlaylist(key: string, playSessionId?: string): Promise<string> {
   const ctx = await contextFor(key, playSessionId);
-  return renderMainPlaylist(ctx.segments);
+  return renderMainPlaylist(ctx.segments, ctx.container);
 }
 
 /** The segment table itself, for a caller that wants the numbers rather
@@ -780,6 +789,24 @@ export async function getSegmentTable(key: string): Promise<SegmentEntry[]> {
 // ---------------------------------------------------------------------------
 // Segments
 // ---------------------------------------------------------------------------
+
+/**
+ * The absolute path of an fMP4 stream's `init.mp4` (the playlist's
+ * EXT-X-MAP), producing it if necessary. Every promoted segment leaves one
+ * behind if there isn't one yet (fmp4.ts), so a stream with nothing on disk
+ * is given its first segment: a remux of six seconds, well under a second.
+ * A player resuming mid-film then asks for its own segment, and the head
+ * that made this one is replaced by one at the viewer (decideSegment).
+ */
+export async function getInitSegment(key: string, playSessionId: string, options: GetSegmentOptions = {}): Promise<string> {
+  const ctx = await contextFor(key, playSessionId);
+  if (ctx.container !== "fmp4") throw new PlaybackError("not-found", `${key} has MPEG-TS segments, no init segment`);
+  const initPath = path.join(ctx.dir, INIT_SEGMENT_NAME);
+  const exists = () => fs.access(initPath).then(() => true, () => false);
+  if (!(await exists())) await getSegment(key, 0, playSessionId, options);
+  if (!(await exists())) throw new PlaybackError("timeout", `no init segment for ${key}`);
+  return initPath;
+}
 
 export interface GetSegmentOptions {
   signal?: AbortSignal;

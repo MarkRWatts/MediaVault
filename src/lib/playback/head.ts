@@ -40,7 +40,8 @@ import { ffmpegPath } from "@/lib/ffmpeg-bin";
 import { PlaybackError } from "./source";
 import { parseSegmentFileName, segmentFileName } from "./stream-key";
 import { PART_DIR_PREFIX } from "./stream";
-import { checkSegmentDuration, type StreamTier } from "./decisions";
+import { checkSegmentDuration, type SegmentContainer, type StreamTier } from "./decisions";
+import { promoteFragmentedSegment } from "./fmp4";
 import { lowerPriority } from "./priority";
 import type { HwAccel, SegmentEntry } from "./types";
 
@@ -108,6 +109,9 @@ export interface HeadOptions {
   sessionId: string;
   startIndex: number;
   tier: StreamTier;
+  /** fMP4 segments are split on promotion (fmp4.ts); MPEG-TS ones are
+   *  renamed in as they are. */
+  container: SegmentContainer;
   hwaccel: HwAccel;
   /** The immutable table every produced segment is checked against. */
   segments: SegmentEntry[];
@@ -269,7 +273,8 @@ export class Head {
     }
 
     try {
-      await fs.rename(staged, target);
+      if (this.opts.container === "fmp4") await promoteFragmentedSegment(staged, target, this.opts.segments[index].start);
+      else await fs.rename(staged, target);
     } catch (err) {
       // A vanished staging file or a full disk. Either way this segment is
       // not available; leave it for a later head rather than pretending.
