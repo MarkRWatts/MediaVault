@@ -239,6 +239,7 @@ export function sourceFactsFromProbe(result: ProbeResult): SourceFacts {
     interlaced: fieldOrder !== null && !NON_INTERLACED_FIELD_ORDERS.has(fieldOrder.toLowerCase()),
     width: result.width ?? 0,
     height: result.height ?? 0,
+    colorTransfer: result.colorTransfer,
   };
 }
 

@@ -43,11 +43,10 @@ export async function jfSession(req: Request, idParam: string, resolveItem: Reso
     if (!viewer) return NextResponse.json({ error: "not signed in" }, { status: 401 });
     const blocked = await ageGateForUser(viewer.userId, kind, Number(idParam));
     if (blocked) return blocked;
-    // A UHD Version may only be handed over as the file itself: the session
-    // answers "direct" for a client that declared HEVC, and 403 rather than
-    // open an engine stream it can't finish (src/lib/uhd-gate.ts).
-    const directOnly = await isUhdVersion(kind, Number(idParam));
-    return engineSession(req, idParam, kind, basePath, viewer.deviceId, { directOnly });
+    // A UHD Version streams only with its video copied, to a client that
+    // declared the codec -- never converted (canStreamUhd, src/lib/uhd-gate.ts).
+    const uhd = await isUhdVersion(kind, Number(idParam));
+    return engineSession(req, idParam, kind, basePath, viewer.deviceId, { uhd });
   }
 
   if (!jellyfinConfigured()) return NextResponse.json({ error: "Jellyfin is not configured" }, { status: 503 });
@@ -136,9 +135,9 @@ export async function jfProxy(req: Request, idParam: string, path: string[], res
     // must not outlive the viewer's permission to watch it.
     const blocked = await ageGateForUser(viewer.userId, kind, id);
     if (blocked) return blocked;
-    const uhd = await uhdGate(kind, id);
-    if (uhd) return uhd;
-    return engineProxy(req, path.join("/"), kind, id, viewer.deviceId);
+    // A UHD Version's own copied stream only (canStreamUhd).
+    const uhd = await isUhdVersion(kind, id);
+    return engineProxy(req, path.join("/"), kind, id, viewer.deviceId, { uhd });
   }
 
   if (!jellyfinConfigured()) return NextResponse.json({ error: "Jellyfin is not configured" }, { status: 503 });

@@ -28,11 +28,36 @@ export function hlsCodecs(videoCodec: string, audioCodec: string | null): string
   return `${v},${a}`;
 }
 
+/**
+ * The CODECS video entry for copied HEVC, from what the source actually is
+ * rather than MSE_VIDEO_CODEC's one-size "hvc1.1.6.L120.B0" (Main, level
+ * 4): a 10-bit source is Main 10 (profile 2, compatibility flag 4), and a
+ * picture taller than 1080 lines needs level 5.1 (L153). A player sizes up
+ * its decoder, and on Apple TV its display mode, from this.
+ */
+export function hevcCodecString(facts: { pixFmt: string | null; height: number }): string {
+  const tenBit = (facts.pixFmt ?? "").includes("10");
+  const level = facts.height > 1080 ? "L153" : "L123";
+  return tenBit ? `hvc1.2.4.${level}.B0` : `hvc1.1.6.${level}.B0`;
+}
+
+/** The master playlist's VIDEO-RANGE for a source's transfer function:
+ *  "PQ" for HDR10/Dolby Vision's SMPTE ST 2084, "HLG" for ARIB STD-B67,
+ *  nothing (SDR, the attribute's default) otherwise. Tells an Apple TV set
+ *  to Match Content to switch the display into HDR before playing. */
+export function videoRangeFor(colorTransfer: string | null | undefined): "PQ" | "HLG" | undefined {
+  if (colorTransfer === "smpte2084") return "PQ";
+  if (colorTransfer === "arib-std-b67") return "HLG";
+  return undefined;
+}
+
 export interface MasterPlaylistInput {
   bandwidth: number;
   resolution?: { width: number; height: number };
   /** Already-built CODECS value -- see hlsCodecs above. */
   codecs: string;
+  /** See videoRangeFor. */
+  videoRange?: "PQ" | "HLG";
   mainUri: string;
 }
 
@@ -49,6 +74,7 @@ export function renderMasterPlaylist(input: MasterPlaylistInput): string {
     attrs.push(`RESOLUTION=${width}x${height}`);
   }
   attrs.push(`CODECS="${input.codecs}"`);
+  if (input.videoRange) attrs.push(`VIDEO-RANGE=${input.videoRange}`);
 
   return [
     "#EXTM3U",

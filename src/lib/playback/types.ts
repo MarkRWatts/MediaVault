@@ -62,4 +62,8 @@ export interface SourceFacts {
   interlaced: boolean;
   width: number;
   height: number;
+  /** Video `color_transfer` ("smpte2084" is HDR10's PQ, "arib-std-b67" is
+   *  HLG), for the master playlist's VIDEO-RANGE. Optional so a fixture
+   *  that predates it still types. */
+  colorTransfer?: string | null;
 }

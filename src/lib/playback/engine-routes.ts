@@ -17,7 +17,7 @@
 import { NextResponse } from "next/server";
 import { uhdRefusal } from "@/lib/uhd-gate";
 import { serveFile } from "@/lib/serve-file";
-import { parseVariant } from "@/lib/video-playback";
+import { parseVariant, type Variant } from "@/lib/video-playback";
 import {
   getMainPlaylist,
   getMasterPlaylist,
@@ -81,6 +81,25 @@ export function canDirectPlay(
   if (source.fileAudioCodecs.includes("truehd")) return false;
   if (requestedAudioStreamIndex !== null && requestedAudioStreamIndex !== plan.audioStreamIndex) return false;
   const family = DIRECT_VIDEO_FAMILIES[plan.outputVideoCodec ?? ""];
+  return family !== undefined && clientVideoFamilies.has(family);
+}
+
+/** Whether a UHD Version can be streamed as HLS for this client: the
+ *  Original rendition, with the file's video copied rather than converted,
+ *  in a codec family the client declared. The engine only repackages it
+ *  into segments -- a remux, far faster than realtime -- which is what a
+ *  UHD file allows (src/lib/uhd-gate.ts). The Apple TV plays UHD this way
+ *  rather than as the file itself: its AVPlayer keeps only ~2.5 s of a
+ *  direct-played UHD file loaded, and after the first time that runs dry it
+ *  never asks for another byte (Man of Steel and Maleficent, 24 Sep 2026). */
+export function canStreamUhd(
+  source: Pick<ResolvedSource, "plan">,
+  variant: Variant,
+  clientVideoFamilies: Set<string> | null,
+): boolean {
+  if (variant !== "original" || !clientVideoFamilies) return false;
+  if (source.plan.videoAction !== "copy") return false;
+  const family = DIRECT_VIDEO_FAMILIES[source.plan.outputVideoCodec ?? ""];
   return family !== undefined && clientVideoFamilies.has(family);
 }
 
@@ -215,8 +234,9 @@ export async function engineSession(
   kind: MediaKind,
   basePath: string,
   deviceId: string,
-  /** A UHD Version: direct play or nothing — see src/lib/uhd-gate.ts. */
-  opts: { directOnly?: boolean } = {},
+  /** A UHD Version: HLS with its video copied, or nothing -- see
+   *  canStreamUhd and src/lib/uhd-gate.ts. */
+  opts: { uhd?: boolean } = {},
 ): Promise<NextResponse> {
   const id = Number(idParam);
   if (!Number.isInteger(id) || id <= 0) return NextResponse.json({ error: "not found" }, { status: 404 });
@@ -241,7 +261,10 @@ export async function engineSession(
   try {
     // Direct play only ever replaces the Original rendition: Remote exists to
     // cut the bitrate, which the file itself can't do.
-    if (directFamilies && variant === "original") {
+    if (opts.uhd) {
+      const source = await resolveSource(kind, id, variant, audioStreamIndex);
+      if (!source || !canStreamUhd(source, variant, directFamilies)) return uhdRefusal();
+    } else if (directFamilies && variant === "original") {
       const source = await resolveSource(kind, id, variant, audioStreamIndex);
       if (source && canDirectPlay(source, directFamilies, audioStreamIndex)) {
         return NextResponse.json({
@@ -256,8 +279,6 @@ export async function engineSession(
         });
       }
     }
-
-    if (opts.directOnly) return uhdRefusal();
 
     const session = await startSession({ kind, id, variant, audioStreamIndex, deviceId, replaces });
     return NextResponse.json({
@@ -303,10 +324,14 @@ export async function engineProxy(
   routeKind: MediaKind,
   routeId: number,
   deviceId: string,
+  /** A UHD Version: only its Original rendition's stream, the one
+   *  engineSession opens for it (canStreamUhd). */
+  opts: { uhd?: boolean } = {},
 ): Promise<Response> {
   const parsed = parseEnginePath(subpath);
   if (!parsed) return new NextResponse("not found", { status: 404 });
   const { key, file } = parsed;
+  if (opts.uhd && parseStreamKey(key)?.variant !== "original") return uhdRefusal();
 
   const playSessionId = new URL(req.url).searchParams.get("ps") ?? "";
   const denied = checkEngineAccess({ key, routeKind, routeId, playSessionId, deviceId });
