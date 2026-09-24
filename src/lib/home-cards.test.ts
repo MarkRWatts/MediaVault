@@ -59,8 +59,8 @@ describe("labels", () => {
   });
 
   it("names an episode by series and number, then its name", () => {
-    expect(episodeLine(episode)).toBe("Series 2, Episode 4 · Everybody Hates Hugo");
-    expect(episodeLine({ ...episode, name: "episode 4" })).toBe("Series 2, Episode 4");
+    expect(episodeLine(episode)).toBe("Season 2, Episode 4 · Everybody Hates Hugo");
+    expect(episodeLine({ ...episode, name: "episode 4" })).toBe("Season 2, Episode 4");
   });
 
   it("summarises a collection", () => {
@@ -100,7 +100,7 @@ describe("homeCard", () => {
       title: "Lost",
       backdropPath: "/still.jpg",
       logoPath: "/sl.png",
-      badges: ["S2 E4"],
+      badges: ["Season 2, Episode 4"],
       progress: 0.25,
     });
   });

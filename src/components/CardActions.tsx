@@ -1,7 +1,7 @@
 "use client";
 
 // The favourite / reset-viewed overlay in a film card's top-right corner.
-// Same server actions as the film page's FilmActions; kept outside the
+// Same server actions as the film page's FilmPlayActions; kept outside the
 // card's Link so a click here never navigates. The heart is always shown
 // (pink HeartMinus once favourited, so favourites read at a glance); the
 // eye appears only while there is a watch record to clear.
