@@ -37,14 +37,23 @@ export function seasonsLabel(seasonNumbers: number[]): string | null {
   return n === 1 ? "1 season" : `${n} seasons`;
 }
 
-/** "S2 E8", as the Play button says it. */
+// Seasons and episodes in words, as every app says them (Mark, 24 Sep
+// 2026): "Season 2, Episode 8", not "S2 E8" or "S02E08"; season 0 is
+// "Specials" / "Special 3". The apps' twin is MediaVaultKit's EpisodeWording.
+
+/** "Season 2, Episode 8", or "Special 3". */
 export function episodeCode(seasonNumber: number, episodeNumber: number): string {
-  return `S${seasonNumber} E${episodeNumber}`;
+  return seasonNumber === 0 ? `Special ${episodeNumber}` : `Season ${seasonNumber}, Episode ${episodeNumber}`;
 }
 
-/** What the season menu calls a season: "Series 2", or "Specials". */
+/** What the season menu calls a season: "Season 2", or "Specials". */
 export function seasonLabel(seasonNumber: number): string {
-  return seasonNumber === 0 ? "Specials" : `Series ${seasonNumber}`;
+  return seasonNumber === 0 ? "Specials" : `Season ${seasonNumber}`;
+}
+
+/** The Play button: "Resume – Season 2, Episode 8", "Play – Special 3". */
+export function playLabel(seasonNumber: number, episodeNumber: number, resuming: boolean): string {
+  return `${resuming ? "Resume" : "Play"} – ${episodeCode(seasonNumber, episodeNumber)}`;
 }
 
 export interface GenreTagged {

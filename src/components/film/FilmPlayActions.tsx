@@ -10,7 +10,7 @@
 //
 // The show page uses it too (SHOW_PAGE_PLAN.md "Play and actions", kind
 // "show"): its one "copy" is the next episode's file, the button names the
-// episode ("Resume S2 E8", "Play S2 E9") and the player finds the position
+// episode ("Resume – Season 2, Episode 8") and the player finds the position
 // itself; Favourite and Watched act on the whole show.
 
 import { useCallback, useEffect, useState, useTransition } from "react";
@@ -62,7 +62,7 @@ export default function FilmPlayActions({
   favourite: boolean;
   watched: boolean;
   kind?: "film" | "show";
-  /** In place of "Play" / "Resume from 37:43" — the show page's "Resume S2 E8". */
+  /** In place of "Play" / "Resume from 37:43" — the show page's "Resume – Season 2, Episode 8". */
   playLabel?: string;
   /** The player's title, when it isn't `title` ("Firefly S01E02 · The Train Job"). */
   playTitle?: string;

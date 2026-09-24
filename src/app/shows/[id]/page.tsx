@@ -3,7 +3,7 @@
 // (DetailHero): floating Back over the backdrop with the TMDB title logo in
 // its fade; the certificate and the chips every episode earns, then a quiet
 // line of years · seasons · genres · rating; one amber Play naming the
-// episode (Resume S2 E8, Play S2 E9) with Favourite · Watched under it;
+// episode (Resume – Season 2, Episode 8) with Favourite · Watched under it;
 // three lines of synopsis; the episodes, a season at a time under a
 // `Series 1 ⌄` menu; then Films and More like this. No poster, no logo bar
 // (top-nav.tsx drops it here too) and nothing technical — no disc,
@@ -33,7 +33,7 @@ import {
 import { sharedBadges } from "@/lib/video-badges";
 import { copyLabel } from "@/lib/copy-quality";
 import { WATCH_PROGRESS_MIN_SECS } from "@/lib/constants";
-import { airYears, episodeCode, seasonLabel, seasonsLabel, similarShows } from "@/lib/show-page";
+import { airYears, episodeCode, playLabel, seasonLabel, seasonsLabel, similarShows } from "@/lib/show-page";
 
 const TV_VIDEO = "/api/tv-video";
 
@@ -69,7 +69,6 @@ export default async function ShowPage({
   const linkableFilms = owner ? await getLinkableFilms(ageLimit) : [];
 
   const progress = new Map(progressRows.map((p) => [p.episodeFileId, p]));
-  const pad = (n: number) => String(n).padStart(2, "0");
 
   // The episodes you have, a season at a time; seasons with none are left
   // out of the menu altogether.
@@ -80,7 +79,7 @@ export default async function ShowPage({
       episodes: season.episodes
         .filter((ep) => ep.owned)
         .map((ep) =>
-          episodeRow(ep, `${show.title} S${pad(season.seasonNumber)}E${pad(ep.episodeNumber)}`, playable, progress),
+          episodeRow(ep, `${show.title} · ${episodeCode(season.seasonNumber, ep.episodeNumber)}`, playable, progress),
         ),
     }))
     .filter((s) => s.episodes.length > 0);
@@ -155,7 +154,7 @@ export default async function ShowPage({
             }
             defaultCopyId={next?.episodeFileId ?? null}
             playLabel={
-              next ? `${next.resume ? "Resume" : "Play"} ${episodeCode(next.seasonNumber, next.episodeNumber)}` : undefined
+              next ? playLabel(next.seasonNumber, next.episodeNumber, next.resume) : undefined
             }
             playTitle={next ? `${show.title} ${next.label}` : undefined}
             basePath={TV_VIDEO}

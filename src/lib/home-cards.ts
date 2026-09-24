@@ -8,6 +8,7 @@
 // Films, episodes and collections open wide (the TV's three kinds); shows
 // and albums, which the TV's Home doesn't have, stay posters and covers.
 
+import { episodeCode } from "@/lib/show-page";
 import type { HomeData, HomeEpisode, HomeFilm, HomeItem, HomeReason } from "@/lib/home-rows";
 
 export interface HomeCard {
@@ -40,10 +41,10 @@ export function meaningfulEpisodeName(name: string | null, episodeNumber: number
   return trimmed.toLowerCase() === `episode ${episodeNumber}` ? null : trimmed;
 }
 
-/** Under an open episode: "Series 2, Episode 4 · The Constant". */
+/** Under an open episode: "Season 2, Episode 4 · The Constant". */
 export function episodeLine(episode: Pick<HomeEpisode, "seasonNumber" | "episodeNumber" | "name">): string {
   const name = meaningfulEpisodeName(episode.name, episode.episodeNumber);
-  return `Series ${episode.seasonNumber}, Episode ${episode.episodeNumber}${name ? ` · ${name}` : ""}`;
+  return `${episodeCode(episode.seasonNumber, episode.episodeNumber)}${name ? ` · ${name}` : ""}`;
 }
 
 /** "6 films · 1962–2021" (or without the years when none is known). */
@@ -93,7 +94,7 @@ export function homeCard(item: HomeItem, films: HomeData["films"]): HomeCard | n
         posterPath: e.show.posterPath,
         backdropPath: e.showBackdropPath ?? e.stillPath,
         logoPath: e.showLogoPath,
-        badges: [`S${e.seasonNumber} E${e.episodeNumber}`],
+        badges: [episodeCode(e.seasonNumber, e.episodeNumber)],
         progress: episodeProgress(e.positionSecs, e.durationSecs),
       };
     }

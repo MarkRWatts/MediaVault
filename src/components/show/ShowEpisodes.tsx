@@ -12,7 +12,7 @@ import SeasonMenu from "@/components/show/SeasonMenu";
 
 export interface ShowSeasonItem {
   seasonNumber: number;
-  /** "Series 2", "Specials". */
+  /** "Season 2", "Specials". */
   label: string;
   episodes: EpisodeRowItem[];
 }

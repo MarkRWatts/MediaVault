@@ -128,7 +128,7 @@ export default function SeasonMenu({
           id={listId}
           role="listbox"
           tabIndex={-1}
-          aria-label="Series"
+          aria-label="Season"
           aria-activedescendant={`${listId}-${active}`}
           onKeyDown={onListKey}
           // z-30: over the episode rows, under the shell's tab bar (z-40).

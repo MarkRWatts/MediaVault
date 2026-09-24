@@ -37,8 +37,9 @@ describe("seasonsLabel", () => {
 
 describe("episodeCode and seasonLabel", () => {
   it("reads as the Play button and the menu say them", () => {
-    expect(episodeCode(2, 8)).toBe("S2 E8");
-    expect(seasonLabel(1)).toBe("Series 1");
+    expect(episodeCode(2, 8)).toBe("Season 2, Episode 8");
+    expect(episodeCode(0, 3)).toBe("Special 3");
+    expect(seasonLabel(1)).toBe("Season 1");
     expect(seasonLabel(0)).toBe("Specials");
   });
 });
