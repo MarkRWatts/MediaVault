@@ -66,6 +66,11 @@ export interface MasterPlaylistInput {
   videoRange?: "PQ" | "HLG";
   /** Frames per second, for the Apple TV's Match Frame Rate. */
   frameRate?: number;
+  /** The Apple-spec master for an fMP4 stream (HLS authoring spec for
+   *  Apple devices, and clean under Apple's mediastreamvalidator): version
+   *  7, EXT-X-INDEPENDENT-SEGMENTS here rather than in the media playlist,
+   *  AVERAGE-BANDWIDTH and CLOSED-CAPTIONS=NONE. */
+  fmp4?: boolean;
   mainUri: string;
 }
 
@@ -86,6 +91,11 @@ export function renderMasterPlaylist(input: MasterPlaylistInput): string {
     attrs.push(`FRAME-RATE=${input.frameRate.toFixed(3)}`);
   }
   if (input.videoRange) attrs.push(`VIDEO-RANGE=${input.videoRange}`);
+  if (input.fmp4) {
+    attrs.splice(1, 0, `AVERAGE-BANDWIDTH=${Math.round(input.bandwidth)}`);
+    attrs.push("CLOSED-CAPTIONS=NONE");
+    return ["#EXTM3U", "#EXT-X-VERSION:7", "#EXT-X-INDEPENDENT-SEGMENTS", `#EXT-X-STREAM-INF:${attrs.join(",")}`, input.mainUri, ""].join("\n");
+  }
 
   return [
     "#EXTM3U",
@@ -138,8 +148,10 @@ export function renderMainPlaylist(segments: SegmentEntry[], container: SegmentC
     `#EXT-X-TARGETDURATION:${targetDuration}`,
     "#EXT-X-MEDIA-SEQUENCE:0",
     "#EXT-X-PLAYLIST-TYPE:VOD",
-    "#EXT-X-INDEPENDENT-SEGMENTS",
   ];
+  // An fMP4 stream's master declares it instead (the validator: media
+  // playlists SHOULD NOT repeat it).
+  if (container !== "fmp4") lines.push("#EXT-X-INDEPENDENT-SEGMENTS");
   if (container === "fmp4") lines.push(`#EXT-X-MAP:URI="${INIT_SEGMENT_NAME}"`);
   for (const seg of segments) {
     lines.push(`#EXTINF:${seg.duration.toFixed(6)},`);
