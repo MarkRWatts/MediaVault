@@ -99,3 +99,10 @@ ffmpeg -y -loglevel error "${SRC[@]}" "${ENC[@]}" -movflags frag_keyframe+empty_
 ffmpeg -y -loglevel error "${SRC[@]}" "${ENC[@]}" copied-src.mkv
 ffmpeg -y -loglevel error -i copied-src.mkv -map 0 -c copy -movflags +faststart mp4-copied.mp4
 ```
+
+## uhd-hdr10-init.mp4
+
+Not generated: the `init.mp4` the engine wrote for a real 4K HDR10 film
+(Man of Steel, 24 Sep 2026): `ftyp` + `moov` only, 2 KB of track setup
+with no pictures in it. fmp4.test.ts reads its `hvcC` (Main 10, High tier,
+level 5.1: `hvc1.2.4.H153.90`), which no encoder here can produce cheaply.
