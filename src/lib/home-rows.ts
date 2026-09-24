@@ -47,10 +47,21 @@ export interface HomeFilm extends LibraryFilm {
 }
 
 /** A continue-watching episode, with its show's wide artwork for the open
- *  card (the episode's own still is small and often absent). */
+ *  card (the episode's own still is small and often absent), and the same
+ *  details line a film gets: year, certificate, runtime, genres and what
+ *  it's about. */
 export interface HomeEpisode extends ContinueEpisode {
   showBackdropPath: string | null;
   showLogoPath: string | null;
+  /** The episode's air year, else the show's first. */
+  year: number | null;
+  /** The show's — an episode has none of its own. */
+  certification: string | null;
+  runtimeLabel: string;
+  /** The show's. */
+  genres: string[];
+  /** The episode's own, else the show's. */
+  overview: string | null;
 }
 
 export interface HomeCollection extends PlayableCollection {
@@ -210,14 +221,44 @@ export async function getHomeRows(
     runtimeLabel: formatRuntimeMins(extraById.get(f.id)?.runtimeMins),
   }));
 
-  const showArt = new Map(
-    (shows ?? []).map((s) => [s.id, { backdropPath: s.backdropPath, logoPath: s.logoPath }]),
-  );
-  const homeEpisodes: HomeEpisode[] = episodes.map((e) => ({
-    ...e,
-    showBackdropPath: showArt.get(e.show.id)?.backdropPath ?? null,
-    showLogoPath: showArt.get(e.show.id)?.logoPath ?? null,
-  }));
+  // What a continue-watching episode's details line needs that the card
+  // leaves out: the episode's own words and date, the show's certificate,
+  // genres and art.
+  const [episodeExtras, showExtras] = await Promise.all([
+    prisma.episodeFile.findMany({
+      where: { id: { in: episodes.map((e) => e.episodeFileId) } },
+      select: { id: true, episode: { select: { overview: true, airDate: true, runtimeMins: true } } },
+    }),
+    prisma.show.findMany({
+      where: { id: { in: episodes.map((e) => e.show.id) } },
+      select: {
+        id: true,
+        year: true,
+        overview: true,
+        certification: true,
+        genres: true,
+        backdropPath: true,
+        logoPath: true,
+      },
+    }),
+  ]);
+  const episodeById = new Map(episodeExtras.map((f) => [f.id, f.episode]));
+  const showById = new Map(showExtras.map((s) => [s.id, s]));
+  const homeEpisodes: HomeEpisode[] = episodes.map((e) => {
+    const ep = episodeById.get(e.episodeFileId);
+    const show = showById.get(e.show.id);
+    const runtimeMins = ep?.runtimeMins ?? (e.durationSecs ? Math.round(e.durationSecs / 60) : null);
+    return {
+      ...e,
+      showBackdropPath: show?.backdropPath ?? null,
+      showLogoPath: show?.logoPath ?? null,
+      year: ep?.airDate ? ep.airDate.getUTCFullYear() : (show?.year ?? null),
+      certification: show?.certification ?? null,
+      runtimeLabel: formatRuntimeMins(runtimeMins),
+      genres: show?.genres ? show.genres.split(",").map((g) => g.trim()).filter(Boolean) : [],
+      overview: ep?.overview || show?.overview || null,
+    };
+  });
 
   return buildHomeRows({
     films: homeFilms,
