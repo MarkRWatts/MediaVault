@@ -546,6 +546,9 @@ export interface StartedSession {
   /** What its segments are (decisions.ts's segmentContainerFor). */
   container: SegmentContainer;
   durationSecs: number;
+  /** The source's frames per second, when known: what the Apple TV switches
+   *  its display to (Match Frame Rate). */
+  frameRate: number | null;
   transcodeReasons: string[];
   audioTracks: PlaybackAudioTrack[];
 }
@@ -646,6 +649,7 @@ export async function startSession(input: StartSessionInput): Promise<StartedSes
     key,
     container: ctx.container,
     durationSecs: source.durationSecs,
+    frameRate: source.facts.fps,
     transcodeReasons: transcodeReasonsFor(source.plan, input.variant),
     audioTracks: source.audioTracks,
   };
