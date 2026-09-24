@@ -45,7 +45,7 @@ import {
   type StreamCacheEntry,
   type TrimCandidateStream,
 } from "./decisions";
-import { INIT_SEGMENT_NAME } from "./fmp4";
+import { hevcCodecFromInit, INIT_SEGMENT_NAME } from "./fmp4";
 import { buildHeadArgs } from "./head-args";
 import { startHead, type Head, type HeadStopReason } from "./head";
 import { resolveHwAccel } from "./hwaccel";
@@ -764,12 +764,16 @@ export async function getMasterPlaylist(
   const copied = ctx.variant === "original" && ctx.source.plan.videoAction === "copy";
   let codecs = hlsCodecs(videoCodec, audioCodec);
   if (copied && (videoCodec === "hevc" || videoCodec === "h265")) {
-    // Apple's form for the profile and level (hevcCodecString), not the
-    // file's exact hvcC: Man of Steel's is High tier (hvc1.2.4.H153.90), and
-    // the Apple TV refused a master declaring that outright ("Cannot open",
-    // AVFoundation -11868, 24 Sep 2026) -- the decoder plays the stream, it
-    // just won't pick a variant that claims High tier.
-    codecs = [hevcCodecString(ctx.source.facts), ...codecs.split(",").slice(1)].join(",");
+    // fMP4: exactly what the init's hvcC says. Apple's validator rejects a
+    // CODECS tier that differs from the stream's ("Playlist video tier
+    // doesn't match video content tier"): Man of Steel is High tier,
+    // hvc1.2.4.H153.90, and a guess of L153.B0 is an error.
+    let hevc = hevcCodecString(ctx.source.facts);
+    if (ctx.container === "fmp4" && playSessionId) {
+      const init = await getInitSegment(key, playSessionId).then((p) => fs.readFile(p)).catch(() => null);
+      hevc = (init && hevcCodecFromInit(init)) ?? hevc;
+    }
+    codecs = [hevc, ...codecs.split(",").slice(1)].join(",");
   }
   const master = renderMasterPlaylist({
     bandwidth: bandwidthFor(ctx),
@@ -781,6 +785,7 @@ export async function getMasterPlaylist(
     // Sep 2026). It's what switches an Apple TV set to Match Content into
     // HDR -- opened without a master, the same stream played in SDR mode.
     videoRange: copied && ctx.container === "fmp4" ? videoRangeFor(ctx.source.facts.colorTransfer) : undefined,
+    fmp4: ctx.container === "fmp4",
     mainUri,
   });
   // Its one variant line, for when a player refuses it: the Apple TV's
