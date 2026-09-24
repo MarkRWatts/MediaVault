@@ -555,6 +555,52 @@ export async function getFilmDetail(id: number, limit: AgeLimit): Promise<FilmDe
   };
 }
 
+/** A poster in the film page's "More like this" row. */
+export interface SimilarFilm {
+  id: number;
+  title: string;
+  year: number | null;
+  posterPath: string | null;
+}
+
+/** The film page's "More like this" (FILM_PAGE_PLAN.md): the other films in
+ *  its collection first, in release order — the next Bourne before any old
+ *  thriller — then owned films sharing its genres, most genres in common
+ *  first and the better rated of those ahead. Only films this viewer can
+ *  open (owned, same kind, within their age limit), at most `max`. */
+export async function getMoreLikeThis(film: FilmDetail, limit: AgeLimit, max = 12): Promise<SimilarFilm[]> {
+  const fromCollection: SimilarFilm[] = (film.collection?.members ?? [])
+    .filter((m) => m.owned && m.id !== film.id)
+    .map((m) => ({ id: m.id, title: m.title, year: m.year, posterPath: m.posterPath }));
+  if (fromCollection.length >= max || film.genres.length === 0) return fromCollection.slice(0, max);
+
+  // `contains` is a first cut (a "Drama" search also finds "Docudrama" were
+  // TMDB ever to use it); the exact count below is what ranks them.
+  const taken = [film.id, ...fromCollection.map((f) => f.id)];
+  const candidates = await prisma.film.findMany({
+    where: {
+      kind: film.kind,
+      owned: true,
+      id: { notIn: taken },
+      OR: film.genres.map((g) => ({ genres: { contains: g } })),
+    },
+    select: { id: true, title: true, year: true, posterPath: true, genres: true, rating: true, certification: true },
+  });
+
+  const wanted = new Set(film.genres);
+  const byGenre = candidates
+    .filter((c) => allowsCertificate(limit, c.certification))
+    .map((c) => ({ c, shared: splitGenres(c.genres).filter((g) => wanted.has(g)).length }))
+    .filter((r) => r.shared > 0)
+    .sort(
+      (a, b) =>
+        b.shared - a.shared || (b.c.rating ?? 0) - (a.c.rating ?? 0) || a.c.title.localeCompare(b.c.title),
+    )
+    .map(({ c }) => ({ id: c.id, title: c.title, year: c.year, posterPath: c.posterPath }));
+
+  return [...fromCollection, ...byGenre].slice(0, max);
+}
+
 // ---------------------------------------------------------------------------
 // Collections ("/collections", "/collections/[id]")
 // ---------------------------------------------------------------------------

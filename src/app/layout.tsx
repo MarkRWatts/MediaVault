@@ -5,9 +5,11 @@ import { AppShell } from "@/components/shell/app-shell";
 import { networkKind } from "@/lib/request-network";
 import "./globals.css";
 
-// Used for both --font-display and --font-sans (see globals.css) — one
-// variable-weight family, differentiated by size/tracking/weight utility
-// classes rather than by a separate display face.
+// The fallback for both --font-display and --font-sans (see globals.css):
+// Apple devices get SF Pro Rounded / SF Pro from the system first, and
+// everyone else this one variable-weight family, differentiated by
+// size/tracking/weight utility classes rather than by a separate display
+// face.
 const fredoka = Fredoka({
   variable: "--font-fredoka",
   subsets: ["latin"],

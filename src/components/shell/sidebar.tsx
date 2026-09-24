@@ -84,7 +84,7 @@ export function Sidebar({
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(initialCollapsed);
   const [, startTransition] = useTransition();
-  const { primary, owner } = navItemsFor(flags);
+  const { primary, extras, owner } = navItemsFor(flags);
 
   // Flip instantly for the click that triggered it; persist in the
   // background. The stored value only matters on the next full load, so
@@ -155,6 +155,19 @@ export function Sidebar({
 
         <div className="flex flex-col gap-1">
           {primary.map((item) => (
+            <NavRow
+              key={item.href}
+              item={item}
+              active={isNavItemActive(pathname, item.href)}
+              className={rowClass(isNavItemActive(pathname, item.href))}
+            />
+          ))}
+        </div>
+
+        {/* The extras — Collections, History, Adult — under the five tabs
+            every app shares (nav-items.ts), set apart by a rule. */}
+        <div className="mt-3 flex flex-col gap-1 border-t border-border pt-3">
+          {extras.map((item) => (
             <NavRow
               key={item.href}
               item={item}

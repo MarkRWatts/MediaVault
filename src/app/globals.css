@@ -173,8 +173,12 @@
   --color-format-cd-bg: var(--format-cd-bg);
   --color-format-cd-border: var(--format-cd-border);
 
-  --font-display: var(--font-fredoka), ui-sans-serif, system-ui, sans-serif;
-  --font-sans: var(--font-fredoka), ui-sans-serif, system-ui, sans-serif;
+  /* The iPhone app's faces where the viewer has them (FILM_PAGE_PLAN.md
+     "Type"): SF Pro Rounded for headings, SF Pro for text. Only Apple
+     systems resolve the first names; everything else falls through to
+     Fredoka, loaded by next/font in layout.tsx. */
+  --font-display: ui-rounded, "SF Pro Rounded", var(--font-fredoka), "Fredoka", sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, var(--font-fredoka), "Fredoka", sans-serif;
   --font-mono: var(--font-jbmono), ui-monospace, "SF Mono", monospace;
 }
 

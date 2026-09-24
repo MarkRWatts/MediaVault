@@ -17,7 +17,7 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
-const { getFilmShows, getLinkableShows, getShowFilms } = await import("@/lib/queries-film-shows");
+const { getFilmShows, getLinkableFilms, getShowFilms } = await import("@/lib/queries-film-shows");
 
 beforeAll(async () => {
   const db = await createTempTestDb();
@@ -158,21 +158,20 @@ describe("getFilmShows", () => {
   });
 });
 
-describe("getLinkableShows", () => {
-  it("offers every show in the library, alphabetically", async () => {
-    const shows = await getLinkableShows("unrestricted");
-    expect(shows.map((s) => s.title)).toEqual([
-      "Lonely",
-      "Stargate Atlantis",
-      "Stargate SG-1",
-      "Stargate Universe",
-      "Unrated Show",
-    ]);
+describe("getLinkableFilms", () => {
+  it("offers every owned film, alphabetically, and no concerts", async () => {
+    const films = await getLinkableFilms("unrestricted");
+    const titles = films.map((f) => f.title);
+    expect(titles).toEqual([...titles].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase())));
+    expect(titles).toContain("Stargate");
+    expect(titles).not.toContain("A Concert");
+    expect(titles).not.toContain("Not Ripped Yet");
   });
 
   it("respects an age limit like every other content query", async () => {
-    const shows = await getLinkableShows(10);
-    expect(shows.map((s) => s.title)).toEqual(["Stargate Atlantis", "Stargate SG-1"]);
+    const films = await getLinkableFilms(12);
+    expect(films.map((f) => f.title)).not.toContain("A Fifteen");
+    expect(films.map((f) => f.title)).toContain("Stargate");
   });
 });
 
