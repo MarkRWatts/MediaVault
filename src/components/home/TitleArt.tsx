@@ -27,7 +27,7 @@ export default function TitleArt({
 
   if (!logoPath || failed) {
     return hero ? (
-      <h1 className="max-w-[85%] text-center font-display text-4xl font-bold leading-tight text-balance text-text [text-shadow:0_2px_16px_rgba(0,0,0,0.7)] sm:text-5xl">
+      <h1 className="max-w-[85%] text-center font-display text-4xl font-bold leading-tight text-balance text-text [text-shadow:0_2px_16px_rgba(0,0,0,0.7)] sm:text-5xl xl:max-w-none xl:text-left">
         {title}
       </h1>
     ) : (
@@ -44,12 +44,16 @@ export default function TitleArt({
       fetchPriority={hero ? "high" : undefined}
       className={
         hero
-          ? "h-auto max-h-[120px] w-auto max-w-[70%] object-contain drop-shadow-[0_2px_16px_rgba(0,0,0,0.5)]"
+          ? "h-auto max-h-[120px] w-auto max-w-[70%] object-contain drop-shadow-[0_2px_16px_rgba(0,0,0,0.5)] xl:max-h-[160px] xl:max-w-full xl:object-left"
           : "h-auto max-h-[calc(var(--row-h)*0.3)] w-auto max-w-[calc(var(--row-h)*1.05)] object-contain object-left drop-shadow-[0_2px_12px_rgba(0,0,0,0.45)]"
       }
       onError={() => setFailed(true)}
     />
   );
   // The logo is the page's title, so it stands in for the heading.
-  return hero ? <h1 className="flex w-full justify-center">{img}</h1> : img;
+  return hero ? (
+    <h1 className="flex w-full justify-center xl:justify-start">{img}</h1>
+  ) : (
+    img
+  );
 }

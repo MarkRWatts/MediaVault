@@ -9,7 +9,9 @@
 
 import { notFound } from "next/navigation";
 import BackButton from "@/components/film/BackButton";
-import FilmPlayActions, { type FilmCopyOption } from "@/components/film/FilmPlayActions";
+import FilmPlayActions, {
+  type FilmCopyOption,
+} from "@/components/film/FilmPlayActions";
 import MoreLikeThis from "@/components/film/MoreLikeThis";
 import OwnerMenu from "@/components/film/OwnerMenu";
 import Synopsis from "@/components/film/Synopsis";
@@ -22,7 +24,12 @@ import { getFilmResumePoints, getFilmUserState } from "@/lib/film-user-state";
 import { getFilmDetail, getMoreLikeThis } from "@/lib/queries";
 import { isFilePlayable } from "@/lib/playback/engine-flag";
 import { UHD_BLOCKED_MESSAGE, uhdPlaybackBlocked } from "@/lib/constants";
-import { copyLabel, copyShortLabel, defaultCopyId, sortCopies } from "@/lib/copy-quality";
+import {
+  copyLabel,
+  copyShortLabel,
+  defaultCopyId,
+  sortCopies,
+} from "@/lib/copy-quality";
 
 const NOT_READY = "Not ready to play yet";
 
@@ -62,13 +69,21 @@ export default async function FilmPage({
   // disabled with the reason, rather than vanishing: the household knows
   // the film is on the shelf in 4K and would otherwise wonder where it went.
   const playSourceFor = (v: (typeof film.versions)[number]) =>
-    uhdPlaybackBlocked(v) ? null : localPlay ? ("local" as const) : isFilePlayable(v) ? ("jellyfin" as const) : null;
+    uhdPlaybackBlocked(v)
+      ? null
+      : localPlay
+        ? ("local" as const)
+        : isFilePlayable(v)
+          ? ("jellyfin" as const)
+          : null;
 
   // Best first — the order Quality lists them, and the copy the header
   // chips describe. (getFilmDetail's own order is the database's, which is
   // how a 4K HDR film once showed "HD": the chips read the first row.)
   const copies = sortCopies(film.versions);
-  const resumeOn = new Map(resumePoints.map((p) => [p.versionId, p.positionSecs]));
+  const resumeOn = new Map(
+    resumePoints.map((p) => [p.versionId, p.positionSecs]),
+  );
   const copyOptions: FilmCopyOption[] = copies.map((v) => {
     const source = playSourceFor(v);
     return {
@@ -76,13 +91,21 @@ export default async function FilmPage({
       label: copyLabel(v, copies),
       shortLabel: copyShortLabel(v),
       source,
-      disabledReason: source ? undefined : uhdPlaybackBlocked(v) ? UHD_BLOCKED_MESSAGE : NOT_READY,
+      disabledReason: source
+        ? undefined
+        : uhdPlaybackBlocked(v)
+          ? UHD_BLOCKED_MESSAGE
+          : NOT_READY,
       resumeSecs: resumeOn.get(v.id) ?? null,
     };
   });
   // The most recently watched copy keeps the film on it (resumePoints is
   // newest first); otherwise the best one that plays here.
-  const startOn = defaultCopyId(copies, (v) => playSourceFor(v) !== null, resumePoints[0]?.versionId ?? null);
+  const startOn = defaultCopyId(
+    copies,
+    (v) => playSourceFor(v) !== null,
+    resumePoints[0]?.versionId ?? null,
+  );
   const playDisabledReason =
     startOn !== null || copies.length === 0
       ? undefined
@@ -104,84 +127,123 @@ export default async function FilmPage({
 
   // With no backdrop, the poster stands in, blurred and darkened.
   const heroImage = film.backdropPath
-    ? { src: `/api/poster/w1280${film.backdropPath}`, className: "object-cover" }
+    ? {
+        src: `/api/poster/w1280${film.backdropPath}`,
+        className: "object-cover xl:object-top",
+      }
     : film.posterPath
-      ? { src: `/api/poster/w780${film.posterPath}`, className: "scale-110 object-cover blur-2xl brightness-50" }
+      ? {
+          src: `/api/poster/w780${film.posterPath}`,
+          className: "scale-110 object-cover blur-2xl brightness-50",
+        }
       : null;
 
   return (
     <div className="flex flex-1 flex-col">
+      {/* A phone: a short hero, everything centred below it. A wide screen
+          (xl): the backdrop at its own 16:9 shape — a 45%-tall strip across
+          a 1440p window cropped it into a close-up — with the title, facts,
+          actions and synopsis over its lower left, as on the Apple TV. */}
       <div className="relative">
-        <div className="relative h-[45svh] max-h-[34rem] min-h-72 w-full overflow-hidden bg-bg-elevated">
-          {heroImage && (
-            <img
-              src={heroImage.src}
-              alt=""
-              fetchPriority="high"
-              decoding="async"
-              className={`absolute inset-0 h-full w-full ${heroImage.className}`}
+        <div className="relative">
+          <div className="relative h-[45svh] max-h-[34rem] min-h-72 w-full overflow-hidden bg-bg-elevated xl:aspect-video xl:h-auto xl:max-h-[85svh] xl:min-h-[38rem]">
+            {heroImage && (
+              <img
+                src={heroImage.src}
+                alt=""
+                fetchPriority="high"
+                decoding="async"
+                className={`absolute inset-0 h-full w-full ${heroImage.className}`}
+              />
+            )}
+            <div className="absolute inset-0 bg-gradient-to-b from-black/35 via-transparent via-40% to-bg" />
+            <div className="absolute inset-0 hidden bg-gradient-to-r from-bg via-bg/70 via-30% to-transparent to-65% xl:block" />
+          </div>
+
+          <div className="absolute inset-x-0 top-0 flex items-center justify-between px-3 pt-[max(0.75rem,env(safe-area-inset-top))] sm:px-5">
+            {/* A concert is a Film row, but it's browsed from Music. */}
+            <BackButton
+              fallbackHref={isConcert ? "/music" : "/films"}
+              label={isConcert ? "Music" : "Movies"}
             />
-          )}
-          <div className="absolute inset-0 bg-gradient-to-b from-black/35 via-transparent via-40% to-bg" />
+            {owner && (
+              <OwnerMenu
+                filmId={film.id}
+                physicalCopies={film.physicalCopies}
+              />
+            )}
+          </div>
+
+          <div className="absolute inset-x-0 bottom-2 flex justify-center px-4 xl:hidden">
+            <TitleArt
+              title={film.title}
+              logoPath={film.logoPath}
+              variant="hero"
+            />
+          </div>
         </div>
 
-        <div className="absolute inset-x-0 top-0 flex items-center justify-between px-3 pt-[max(0.75rem,env(safe-area-inset-top))] sm:px-5">
-          {/* A concert is a Film row, but it's browsed from Music. */}
-          <BackButton fallbackHref={isConcert ? "/music" : "/films"} label={isConcert ? "Music" : "Movies"} />
-          {owner && <OwnerMenu filmId={film.id} physicalCopies={film.physicalCopies} />}
-        </div>
+        <div className="mx-auto flex w-full max-w-2xl flex-col items-center gap-5 px-4 pt-4 sm:px-6 xl:absolute xl:bottom-0 xl:left-0 xl:mx-0 xl:w-[min(38rem,48%)] xl:max-w-none xl:items-start xl:px-12 xl:pb-12 xl:pt-0">
+          <div className="hidden w-full xl:block">
+            <TitleArt
+              title={film.title}
+              logoPath={film.logoPath}
+              variant="hero"
+            />
+          </div>
+          <div className="flex flex-col items-center gap-2.5 text-center xl:items-start xl:text-left">
+            {isConcert && film.performer && (
+              <p className="font-display text-lg text-text-muted">
+                {film.performer}
+              </p>
+            )}
+            {(film.certification || chips.length > 0 || isConcert) && (
+              <div className="flex flex-wrap items-center justify-center gap-1.5 xl:justify-start">
+                <CertificationBadge
+                  certification={film.certification}
+                  height={24}
+                />
+                {isConcert && <SpecChip variant="filled">Concert</SpecChip>}
+                {chips.map((c) => (
+                  <SpecChip key={c} variant="filled">
+                    {c}
+                  </SpecChip>
+                ))}
+              </div>
+            )}
+            {(facts.length > 0 || film.rating !== null) && (
+              <p className="text-sm text-text-muted">
+                {facts.join(" · ")}
+                {film.rating !== null && (
+                  <>
+                    {facts.length > 0 && " · "}
+                    <span className="whitespace-nowrap">
+                      ★ {film.rating.toFixed(1)}
+                    </span>
+                  </>
+                )}
+              </p>
+            )}
+          </div>
 
-        <div className="absolute inset-x-0 bottom-2 flex justify-center px-4">
-          <TitleArt title={film.title} logoPath={film.logoPath} variant="hero" />
-        </div>
-      </div>
+          <div className="w-full max-w-md">
+            <FilmPlayActions
+              filmId={film.id}
+              title={film.title}
+              copies={copyOptions}
+              defaultCopyId={startOn}
+              playDisabledReason={playDisabledReason}
+              favourite={userState.favourite}
+              watched={userState.watched}
+            />
+          </div>
 
-      <div className="mx-auto flex w-full max-w-2xl flex-col items-center gap-5 px-4 pt-4 sm:px-6">
-        <div className="flex flex-col items-center gap-2.5 text-center">
-          {isConcert && film.performer && (
-            <p className="font-display text-lg text-text-muted">{film.performer}</p>
-          )}
-          {(film.certification || chips.length > 0 || isConcert) && (
-            <div className="flex flex-wrap items-center justify-center gap-1.5">
-              <CertificationBadge certification={film.certification} height={24} />
-              {isConcert && <SpecChip variant="filled">Concert</SpecChip>}
-              {chips.map((c) => (
-                <SpecChip key={c} variant="filled">
-                  {c}
-                </SpecChip>
-              ))}
+          {film.overview && (
+            <div className="w-full">
+              <Synopsis text={film.overview} />
             </div>
           )}
-          {(facts.length > 0 || film.rating !== null) && (
-            <p className="text-sm text-text-muted">
-              {facts.join(" · ")}
-              {film.rating !== null && (
-                <>
-                  {facts.length > 0 && " · "}
-                  <span className="whitespace-nowrap">★ {film.rating.toFixed(1)}</span>
-                </>
-              )}
-            </p>
-          )}
         </div>
-
-        <div className="w-full max-w-md">
-          <FilmPlayActions
-            filmId={film.id}
-            title={film.title}
-            copies={copyOptions}
-            defaultCopyId={startOn}
-            playDisabledReason={playDisabledReason}
-            favourite={userState.favourite}
-            watched={userState.watched}
-          />
-        </div>
-
-        {film.overview && (
-          <div className="w-full">
-            <Synopsis text={film.overview} />
-          </div>
-        )}
       </div>
 
       <div className="mx-auto w-full max-w-5xl pb-16 pt-8">
