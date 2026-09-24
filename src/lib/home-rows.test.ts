@@ -46,6 +46,11 @@ function episode(fileId: number, showId: number, playable = true): HomeEpisode {
     playable,
     showBackdropPath: null,
     showLogoPath: null,
+    year: 2011,
+    certification: "PG",
+    runtimeLabel: "1h 5m",
+    genres: ["Drama"],
+    overview: null,
   };
 }
 

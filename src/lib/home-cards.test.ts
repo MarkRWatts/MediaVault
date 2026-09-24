@@ -33,6 +33,11 @@ const episode: HomeEpisode = {
   playable: true,
   showBackdropPath: null,
   showLogoPath: "/sl.png",
+  year: 2005,
+  certification: "15",
+  runtimeLabel: "43m",
+  genres: ["Drama"],
+  overview: null,
 };
 
 const collection: HomeCollection = {

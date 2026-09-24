@@ -1,7 +1,9 @@
 // Under Home's active row: what the open card's title is and what it's
 // about — the web's TVPickInfo (MediaVaultiOS). A film gets its meta line
 // (year, certificate, runtime, best resolution and audio, genres) and its
-// overview; an episode which one it is; a collection how many films over
+// overview; an episode the same line from its show (air year, the show's
+// certificate and genres, its runtime) and its overview, led by which one
+// it is; a collection how many films over
 // which years, and its overview. Only from what Home's payload already
 // carries — no per-film fetch, so no HDR (that's per version, on the film's
 // page).
@@ -20,9 +22,47 @@ function Dot() {
   );
 }
 
-function Overview({ text }: { text: string | null }) {
-  if (!text) return null;
-  return <p className="line-clamp-3 max-w-3xl text-sm leading-relaxed text-text/85">{text}</p>;
+/** `lead`, in bold, starts the same three lines (an episode's "Series 2,
+ *  Episode 4 · Name"), so an episode's details take no more room than a
+ *  film's. */
+function Overview({ text, lead }: { text: string | null; lead?: string }) {
+  if (!text && !lead) return null;
+  return (
+    <p className="line-clamp-3 max-w-3xl text-sm leading-relaxed text-text/85">
+      {lead && <strong className="font-semibold text-text">{lead}</strong>}
+      {lead && text && " — "}
+      {text}
+    </p>
+  );
+}
+
+/** Year · certificate · runtime · chips · genres, whichever there are. */
+function Facts({
+  year,
+  certification,
+  runtimeLabel,
+  chips,
+  genres,
+}: {
+  year: number | null;
+  certification: string | null;
+  runtimeLabel: string;
+  chips?: React.ReactNode;
+  genres: string[];
+}) {
+  const facts: React.ReactNode[] = [];
+  if (year) facts.push(<span key="year">{year}</span>);
+  if (certification) facts.push(<CertificationBadge key="cert" certification={certification} height={20} />);
+  // formatRuntimeMins' "—" for an unknown runtime is a table's blank cell;
+  // in a sentence-like line it's just left out.
+  if (runtimeLabel && runtimeLabel !== "—") facts.push(<span key="runtime">{runtimeLabel}</span>);
+  if (chips) facts.push(<span key="chips" className="flex items-center gap-1.5">{chips}</span>);
+  if (genres.length > 0) facts.push(<span key="genres">{genres.join(", ")}</span>);
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-text/85">
+      {facts.flatMap((fact, i) => (i === 0 ? [fact] : [<Dot key={`dot-${i}`} />, fact]))}
+    </div>
+  );
 }
 
 export default function HomeDetails({ item, films }: { item: HomeItem; films: HomeData["films"] }) {
@@ -30,33 +70,39 @@ export default function HomeDetails({ item, films }: { item: HomeItem; films: Ho
     case "film": {
       const film = films[item.filmId];
       if (!film) return null;
-      const facts: React.ReactNode[] = [];
-      if (film.year) facts.push(<span key="year">{film.year}</span>);
-      if (film.certification) {
-        facts.push(<CertificationBadge key="cert" certification={film.certification} height={20} />);
-      }
-      // formatRuntimeMins' "—" for an unknown runtime is a table's blank
-      // cell; in a sentence-like line it's just left out.
-      if (film.runtimeLabel && film.runtimeLabel !== "—") facts.push(<span key="runtime">{film.runtimeLabel}</span>);
-      const chips = (
-        <span key="chips" className="flex items-center gap-1.5">
-          {film.bestTier.rank < 9 && <ResolutionBadge tier={film.bestTier} />}
-          {film.audioFormats[0] && <SpecChip>{film.audioFormats[0]}</SpecChip>}
-        </span>
-      );
-      if (film.bestTier.rank < 9 || film.audioFormats[0]) facts.push(chips);
-      if (film.genres.length > 0) facts.push(<span key="genres">{film.genres.join(", ")}</span>);
+      const hasChips = film.bestTier.rank < 9 || Boolean(film.audioFormats[0]);
       return (
         <div className="flex flex-col gap-2">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-text/85">
-            {facts.flatMap((fact, i) => (i === 0 ? [fact] : [<Dot key={`dot-${i}`} />, fact]))}
-          </div>
+          <Facts
+            year={film.year}
+            certification={film.certification}
+            runtimeLabel={film.runtimeLabel}
+            genres={film.genres}
+            chips={
+              hasChips ? (
+                <>
+                  {film.bestTier.rank < 9 && <ResolutionBadge tier={film.bestTier} />}
+                  {film.audioFormats[0] && <SpecChip>{film.audioFormats[0]}</SpecChip>}
+                </>
+              ) : undefined
+            }
+          />
           <Overview text={film.overview} />
         </div>
       );
     }
     case "episode":
-      return <p className="text-sm text-text/85">{episodeLine(item.episode)}</p>;
+      return (
+        <div className="flex flex-col gap-2">
+          <Facts
+            year={item.episode.year}
+            certification={item.episode.certification}
+            runtimeLabel={item.episode.runtimeLabel}
+            genres={item.episode.genres}
+          />
+          <Overview lead={episodeLine(item.episode)} text={item.episode.overview} />
+        </div>
+      );
     case "collection":
       return (
         <div className="flex flex-col gap-2">
