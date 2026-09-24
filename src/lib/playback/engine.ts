@@ -45,7 +45,7 @@ import {
   type StreamCacheEntry,
   type TrimCandidateStream,
 } from "./decisions";
-import { hevcCodecFromInit, INIT_SEGMENT_NAME } from "./fmp4";
+import { INIT_SEGMENT_NAME } from "./fmp4";
 import { buildHeadArgs } from "./head-args";
 import { startHead, type Head, type HeadStopReason } from "./head";
 import { resolveHwAccel } from "./hwaccel";
@@ -760,13 +760,12 @@ export async function getMasterPlaylist(
   const copied = ctx.variant === "original" && ctx.source.plan.videoAction === "copy";
   let codecs = hlsCodecs(videoCodec, audioCodec);
   if (copied && (videoCodec === "hevc" || videoCodec === "h265")) {
-    // fMP4: the init segment's own hvcC says exactly what the video is.
-    let hevc = hevcCodecString(ctx.source.facts);
-    if (ctx.container === "fmp4" && playSessionId) {
-      const init = await getInitSegment(key, playSessionId).then((p) => fs.readFile(p)).catch(() => null);
-      hevc = (init && hevcCodecFromInit(init)) ?? hevc;
-    }
-    codecs = [hevc, ...codecs.split(",").slice(1)].join(",");
+    // Apple's form for the profile and level (hevcCodecString), not the
+    // file's exact hvcC: Man of Steel's is High tier (hvc1.2.4.H153.90), and
+    // the Apple TV refused a master declaring that outright ("Cannot open",
+    // AVFoundation -11868, 24 Sep 2026) -- the decoder plays the stream, it
+    // just won't pick a variant that claims High tier.
+    codecs = [hevcCodecString(ctx.source.facts), ...codecs.split(",").slice(1)].join(",");
   }
   return renderMasterPlaylist({
     bandwidth: bandwidthFor(ctx),

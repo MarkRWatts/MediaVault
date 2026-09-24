@@ -142,10 +142,10 @@ describe.skipIf(!hasX265)("copied HEVC as fMP4 (real ffmpeg)", () => {
     expect(main).not.toContain(".ts");
 
     const init = await readFile(await engine.getInitSegment(session.key, session.playSessionId));
-    // The master names the video exactly, from that init, with its frame
-    // rate; an SDR source says nothing about range.
+    // The master names the video in Apple's form, with its frame rate; an
+    // SDR source says nothing about range.
     const master = await engine.getMasterPlaylist(session.key, "main.m3u8", session.playSessionId);
-    expect(master).toMatch(/CODECS="hvc1\.1\.6\.L\d+(\.[0-9A-F]+)*,mp4a\.40\.2"/);
+    expect(master).toContain('CODECS="hvc1.1.6.L123.B0,mp4a.40.2"');
     expect(master).toContain("FRAME-RATE=10.000");
     expect(master).not.toContain("VIDEO-RANGE");
     expect(types(init)).toEqual(["ftyp", "moov"]);
