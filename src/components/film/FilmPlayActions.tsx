@@ -7,12 +7,22 @@
 // and Quality, which picks the copy Play plays from a small sheet of
 // plain-word labels (src/lib/copy-quality.ts). Favourite and reset call the
 // same server actions the old row did; Play opens the same in-app player.
+//
+// The show page uses it too (SHOW_PAGE_PLAN.md "Play and actions", kind
+// "show"): its one "copy" is the next episode's file, the button names the
+// episode ("Resume S2 E8", "Play S2 E9") and the player finds the position
+// itself; Favourite and Watched act on the whole show.
 
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Check, EyeOff, Heart, MonitorPlay, Play, RotateCcw } from "lucide-react";
 import VideoPlayer, { type PlaybackSource } from "@/components/VideoPlayer";
-import { resetFilmWatched, toggleFilmFavourite } from "@/app/actions/film-state";
+import {
+  resetFilmWatched,
+  resetShowWatched,
+  toggleFilmFavourite,
+  toggleShowFavourite,
+} from "@/app/actions/film-state";
 import { formatClock } from "@/lib/pending-seek";
 
 export interface FilmCopyOption {
@@ -36,7 +46,12 @@ export default function FilmPlayActions({
   playDisabledReason,
   favourite: initialFavourite,
   watched: initialWatched,
+  kind = "film",
+  playLabel,
+  playTitle,
+  basePath,
 }: {
+  /** The film's id, or the show's with kind "show". */
   filmId: number;
   title: string;
   /** Best first, as Quality lists them. */
@@ -46,7 +61,16 @@ export default function FilmPlayActions({
   playDisabledReason?: string;
   favourite: boolean;
   watched: boolean;
+  kind?: "film" | "show";
+  /** In place of "Play" / "Resume from 37:43" — the show page's "Resume S2 E8". */
+  playLabel?: string;
+  /** The player's title, when it isn't `title` ("Firefly S01E02 · The Train Job"). */
+  playTitle?: string;
+  /** The player's API root: "/api/tv-video" for an episode file. */
+  basePath?: string;
 }) {
+  const toggleFavouriteAction = kind === "show" ? toggleShowFavourite : toggleFilmFavourite;
+  const resetWatchedAction = kind === "show" ? resetShowWatched : resetFilmWatched;
   const router = useRouter();
   const [chosenId, setChosenId] = useState(defaultCopyId);
   const [player, setPlayer] = useState<{ fromStart: boolean } | null>(null);
@@ -72,7 +96,7 @@ export default function FilmPlayActions({
       const next = !favourite;
       setFavourite(next);
       try {
-        const result = await toggleFilmFavourite(filmId);
+        const result = await toggleFavouriteAction(filmId);
         setFavourite(result.favourite);
         router.refresh();
       } catch {
@@ -85,7 +109,7 @@ export default function FilmPlayActions({
     setSheet(null);
     startTransition(async () => {
       try {
-        await resetFilmWatched(filmId);
+        await resetWatchedAction(filmId);
         setWatched(false);
         router.refresh();
       } catch {
@@ -107,7 +131,7 @@ export default function FilmPlayActions({
             className="flex w-full items-center justify-center gap-2 rounded-xl bg-accent px-5 py-3.5 font-display text-base font-semibold text-bg transition-colors hover:bg-accent-bright"
           >
             <Play aria-hidden className="h-5 w-5 fill-current" />
-            {resumeSecs !== null ? `Resume from ${formatClock(resumeSecs)}` : "Play"}
+            {playLabel ?? (resumeSecs !== null ? `Resume from ${formatClock(resumeSecs)}` : "Play")}
           </button>
           {resumeSecs !== null && (
             <button
@@ -134,7 +158,8 @@ export default function FilmPlayActions({
             {/* Said on the page, not in a tooltip: most of the household is
                 on a touch screen. */}
             <p className="text-center text-xs text-text-faint">
-              {playDisabledReason ?? "No copy of this film is on the server."}
+              {playDisabledReason ??
+                (kind === "show" ? "No episode of this show is on the server." : "No copy of this film is on the server.")}
             </p>
           </div>
         )
@@ -211,7 +236,10 @@ export default function FilmPlayActions({
               <div className="flex flex-col gap-1">
                 <h2 className="font-display text-lg font-semibold text-text">Reset watch status?</h2>
                 <p className="text-sm text-text-muted">
-                  Forgets where you got to in {title} and marks it as not watched. Your viewing history stays.
+                  {kind === "show"
+                    ? `Forgets where you got to in every episode of ${title} and marks them all as not watched.`
+                    : `Forgets where you got to in ${title} and marks it as not watched.`}{" "}
+                  Your viewing history stays.
                 </p>
               </div>
               <div className="flex gap-2">
@@ -238,8 +266,9 @@ export default function FilmPlayActions({
       {player && chosen?.source && (
         <VideoPlayer
           versionId={chosen.versionId}
-          title={title}
+          title={playTitle ?? title}
           source={chosen.source}
+          basePath={basePath}
           fromStart={player.fromStart}
           onClose={closePlayer}
         />

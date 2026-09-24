@@ -1,13 +1,17 @@
 "use client";
 
 // The film page's synopsis (FILM_PAGE_PLAN.md): up to six lines, then
-// "More" to read the rest. The button only appears when the text really is
+// "More" to read the rest. The show page clips it at three (SHOW_PAGE_PLAN.md
+// "Synopsis"), so its episodes start on the first screen. The button only appears when the text really is
 // cut off — measured after layout, since how many lines it takes depends
 // on the screen it lands on.
 
 import { useLayoutEffect, useRef, useState } from "react";
 
-export default function Synopsis({ text }: { text: string }) {
+// Whole class names, so Tailwind sees them.
+const CLAMP = { 3: "line-clamp-3", 6: "line-clamp-6" } as const;
+
+export default function Synopsis({ text, lines = 6 }: { text: string; lines?: keyof typeof CLAMP }) {
   const ref = useRef<HTMLParagraphElement>(null);
   const [expanded, setExpanded] = useState(false);
   const [clipped, setClipped] = useState(false);
@@ -24,7 +28,7 @@ export default function Synopsis({ text }: { text: string }) {
 
   return (
     <div className="flex flex-col items-start gap-1">
-      <p ref={ref} className={`text-[15px] leading-relaxed text-text ${expanded ? "" : "line-clamp-6"}`}>
+      <p ref={ref} className={`text-[15px] leading-relaxed text-text ${expanded ? "" : CLAMP[lines]}`}>
         {text}
       </p>
       {(clipped || expanded) && (

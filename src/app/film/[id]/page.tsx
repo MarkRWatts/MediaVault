@@ -8,16 +8,15 @@
 // technical detail: Quality picks the copy, in plain words.
 
 import { notFound } from "next/navigation";
-import BackButton from "@/components/film/BackButton";
+import DetailFacts from "@/components/film/DetailFacts";
+import DetailHero from "@/components/film/DetailHero";
 import FilmPlayActions, {
   type FilmCopyOption,
 } from "@/components/film/FilmPlayActions";
 import MoreLikeThis from "@/components/film/MoreLikeThis";
 import OwnerMenu from "@/components/film/OwnerMenu";
 import Synopsis from "@/components/film/Synopsis";
-import TitleArt from "@/components/home/TitleArt";
-import CertificationBadge from "@/components/CertificationBadge";
-import SpecChip from "@/components/SpecChip";
+import FilmPhysicalCopyForm from "@/components/FilmPhysicalCopyForm";
 import { videoBadges } from "@/lib/video-badges";
 import { isAppOwner, requireMemberOrRedirect } from "@/lib/require-member";
 import { getFilmResumePoints, getFilmUserState } from "@/lib/film-user-state";
@@ -125,129 +124,61 @@ export default async function FilmPage({
     film.genres.length > 0 ? film.genres.join(", ") : null,
   ].filter((f): f is string => f !== null);
 
-  // With no backdrop, the poster stands in, blurred and darkened.
-  const heroImage = film.backdropPath
-    ? {
-        src: `/api/poster/w1280${film.backdropPath}`,
-        className: "object-cover xl:object-top",
-      }
-    : film.posterPath
-      ? {
-          src: `/api/poster/w780${film.posterPath}`,
-          className: "scale-110 object-cover blur-2xl brightness-50",
-        }
-      : null;
-
   return (
     <div className="flex flex-1 flex-col">
-      {/* A phone: a short hero, everything centred below it. A wide screen
-          (xl): the backdrop at its own 16:9 shape — a 45%-tall strip across
-          a 1440p window cropped it into a close-up — with the title, facts,
-          actions and synopsis over its lower left, as on the Apple TV. */}
-      <div className="relative">
-        <div className="relative">
-          <div className="relative h-[45svh] max-h-[34rem] min-h-72 w-full overflow-hidden bg-bg-elevated xl:aspect-video xl:h-auto xl:max-h-[85svh] xl:min-h-[38rem]">
-            {heroImage && (
-              <img
-                src={heroImage.src}
-                alt=""
-                fetchPriority="high"
-                decoding="async"
-                className={`absolute inset-0 h-full w-full ${heroImage.className}`}
-              />
-            )}
-            <div className="absolute inset-0 bg-gradient-to-b from-black/35 via-transparent via-40% to-bg" />
-            <div className="absolute inset-0 hidden bg-gradient-to-r from-bg via-bg/70 via-30% to-transparent to-65% xl:block" />
-          </div>
-
-          <div className="absolute inset-x-0 top-0 flex items-center justify-between px-3 pt-[max(0.75rem,env(safe-area-inset-top))] sm:px-5">
-            {/* A concert is a Film row, but it's browsed from Music. */}
-            <BackButton
-              fallbackHref={isConcert ? "/music" : "/films"}
-              label={isConcert ? "Music" : "Movies"}
-            />
-            {owner && (
-              <OwnerMenu
-                filmId={film.id}
-                physicalCopies={film.physicalCopies}
-              />
-            )}
-          </div>
-
-          <div className="absolute inset-x-0 bottom-2 flex justify-center px-4 xl:hidden">
-            <TitleArt
-              title={film.title}
-              logoPath={film.logoPath}
-              variant="hero"
-            />
-          </div>
-        </div>
-
-        <div className="mx-auto flex w-full max-w-2xl flex-col items-center gap-5 px-4 pt-4 sm:px-6 xl:absolute xl:bottom-0 xl:left-0 xl:mx-0 xl:w-[min(38rem,48%)] xl:max-w-none xl:items-start xl:px-12 xl:pb-12 xl:pt-0">
-          <div className="hidden w-full xl:block">
-            <TitleArt
-              title={film.title}
-              logoPath={film.logoPath}
-              variant="hero"
-            />
-          </div>
-          <div className="flex flex-col items-center gap-2.5 text-center xl:items-start xl:text-left">
-            {isConcert && film.performer && (
-              <p className="font-display text-lg text-text-muted">
-                {film.performer}
-              </p>
-            )}
-            {(film.certification || chips.length > 0 || isConcert) && (
-              <div className="flex flex-wrap items-center justify-center gap-1.5 xl:justify-start">
-                <CertificationBadge
-                  certification={film.certification}
-                  height={24}
-                />
-                {isConcert && <SpecChip variant="filled">Concert</SpecChip>}
-                {chips.map((c) => (
-                  <SpecChip key={c} variant="filled">
-                    {c}
-                  </SpecChip>
+      <DetailHero
+        title={film.title}
+        logoPath={film.logoPath}
+        backdropPath={film.backdropPath}
+        posterPath={film.posterPath}
+        // A concert is a Film row, but it's browsed from Music.
+        back={isConcert ? { fallbackHref: "/music", label: "Music" } : { fallbackHref: "/films", label: "Movies" }}
+        menu={
+          owner && (
+            <OwnerMenu heading="Physical copies">
+              <div className="flex flex-col items-start gap-3">
+                {(["DVD", "BLURAY", "UHD"] as const).map((medium) => (
+                  <FilmPhysicalCopyForm
+                    key={medium}
+                    filmId={film.id}
+                    medium={medium}
+                    initial={film.physicalCopies.find((c) => c.medium === medium) ?? null}
+                  />
                 ))}
               </div>
-            )}
-            {(facts.length > 0 || film.rating !== null) && (
-              <p className="text-sm text-text-muted">
-                {facts.join(" · ")}
-                {film.rating !== null && (
-                  <>
-                    {facts.length > 0 && " · "}
-                    <span className="whitespace-nowrap">
-                      ★ {film.rating.toFixed(1)}
-                    </span>
-                  </>
-                )}
-              </p>
-            )}
-          </div>
+            </OwnerMenu>
+          )
+        }
+      >
+        <DetailFacts
+          lead={isConcert ? film.performer : null}
+          certification={film.certification}
+          chips={isConcert ? ["Concert", ...chips] : chips}
+          facts={facts}
+          rating={film.rating}
+        />
 
-          <div className="w-full max-w-md">
-            <FilmPlayActions
-              filmId={film.id}
-              title={film.title}
-              copies={copyOptions}
-              defaultCopyId={startOn}
-              playDisabledReason={playDisabledReason}
-              favourite={userState.favourite}
-              watched={userState.watched}
-            />
-          </div>
-
-          {film.overview && (
-            <div className="w-full">
-              <Synopsis text={film.overview} />
-            </div>
-          )}
+        <div className="w-full max-w-md">
+          <FilmPlayActions
+            filmId={film.id}
+            title={film.title}
+            copies={copyOptions}
+            defaultCopyId={startOn}
+            playDisabledReason={playDisabledReason}
+            favourite={userState.favourite}
+            watched={userState.watched}
+          />
         </div>
-      </div>
+
+        {film.overview && (
+          <div className="w-full">
+            <Synopsis text={film.overview} />
+          </div>
+        )}
+      </DetailHero>
 
       <div className="mx-auto w-full max-w-5xl pb-16 pt-8">
-        <MoreLikeThis films={similar} />
+        <MoreLikeThis items={similar} />
       </div>
     </div>
   );
