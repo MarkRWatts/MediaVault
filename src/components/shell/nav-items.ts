@@ -9,6 +9,7 @@ import {
   EyeOff,
   Film,
   History,
+  House,
   Library,
   ScanBarcode,
   Shield,
@@ -26,7 +27,8 @@ export type NavItem = {
 
 /** Every signed-in member's destinations, in desktop sidebar order. */
 export const PRIMARY_ITEMS: NavItem[] = [
-  { href: "/", label: "Movies", tabLabel: "Movies", icon: Film },
+  { href: "/", label: "Home", tabLabel: "Home", icon: House },
+  { href: "/films", label: "Movies", tabLabel: "Movies", icon: Film },
   { href: "/shows", label: "TV Shows", tabLabel: "TV Shows", icon: Tv },
   { href: "/music", label: "Music", tabLabel: "Music", icon: Disc3 },
   { href: "/collections", label: "Collections", tabLabel: "Collections", icon: Library },
@@ -46,8 +48,10 @@ export const OWNER_ITEMS: NavItem[] = [
   { href: "/admin", label: "Admin", tabLabel: "Admin", icon: Shield },
 ];
 
-// Four everyday tabs before "More" earns its keep on a phone.
-const MOBILE_TAB_HREFS = ["/", "/shows", "/music", "/collections"];
+// Four everyday tabs before "More" earns its keep on a phone — a fifth
+// squeezes the labels on a small iPhone. Collections gave its slot to Home
+// and lives in More (Home's own Collections row covers the everyday case).
+const MOBILE_TAB_HREFS = ["/", "/films", "/shows", "/music"];
 
 export type NavFlags = { isOwner: boolean; hasAdultAccess: boolean };
 

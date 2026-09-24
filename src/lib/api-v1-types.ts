@@ -58,7 +58,7 @@ export interface MeResponse {
   server: { version: string; minAppBuild: number };
 }
 
-/** GET /api/v1/films — the "/" page's shelves plus the full grid, trimmed
+/** GET /api/v1/films — the "/films" page's shelves plus the full grid, trimmed
  *  to LibraryFilm's card fields (same shape /api/films already sends). */
 export interface FilmsResponse {
   shelves: { continueWatching: LibraryFilm[]; favourites: LibraryFilm[] };

@@ -3,7 +3,8 @@
 // A plain <img>, not next/image: the optimizer fetched sources server-side
 // with none of the browser's cookies, which forced /api/poster to be public.
 // TMDB already serves posters at the sizes the cards need (w342 for grids,
-// w780 for hero art), so nothing is lost by skipping it. `sizes` is still
+// w500 for Home's taller Top Picks, w780 for hero art), so nothing is lost
+// by skipping it. `sizes` is still
 // accepted from callers for compatibility but no longer means anything.
 
 import { useState } from "react";
@@ -20,7 +21,7 @@ export default function PosterImage({
   posterPath: string | null;
   title: string;
   year?: number | null;
-  size?: "w342" | "w780";
+  size?: "w342" | "w500" | "w780";
   sizes?: string;
   priority?: boolean;
   className?: string;

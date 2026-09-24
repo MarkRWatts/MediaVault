@@ -1,4 +1,4 @@
-// GET /api/v1/films — the app's Movies tab: the "/" page's shelves plus the
+// GET /api/v1/films — the app's Movies tab: the "/films" page's shelves plus the
 // full grid, in one call (IOS_PLAN.md "A versioned native API"). Card
 // fields only (LibraryFilm), same trim as /api/films (which stays put for
 // tvOS until it moves onto this surface). Superseding rather than editing
