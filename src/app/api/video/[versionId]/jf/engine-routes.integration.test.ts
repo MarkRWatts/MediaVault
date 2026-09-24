@@ -364,7 +364,7 @@ describe.skipIf(!hasFfmpeg)("local-engine /jf/* routes (real ffmpeg, real handle
       params: Promise.resolve({ versionId: String(id) }),
     });
     expect(res.status).toBe(200);
-    return (await res.json()) as { mode: string; playlistUrl: string; playSessionId: string | null; durationSecs: number; audioTracks: unknown[] };
+    return (await res.json()) as { mode: string; playlistUrl: string; playSessionId: string | null; durationSecs: number; frameRate: number | null; audioTracks: unknown[] };
   }
 
   async function filmProxy(id: number, pathParts: string[], ps: string | null) {
@@ -380,6 +380,9 @@ describe.skipIf(!hasFfmpeg)("local-engine /jf/* routes (real ffmpeg, real handle
     expect(direct.playlistUrl).toBe(`/api/video/${mp4VersionId}/stream`);
     expect(direct.playSessionId).toBeNull();
     expect(direct.durationSecs).toBeCloseTo(DURATION_SECS, 0);
+    // What the Apple TV sets its display to: the fixture is 10 fps.
+    expect(direct.frameRate).toBe(10);
+    expect((await filmSession(mp4VersionId, "variant=original&direct=1&vcodecs=h264&prefer=hls")).frameRate).toBe(10);
     expect(direct.audioTracks).toEqual([{ streamIdx: 1, label: expect.any(String) }]);
 
     // Opt-in: today's iOS app never sends direct=1 and must get HLS as before.

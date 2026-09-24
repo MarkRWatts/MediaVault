@@ -546,6 +546,9 @@ export interface StartedSession {
   /** What its segments are (decisions.ts's segmentContainerFor). */
   container: SegmentContainer;
   durationSecs: number;
+  /** The source's frames per second, when known: what the Apple TV switches
+   *  its display to (Match Frame Rate). */
+  frameRate: number | null;
   transcodeReasons: string[];
   audioTracks: PlaybackAudioTrack[];
 }
@@ -646,6 +649,7 @@ export async function startSession(input: StartSessionInput): Promise<StartedSes
     key,
     container: ctx.container,
     durationSecs: source.durationSecs,
+    frameRate: source.facts.fps,
     transcodeReasons: transcodeReasonsFor(source.plan, input.variant),
     audioTracks: source.audioTracks,
   };
@@ -767,7 +771,7 @@ export async function getMasterPlaylist(
     // just won't pick a variant that claims High tier.
     codecs = [hevcCodecString(ctx.source.facts), ...codecs.split(",").slice(1)].join(",");
   }
-  return renderMasterPlaylist({
+  const master = renderMasterPlaylist({
     bandwidth: bandwidthFor(ctx),
     resolution: resolutionFor(ctx),
     codecs,
@@ -779,6 +783,10 @@ export async function getMasterPlaylist(
     videoRange: copied && ctx.container === "fmp4" ? videoRangeFor(ctx.source.facts.colorTransfer) : undefined,
     mainUri,
   });
+  // Its one variant line, for when a player refuses it: the Apple TV's
+  // reasons ("Cannot open") name nothing.
+  console.log(`[playback] master ${key}: ${master.split("\n").find((l) => l.startsWith("#EXT-X-STREAM-INF")) ?? "-"}`);
+  return master;
 }
 
 /** `main.m3u8` for a key: the whole VOD table, complete from the first

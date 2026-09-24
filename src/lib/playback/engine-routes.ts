@@ -292,6 +292,7 @@ export async function engineSession(
           playlistUrl: `${basePath}/${id}/stream`,
           playSessionId: null,
           durationSecs: source.durationSecs,
+          frameRate: source.facts.fps,
           transcodeReasons: [],
           audioTracks: source.audioTracks,
         });
@@ -312,6 +313,7 @@ export async function engineSession(
       playlistUrl: `${basePath}/${id}/jf/e/${session.key}/${playlist}?ps=${session.playSessionId}`,
       playSessionId: session.playSessionId,
       durationSecs: session.durationSecs,
+      frameRate: session.frameRate,
       transcodeReasons: session.transcodeReasons,
       audioTracks: session.audioTracks,
     });
