@@ -10,10 +10,22 @@ import { promises as fsPromises, createReadStream } from "node:fs";
 import type { Readable } from "node:stream";
 import { parseRange } from "@/lib/http-range";
 
-export function fileToWebStream(readStream: Readable): ReadableStream<Uint8Array> {
+export function fileToWebStream(readStream: Readable, signal?: AbortSignal): ReadableStream<Uint8Array> {
   let closed = false;
   return new ReadableStream<Uint8Array>({
     start(controller) {
+      // A client that gives up on a response (AVPlayer cancels most of its
+      // open-ended direct-play ranges within milliseconds) doesn't reliably
+      // reach cancel() below; without this each one left its file open and
+      // paused — 26 handles on one UHD film, none being read.
+      signal?.addEventListener(
+        "abort",
+        () => {
+          closed = true;
+          readStream.destroy();
+        },
+        { once: true },
+      );
       readStream.on("data", (chunk: Buffer) => {
         try {
           controller.enqueue(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
@@ -74,12 +86,12 @@ export async function serveFile(
     return new NextResponse(null, { status: 416, headers: { "Content-Range": `bytes */${stat.size}` } });
   }
   if (range === null) {
-    return new NextResponse(fileToWebStream(createReadStream(absPath)), {
+    return new NextResponse(fileToWebStream(createReadStream(absPath), req.signal), {
       status: 200,
       headers: { ...common, "Content-Length": String(stat.size) },
     });
   }
-  return new NextResponse(fileToWebStream(createReadStream(absPath, { start: range.start, end: range.end })), {
+  return new NextResponse(fileToWebStream(createReadStream(absPath, { start: range.start, end: range.end }), req.signal), {
     status: 206,
     headers: {
       ...common,

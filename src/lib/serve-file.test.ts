@@ -1,10 +1,10 @@
 // serveFile's byte ranges: every 206 is exactly the range asked for, since
 // AVFoundation rejects a shorter one (see serveFile's doc comment).
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createReadStream, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { serveFile } from "./serve-file";
+import { fileToWebStream, serveFile } from "./serve-file";
 
 let dir: string;
 let file: string;
@@ -40,6 +40,15 @@ describe("serveFile", () => {
   it("serves a small range as asked", async () => {
     const res = await serveFile(get("bytes=0-1"), file, "video/mp4", "no-store");
     expect(res.headers.get("content-range")).toBe(`bytes 0-1/${SIZE}`);
+  });
+
+  it("closes the file when the client goes away", async () => {
+    const abort = new AbortController();
+    const readStream = createReadStream(file);
+    const reader = fileToWebStream(readStream, abort.signal).getReader();
+    await reader.read();
+    abort.abort();
+    expect(readStream.destroyed).toBe(true);
   });
 
   it("serves a plain 200 without a Range header", async () => {
