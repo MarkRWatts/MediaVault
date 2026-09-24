@@ -3,15 +3,16 @@ import { notFound } from "next/navigation";
 import PosterImage from "@/components/PosterImage";
 import SeasonSection from "@/components/SeasonSection";
 import ShowFilmsSection from "@/components/ShowFilmsSection";
+import ShowFilmLinksEditor from "@/components/ShowFilmLinksEditor";
 import SpecLine from "@/components/SpecLine";
 import { sharedSpec, showFiles } from "@/lib/episode-specs";
 import { getShowDetail } from "@/lib/queries";
 import { initialOpenSeason } from "@/lib/season-collapse";
-import { getShowFilms } from "@/lib/queries-film-shows";
+import { getLinkableFilms, getShowFilms } from "@/lib/queries-film-shows";
 import { playbackAvailable } from "@/lib/playback/engine-flag";
 import FilmActions from "@/components/FilmActions";
 import CertificationBadge from "@/components/CertificationBadge";
-import { requireMemberOrRedirect } from "@/lib/require-member";
+import { isAppOwner, requireMemberOrRedirect } from "@/lib/require-member";
 import { getNextEpisodeFile, getShowUserState } from "@/lib/film-user-state";
 
 export default async function ShowPage({
@@ -31,11 +32,17 @@ export default async function ShowPage({
   // Only build deep links when playback is actually available — no error
   // state in the UI, episodes without a match simply get no chip.
   const playable = playbackAvailable();
-  const [userState, next, linkedFilms] = await Promise.all([
+  const [userState, next, linkedFilms, owner] = await Promise.all([
     getShowUserState(userId, show.id),
     playable ? getNextEpisodeFile(userId, show.id) : Promise.resolve(null),
     getShowFilms(show.id, ageLimit),
+    isAppOwner(userId),
   ]);
+  // Which films belong with this show is curated by hand (FilmShowLink),
+  // by the owner only, here rather than on the film page
+  // (FILM_PAGE_PLAN.md "Owner tools"). The picker's pool is only fetched
+  // for them.
+  const linkableFilms = owner ? await getLinkableFilms(ageLimit) : [];
 
   const complete = show.totalEpisodeCount > 0 && show.ownedEpisodeCount === show.totalEpisodeCount;
 
@@ -204,6 +211,13 @@ export default async function ShowPage({
         )}
 
         <ShowFilmsSection films={linkedFilms} />
+        {owner && (
+          <ShowFilmLinksEditor
+            showId={show.id}
+            linked={linkedFilms.map((f) => ({ id: f.id, title: f.title, year: f.year }))}
+            allFilms={linkableFilms}
+          />
+        )}
       </div>
     </div>
   );

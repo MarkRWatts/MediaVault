@@ -5,7 +5,7 @@
 // 1994 Stargate with all three SG series. No scan or enrich pass touches
 // this table, because TMDB has no movie-to-show relation to read it from.
 //
-// Both entry points start with requireOwner(); the film page only renders
+// Both entry points start with requireOwner(); the show page only renders
 // the control for the owner, but that is cosmetic and this is the
 // enforcement (same posture as admin.ts).
 
