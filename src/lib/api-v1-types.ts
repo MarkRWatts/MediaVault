@@ -213,6 +213,13 @@ export interface FavouriteResponse {
   favourite: boolean;
 }
 
+/** DELETE /api/v1/films/:id/progress and /api/v1/shows/:id/progress —
+ *  "reset watch status": how many saved positions were dropped (0 when
+ *  there was nothing to reset; still a success). */
+export interface ResetWatchedResponse {
+  cleared: number;
+}
+
 /** POST /api/v1/music/playlists body. */
 export interface CreatePlaylistBody {
   name: string;

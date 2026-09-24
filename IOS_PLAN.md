@@ -148,6 +148,7 @@ query or action body that already exists:
 | `PUT/DELETE /api/v1/films/:id/favourite` | `film-state.ts` toggle | |
 | `GET /api/v1/shows`, `GET /api/v1/shows/:id` | `getShows`, `getShowDetail`, `getContinueWatchingEpisodes` | Episode files carry `playable` + progress. |
 | `PUT/DELETE /api/v1/shows/:id/favourite` | show favourite action | |
+| `DELETE /api/v1/films/:id/progress`, `DELETE /api/v1/shows/:id/progress` | `resetFilmWatched` / `resetShowWatched` (`film-user-state.ts`) | "Reset Watch Status": the web's reset-viewed button. `{ cleared }`; 0 is still a success. |
 | `GET /api/v1/music` | `getMusicIndex`, `getMusicFavourites`, `countFavouriteTracks`, `getUserPlaylists` | The index page's data in one call; the library is a few thousand rows, no paging needed. `ETag` from the newest `updatedAt` so a relaunch is a 304. |
 | `GET /api/v1/music/artists/:id` | `getArtistDetail` + `getArtistUserState` | |
 | `GET /api/v1/music/albums/:id` | `getAlbumDetail` + `getAlbumUserState` | Tracks as `QueueTrack` (`player-types.ts`) plus `playable` from `isPlayableCodec`. Physical-only albums come back with no tracks, same as the page. |

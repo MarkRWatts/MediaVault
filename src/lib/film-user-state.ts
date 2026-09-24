@@ -1,6 +1,6 @@
 // Per-viewer state and mutations for the film/show pages: whether this
 // person has favourited the film/show (in progress or completed) that the
-// "reset viewed" button could clear, and the favourite toggle itself.
+// "reset viewed" button could clear, the favourite toggle, and the reset.
 //
 // The favourite toggles used to live entirely in app/actions/film-state.ts.
 // They moved here (IOS_PLAN.md "A versioned native API", "To share code
@@ -88,6 +88,28 @@ export async function toggleShowFavourite(userId: string, showId: number): Promi
     select: { userId: true },
   });
   return setShowFavourite(userId, showId, existing === null);
+}
+
+// ---------------------------------------------------------------------------
+// Reset viewed
+// ---------------------------------------------------------------------------
+
+/** Drop this person's WatchProgress rows for every version of the film:
+ *  no resume position, not watched, out of Continue watching. Their play
+ *  history (PlayEvent) stays — it records what happened, not what's next. */
+export async function resetFilmWatched(userId: string, filmId: number): Promise<{ cleared: number }> {
+  if (!Number.isInteger(filmId)) throw new Error("invalid film id");
+  const result = await prisma.watchProgress.deleteMany({ where: { userId, version: { filmId } } });
+  return { cleared: result.count };
+}
+
+/** The same for every episode file of the show. */
+export async function resetShowWatched(userId: string, showId: number): Promise<{ cleared: number }> {
+  if (!Number.isInteger(showId)) throw new Error("invalid show id");
+  const result = await prisma.watchProgress.deleteMany({
+    where: { userId, episodeFile: { episode: { season: { showId } } } },
+  });
+  return { cleared: result.count };
 }
 
 /** For the Shows page's card overlays. */

@@ -12,22 +12,12 @@
 // household membership, not just a session) to match every other server
 // action — the film/show pages that render these buttons already gate on
 // requireMemberOrRedirect, so nobody signed-in-but-membership-less could
-// reach them anyway. "Reset viewed" stays on the session-only check below;
-// it isn't part of the native app's surface yet.
+// reach them anyway. "Reset viewed" moved the same way when the apps gained
+// it (/api/v1/films/:id/progress and /api/v1/shows/:id/progress).
 
 import { revalidatePath } from "next/cache";
-import { headers } from "next/headers";
-import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/db";
 import { requireMember } from "@/lib/require-member";
 import * as filmUserState from "@/lib/film-user-state";
-
-async function currentUserId(): Promise<string> {
-  const session = await auth.api.getSession({ headers: await headers() });
-  const userId = session?.user?.id;
-  if (!userId) throw new Error("not signed in");
-  return userId;
-}
 
 export async function toggleFilmFavourite(filmId: number): Promise<{ favourite: boolean }> {
   const { userId } = await requireMember();
@@ -38,12 +28,11 @@ export async function toggleFilmFavourite(filmId: number): Promise<{ favourite: 
 }
 
 export async function resetFilmWatched(filmId: number): Promise<{ cleared: number }> {
-  if (!Number.isInteger(filmId)) throw new Error("invalid film id");
-  const userId = await currentUserId();
-  const result = await prisma.watchProgress.deleteMany({ where: { userId, version: { filmId } } });
+  const { userId } = await requireMember();
+  const result = await filmUserState.resetFilmWatched(userId, filmId);
   revalidatePath(`/film/${filmId}`);
   revalidatePath("/");
-  return { cleared: result.count };
+  return result;
 }
 
 export async function toggleShowFavourite(showId: number): Promise<{ favourite: boolean }> {
@@ -56,12 +45,9 @@ export async function toggleShowFavourite(showId: number): Promise<{ favourite: 
 
 /** Drop the person's WatchProgress rows for every episode file of the show. */
 export async function resetShowWatched(showId: number): Promise<{ cleared: number }> {
-  if (!Number.isInteger(showId)) throw new Error("invalid show id");
-  const userId = await currentUserId();
-  const result = await prisma.watchProgress.deleteMany({
-    where: { userId, episodeFile: { episode: { season: { showId } } } },
-  });
+  const { userId } = await requireMember();
+  const result = await filmUserState.resetShowWatched(userId, showId);
   revalidatePath(`/shows/${showId}`);
   revalidatePath("/shows");
-  return { cleared: result.count };
+  return result;
 }
