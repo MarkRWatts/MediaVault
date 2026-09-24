@@ -253,11 +253,18 @@ function ExpandingCard({
   // only when open.
   const width = hero ? `${WIDE_W} ${open ? "" : DESKTOP_POSTER_W}` : `${POSTER_W} ${open ? DESKTOP_WIDE_W : ""}`;
   // The wide layer is always there in the hero (it's what a touch screen
-  // sees), hidden on a desktop while that card is a poster; elsewhere it's
-  // only rendered once the card opens, so a row of forty posters doesn't
-  // fetch forty backdrops.
-  const wideLayer = hero || open;
-  const wideVisibility = hero ? (open ? "" : "desktop-input:hidden") : "hidden desktop-input:block";
+  // sees), faded out on a desktop while that card is a poster; elsewhere
+  // it's only rendered once the card first opens, so a row of forty posters
+  // doesn't fetch forty backdrops — and then kept, so closing fades it out
+  // with the card rather than snapping it away.
+  const [hasOpened, setHasOpened] = useState(open);
+  if (open && !hasOpened) setHasOpened(true);
+  const wideLayer = hero || hasOpened;
+  const wideVisibility = hero
+    ? open
+      ? ""
+      : "desktop-input:opacity-0"
+    : `hidden desktop-input:block ${open ? "" : "desktop-input:opacity-0"}`;
   const backdrop = card.backdropPath ?? card.posterPath;
   const backdropSize = card.backdropPath ? "w1280" : "w780";
 
@@ -271,11 +278,15 @@ function ExpandingCard({
       onTransitionEnd={(e) => {
         if (e.propertyName === "width" && e.currentTarget === document.activeElement) revealFocused(e.currentTarget);
       }}
-      className={`relative block h-[var(--row-h)] shrink-0 snap-start overflow-hidden rounded-xl bg-bg-elevated transition-[width,box-shadow] duration-300 ease-out motion-reduce:transition-none ${width} ${CARD_RING} ${
+      className={`relative block h-[var(--row-h)] shrink-0 snap-start overflow-hidden rounded-xl bg-bg-elevated transition-[width,box-shadow] duration-[450ms] ease-in-out motion-reduce:transition-none ${width} ${CARD_RING} ${
         open ? "shadow-xl shadow-black/60" : "shadow-md shadow-black/30"
       }`}
     >
-      <div className={`absolute inset-0 ${hero ? "desktop-input:block hidden" : ""}`}>
+      {/* Each picture keeps its own size, pinned left, while the card's
+          width animates: opening reveals the backdrop, closing crops it back
+          to the poster — neither is stretched to the in-between width,
+          which read as a zoom. */}
+      <div className={`absolute inset-y-0 left-0 ${POSTER_W} ${hero ? "desktop-input:block hidden" : ""}`}>
         <PosterImage
           posterPath={card.posterPath}
           title={card.title}
@@ -285,7 +296,9 @@ function ExpandingCard({
         />
       </div>
       {wideLayer && (
-        <div className={`home-fade absolute inset-0 ${wideVisibility}`}>
+        <div
+          className={`home-fade absolute inset-y-0 left-0 ${WIDE_W} transition-opacity duration-[450ms] ease-in-out motion-reduce:transition-none ${wideVisibility}`}
+        >
           {backdrop && (
             <img
               src={`/api/poster/${backdropSize}${backdrop}`}
@@ -349,7 +362,7 @@ function PosterCard({ item, card }: { item: HomeItem; card: HomeCard }) {
       <PosterImage
         posterPath={card.posterPath}
         title={card.title}
-        className={`h-[var(--row-h)] w-full rounded-xl shadow-md shadow-black/30 transition-shadow group-focus-visible/card:ring-2 group-focus-visible/card:ring-accent group-focus-visible/card:ring-offset-2 group-focus-visible/card:ring-offset-bg desktop-input:group-hover/card:ring-2 desktop-input:group-hover/card:ring-accent/70`}
+        className={`h-[var(--row-h)] w-full rounded-xl shadow-md shadow-black/30 transition-shadow duration-[225ms] group-focus-visible/card:ring-2 group-focus-visible/card:ring-accent group-focus-visible/card:ring-offset-2 group-focus-visible/card:ring-offset-bg desktop-input:group-hover/card:ring-2 desktop-input:group-hover/card:ring-accent/70`}
       />
       <span className="line-clamp-1 text-sm font-semibold text-text">{card.title}</span>
       {episodes !== null && (
@@ -402,7 +415,7 @@ function ScrollArrow({
       tabIndex={-1}
       aria-label={`Scroll ${label} ${side}`}
       onClick={onClick}
-      className={`absolute inset-y-3 z-10 hidden w-12 items-center justify-center text-text opacity-0 transition-opacity desktop-input:flex ${
+      className={`absolute inset-y-3 z-10 hidden w-12 items-center justify-center text-text opacity-0 transition-opacity duration-[225ms] desktop-input:flex ${
         visible ? "desktop-input:group-hover/row:opacity-100" : "pointer-events-none"
       } ${
         side === "left"
