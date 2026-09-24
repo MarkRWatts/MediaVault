@@ -26,32 +26,34 @@ describe("isNavItemActive", () => {
 
 describe("navItemsFor", () => {
   const hrefs = (items: { href: string }[]) => items.map((i) => i.href);
+  const labels = (items: { label: string }[]) => items.map((i) => i.label);
 
-  it("shows a plain member the six everyday sections and no owner rows", () => {
+  it("gives everyone the iPhone app's five tabs, in its order and words", () => {
     const groups = navItemsFor({ isOwner: false, hasAdultAccess: false });
-    expect(hrefs(groups.primary)).toEqual(["/", "/films", "/shows", "/music", "/collections", "/history"]);
+    expect(labels(groups.primary)).toEqual(["Home", "Movies", "Shows", "Music", "Search"]);
+    expect(hrefs(groups.primary)).toEqual(["/", "/films", "/shows", "/music", "/search"]);
+  });
+
+  it("puts Collections and History in the extras, with no owner rows for a member", () => {
+    const groups = navItemsFor({ isOwner: false, hasAdultAccess: false });
+    expect(hrefs(groups.extras)).toEqual(["/collections", "/history"]);
     expect(groups.owner).toEqual([]);
-    expect(hrefs(groups.mobileTabs)).toEqual(["/", "/films", "/shows", "/music"]);
-    expect(hrefs(groups.more)).toEqual(["/collections", "/history"]);
   });
 
   it("adds Adult between Collections and History only with the opt-in", () => {
     const groups = navItemsFor({ isOwner: false, hasAdultAccess: true });
-    expect(hrefs(groups.primary)).toEqual(["/", "/films", "/shows", "/music", "/collections", "/adult", "/history"]);
-    expect(hrefs(groups.more)).toEqual(["/collections", "/adult", "/history"]);
+    expect(hrefs(groups.extras)).toEqual(["/collections", "/adult", "/history"]);
+    expect(hrefs(groups.primary)).not.toContain("/adult");
   });
 
-  it("adds the owner group, and puts it last in More, only for the app owner", () => {
+  it("adds the owner group only for the app owner", () => {
     const groups = navItemsFor({ isOwner: true, hasAdultAccess: false });
     expect(groups.owner).toEqual(OWNER_ITEMS);
-    expect(hrefs(groups.more)).toEqual(["/collections", "/history", "/scan", "/report", "/admin"]);
-    expect(groups.moreOwner).toEqual(OWNER_ITEMS);
   });
 
-  it("never lists a destination twice across tabs and More", () => {
+  it("never lists a destination twice", () => {
     const groups = navItemsFor({ isOwner: true, hasAdultAccess: true });
-    const all = [...hrefs(groups.mobileTabs), ...hrefs(groups.more)];
+    const all = [...hrefs(groups.primary), ...hrefs(groups.extras), ...hrefs(groups.owner)];
     expect(new Set(all).size).toBe(all.length);
-    expect(all.sort()).toEqual([...hrefs(groups.primary), ...hrefs(groups.owner)].sort());
   });
 });

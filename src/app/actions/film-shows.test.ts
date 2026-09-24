@@ -1,6 +1,6 @@
 // Exercises the film-to-show link actions against a REAL, isolated SQLite
 // database — same pattern as household.test.ts. What this pins is the part
-// that isn't visible from the film page: the owner gate holds for a signed-in
+// that isn't visible from the show page: the owner gate holds for a signed-in
 // non-owner, a concert can't be linked at all, and linking twice is quiet
 // rather than an error.
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";

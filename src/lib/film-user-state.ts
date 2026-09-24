@@ -33,6 +33,26 @@ export async function getFilmUserState(userId: string, filmId: number, versionId
   return { favourite: favourite !== null, watched: progress !== null };
 }
 
+/** Where this person left off on one copy of a film. */
+export interface ResumePoint {
+  versionId: number;
+  positionSecs: number;
+}
+
+/** The film page's resume positions, most recently watched first: only real
+ *  "in progress" points — the same bar VideoPlayer uses to decide whether
+ *  to seek on load, so the page never offers "Resume from 0:12" that the
+ *  player would then ignore. */
+export async function getFilmResumePoints(userId: string, versionIds: number[]): Promise<ResumePoint[]> {
+  if (versionIds.length === 0) return [];
+  const rows = await prisma.watchProgress.findMany({
+    where: { userId, versionId: { in: versionIds }, completed: false, positionSecs: { gte: WATCH_PROGRESS_MIN_SECS } },
+    orderBy: { updatedAt: "desc" },
+    select: { versionId: true, positionSecs: true },
+  });
+  return rows.map((r) => ({ versionId: r.versionId!, positionSecs: r.positionSecs }));
+}
+
 export async function getShowUserState(userId: string, showId: number): Promise<FilmUserState> {
   const [favourite, progress] = await Promise.all([
     prisma.showFavourite.findUnique({ where: { userId_showId: { userId, showId } }, select: { userId: true } }),

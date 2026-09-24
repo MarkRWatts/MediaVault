@@ -3,7 +3,7 @@
 // household-yet pages (/onboarding, /invite/[token] again) and the OIDC
 // consent card (/consent, see CHROMELESS_PATHS) get bare children; every
 // other page gets the floating sidebar (desktop) or top bar + bottom tabs
-// (mobile). Ported from template-app's components/shell/app-shell.tsx with
+// (mobile) — bar a film page's top bar, which top-nav.tsx leaves out. Ported from template-app's components/shell/app-shell.tsx with
 // TrainTracker's safe-area inset on <main>.
 //
 // This runs inside the root layout, so it's the one place that has to
@@ -103,7 +103,7 @@ export async function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <PlayerProvider>
       <PlaylistsProvider playlists={playlists} favouriteTrackCount={favouriteTrackCount}>
-        <TopNav user={shellUser} />
+        <TopNav user={shellUser} flags={flags} />
         <Sidebar user={shellUser} flags={flags} initialCollapsed={user.sidebarCollapsed} />
         {/* md:pl clears the floating sidebar (its width plus the 1rem inset
             on each side, the left one growing with the safe-area inset on a
