@@ -7,6 +7,7 @@ import { NextResponse } from "next/server";
 import { requireMemberOrResponse } from "@/lib/require-member";
 import { getShowDetail } from "@/lib/queries";
 import { getShowUserState } from "@/lib/film-user-state";
+import { getShowFilms } from "@/lib/queries-film-shows";
 import { prisma } from "@/lib/db";
 import { isFilePlayable } from "@/lib/playback/engine-flag";
 import type { ShowDetailResponse, SeasonV1, EpisodeFileProgress } from "@/lib/api-v1-types";
@@ -27,8 +28,9 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   }
 
   const fileIds = show.seasons.flatMap((s) => s.episodes.flatMap((e) => e.files.map((f) => f.id)));
-  const [userState, progressRows] = await Promise.all([
+  const [userState, films, progressRows] = await Promise.all([
     getShowUserState(gate.userId, show.id),
+    getShowFilms(show.id, gate.ageLimit),
     fileIds.length > 0
       ? prisma.watchProgress.findMany({
           where: { userId: gate.userId, episodeFileId: { in: fileIds } },
@@ -51,6 +53,6 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     completed: p.completed,
   }));
 
-  const body: ShowDetailResponse = { ...show, seasons, favourite: userState.favourite, progress };
+  const body: ShowDetailResponse = { ...show, seasons, favourite: userState.favourite, progress, films };
   return NextResponse.json(body);
 }

@@ -68,6 +68,7 @@ function show(id: number, ownedEpisodeCount: number, createdAt: string): ShowSum
     totalEpisodeCount: 10,
     complete: false,
     createdAt,
+    genres: [],
   };
 }
 
