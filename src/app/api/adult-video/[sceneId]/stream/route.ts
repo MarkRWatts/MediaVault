@@ -5,7 +5,6 @@
 import { NextResponse } from "next/server";
 import { resolveVideoStream } from "@/lib/video-cache";
 import { serveFile } from "@/lib/serve-file";
-import { DIRECT_PLAY_MAX_RANGE_BYTES } from "@/lib/constants";
 import { requireAdultAccessOrResponse } from "@/lib/require-member";
 
 export async function GET(req: Request, ctx: { params: Promise<{ sceneId: string }> }) {
@@ -25,5 +24,5 @@ export async function GET(req: Request, ctx: { params: Promise<{ sceneId: string
   if (resolved.kind === "needs-prepare") {
     return NextResponse.json({ error: "this file is served as HLS; use hls/<variant>/index.m3u8" }, { status: 409 });
   }
-  return serveFile(req, resolved.absPath, resolved.contentType, "no-store", { maxRangeBytes: DIRECT_PLAY_MAX_RANGE_BYTES });
+  return serveFile(req, resolved.absPath, resolved.contentType, "no-store");
 }

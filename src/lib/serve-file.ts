@@ -53,26 +53,21 @@ export function fileToWebStream(readStream: Readable): ReadableStream<Uint8Array
 
 /** 200 or 206 for `absPath`, honouring a single-range Range header.
  *
- *  `maxRangeBytes` caps how much one 206 carries: a request for more (an
- *  open-ended `bytes=N-` is the usual one) gets the first `maxRangeBytes`
- *  of it, with a Content-Range that says so, and the client asks again for
- *  the rest — RFC 9110 lets a server send less than was asked for. The
- *  /stream routes need it: AVFoundation (the Apple TV and iOS apps) opens
- *  several ranges of the same MP4 over one HTTP/2-or-3 connection, stops
- *  reading the open-ended ones once it has buffered enough, and those
- *  stalled responses then hold the connection's flow-control window — so
- *  the audio track's reads behind them get nothing, and the sound stops
- *  while the picture plays on from its buffer. Bounded responses finish
- *  and free the window. A plain 200 (no Range header) is never capped. */
+ *  A 206 carries exactly the range asked for, however large. AVFoundation
+ *  (the Apple TV and iOS apps) opens a direct-play file with one persistent
+ *  `bytes=0-<end>` request and rejects a shorter answer outright as
+ *  CoreMediaErrorDomain -12939, "content range mismatch" — so a server-side
+ *  cap on range size (RFC 9110 allows one) breaks every direct play. The
+ *  4 MiB cap once here (#114) did, silently for 1080p (the apps fell back to
+ *  HLS) and fatally for UHD (no fallback). */
 export async function serveFile(
   req: Request,
   absPath: string,
   contentType: string,
   cacheControl: string,
-  options: { maxRangeBytes?: number } = {},
 ): Promise<NextResponse> {
   const stat = await fsPromises.stat(absPath);
-  const range = capRange(parseRange(req.headers.get("range"), stat.size), options.maxRangeBytes);
+  const range = parseRange(req.headers.get("range"), stat.size);
   const common = { "Content-Type": contentType, "Accept-Ranges": "bytes", "Cache-Control": cacheControl };
 
   if (range === "unsatisfiable") {
@@ -94,8 +89,3 @@ export async function serveFile(
   });
 }
 
-function capRange(range: ReturnType<typeof parseRange>, maxRangeBytes: number | undefined): ReturnType<typeof parseRange> {
-  if (!maxRangeBytes || range === null || range === "unsatisfiable") return range;
-  if (range.end - range.start + 1 <= maxRangeBytes) return range;
-  return { start: range.start, end: range.start + maxRangeBytes - 1 };
-}

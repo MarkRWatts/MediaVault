@@ -10,13 +10,12 @@
 // used to hand this URL out — as the episode twin does. The library rows
 // resolveVideoStream reads can lag a remux: the UHD films were re-muxed to
 // AAC on 23 Sep while their rows still listed TrueHD + AC-3, so the session
-// said "direct" and this route answered 409, which AVPlayer reports as
-// CoreMediaErrorDomain -12939.
+// said "direct" and this route answered 409, which AVPlayer reports as a
+// bare CoreMediaErrorDomain error.
 
 import { NextResponse } from "next/server";
 import { resolveVideoStream } from "@/lib/video-cache";
 import { serveFile } from "@/lib/serve-file";
-import { DIRECT_PLAY_MAX_RANGE_BYTES } from "@/lib/constants";
 import { requireMemberOrResponse } from "@/lib/require-member";
 import { ageGate } from "@/lib/age-gate";
 import { playbackEngine } from "@/lib/playback/engine-flag";
@@ -54,16 +53,8 @@ export async function GET(req: Request, ctx: { params: Promise<{ versionId: stri
         logRefusal(versionId, 409, req, `tier ${source.plan.tier}: ${source.plan.reason}`);
         return NextResponse.json({ error: "this file is served by the playback engine; start a session instead" }, { status: 409 });
       }
-      const res = await serveFile(req, source.absPath, "video/mp4", "no-store", { maxRangeBytes: DIRECT_PLAY_MAX_RANGE_BYTES });
+      const res = await serveFile(req, source.absPath, "video/mp4", "no-store");
       if (res.status >= 400) logRefusal(versionId, res.status, req, "serveFile");
-      // Temporary: every UHD response, while the Apple TV's -12939 is unexplained.
-      else if (source.plan.hevcTag) {
-        console.warn(
-          `[film-stream] ${versionId} → ${res.status} (range ${req.headers.get("range") ?? "none"}) ` +
-            `content-range ${res.headers.get("content-range") ?? "-"} length ${res.headers.get("content-length") ?? "-"} ` +
-            `ua ${req.headers.get("user-agent") ?? "-"}`,
-        );
-      }
       return res;
     } catch (err) {
       if (err instanceof PlaybackError) {
@@ -82,7 +73,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ versionId: stri
   if (resolved.kind === "needs-prepare") {
     return NextResponse.json({ error: "this file is served as HLS; use hls/<variant>/index.m3u8" }, { status: 409 });
   }
-  return serveFile(req, resolved.absPath, resolved.contentType, "no-store", { maxRangeBytes: DIRECT_PLAY_MAX_RANGE_BYTES });
+  return serveFile(req, resolved.absPath, resolved.contentType, "no-store");
 }
 
 /** One line per refused request: AVPlayer reports any HTTP error as a bare
