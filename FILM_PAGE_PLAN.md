@@ -101,6 +101,11 @@ titles.
 
 ## Apple TV
 
-Its film page already has the backdrop-and-logo hero and a Resume / Play
-from the Beginning / version / favourite / reset row. It takes the Quality
-labels above for its version menu, and the chips-then-quiet-line facts.
+The same page, laid out for the TV (MediaVaultiOS `TVFilmDetailView`): the
+backdrop and logo fill the screen, the text sits bottom-left rather than
+centred, and Play keeps its width to its label (a full-width button reads
+oddly on a television). Otherwise as above: chips, then the quiet line;
+Play/Resume and Play from the Beginning, then labelled Favourite · Watched ·
+Quality buttons; the synopsis; and More like this below the first screen,
+as a Home-style row that slides under a fixed wide spot. Tab bar: the TV
+keeps its top bar (Home · Movies · TV Shows · Music · Search · Settings).
