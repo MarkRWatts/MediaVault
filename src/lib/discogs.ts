@@ -16,7 +16,7 @@ import type { Artist } from "@/generated/prisma/client";
 import type { AlbumKind } from "@/lib/constants";
 import { MUSIC_GAP_MIN_OWNED, MUSIC_GAP_MIN_PCT } from "@/lib/constants";
 import { guardAndCreateRun, updateProgress, finishRun, failRun } from "@/lib/runs";
-import { fetchCover, fetchDiscogsPhysicalCopyCover, fetchDiscogsAlbumCover } from "@/lib/cover-art";
+import { adoptCopyCover, copyForAlbumCover, fetchCover, fetchDiscogsPhysicalCopyCover, fetchDiscogsAlbumCover } from "@/lib/cover-art";
 import { fetchArtistEnrichment, type DiscogsArtistData } from "@/lib/artist-bio";
 import { isSpotifyConfigured, matchSpotifyArtist, fetchSpotifyArtistImages } from "@/lib/spotify";
 
@@ -1337,6 +1337,8 @@ async function doMusicEnrich(runId: number): Promise<void> {
     }
   }
 
+  await followOwnedCopyCovers(log);
+
   // Unconditional, so a settled catalogue still has a log worth opening.
   const albums = await prisma.album.count();
   log.push(
@@ -1600,6 +1602,10 @@ async function populatePhysicalReleaseFromDiscogs(
       // best-effort — no cover for this pressing, the album's own still shows
     }
 
+    // The album's own cover follows this copy's when its files came from it
+    // (a CD rip, a vinyl download code): see copyForAlbumCover.
+    await followOwnedCopyCover(copy.albumId);
+
     // Back-fill the ALBUM's own cover too when it has none — a physical-only
     // add whose Discogs entry has no usable image found elsewhere would
     // otherwise stay coverless even though a perfectly usable photo was just
@@ -1622,6 +1628,54 @@ async function populatePhysicalReleaseFromDiscogs(
       // best-effort — never fail the larger attach over this
     }
   }
+}
+
+/**
+ * Give one album the cover of the copy its files came from, when there is
+ * such a copy (copyForAlbumCover). Returns whether the cover changed.
+ * Best-effort: never throws.
+ */
+export async function followOwnedCopyCover(albumId: number): Promise<boolean> {
+  try {
+    const album = await prisma.album.findUnique({
+      where: { id: albumId },
+      select: { digitalSource: true, coverSource: true, coverPath: true },
+    });
+    if (!album) return false;
+    const [copies, alac] = await Promise.all([
+      prisma.physicalCopy.findMany({
+        where: { albumId },
+        select: { medium: true, discogsReleaseId: true, coverPath: true, addedAt: true },
+      }),
+      prisma.track.count({ where: { albumId, codec: "alac" } }),
+    ]);
+    const copy = copyForAlbumCover({ ...album, hasAlacTracks: alac > 0 }, copies);
+    if (!copy?.coverPath) return false;
+    const result = await adoptCopyCover(albumId, copy.coverPath);
+    if (!result) return false;
+    // Always written, even when the path is unchanged: updatedAt is the
+    // apps' cover version, and the picture behind the path just changed.
+    await prisma.album.update({ where: { id: albumId }, data: { coverPath: result.fileName, coverSource: result.source } });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** followOwnedCopyCover for every album that could have such a copy and
+ *  doesn't already show it — the end of each music enrichment, so an
+ *  album whose copy was linked before this rule existed catches up. */
+async function followOwnedCopyCovers(log: string[]): Promise<void> {
+  const albums = await prisma.album.findMany({
+    where: {
+      physicalCopies: { some: { discogsReleaseId: { not: null }, coverPath: { not: null } } },
+      NOT: { coverSource: { in: ["embedded", "manual", "physical"] } },
+    },
+    select: { id: true },
+  });
+  let changed = 0;
+  for (const { id } of albums) if (await followOwnedCopyCover(id)) changed++;
+  if (changed > 0) log.push(`Took ${changed} album cover(s) from the copy their files came from`);
 }
 
 /**
