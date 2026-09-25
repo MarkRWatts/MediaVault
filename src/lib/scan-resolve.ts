@@ -67,6 +67,9 @@ async function buildMusicResult(hit: MusicBarcodeHit): Promise<LookupResult> {
         year: albumWithCopies.year,
         coverPath: albumWithCopies.coverPath,
       },
+      // Which medium the scan was — the native API's "on CD, not vinyl"
+      // wording needs it; the web ignores it.
+      medium: scannedMedium,
     };
   }
   return {
@@ -179,7 +182,7 @@ export async function resolveOwned(barcode: string): Promise<LookupResult | null
     include: { film: { select: { id: true, title: true, year: true, posterPath: true } } },
   });
   if (filmCopy) {
-    return { status: "owned", type: "film", film: filmCopy.film };
+    return { status: "owned", type: "film", film: filmCopy.film, medium: filmCopy.medium };
   }
 
   const albumCopy = await prisma.physicalCopy.findFirst({
@@ -197,6 +200,7 @@ export async function resolveOwned(barcode: string): Promise<LookupResult | null
         year: albumCopy.album.year,
         coverPath: albumCopy.album.coverPath,
       },
+      medium: albumCopy.medium,
     };
   }
 
