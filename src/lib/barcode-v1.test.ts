@@ -102,6 +102,7 @@ describe("toBarcodeResponse", () => {
       scannedMedium: "VINYL",
       libraryId: 10,
       artwork: "https://i.discogs.com/x.jpg",
+      add: { type: "album", discogsMasterId: 555, discogsReleaseId: 999 },
       ownedAs: [
         { medium: "CD", format: "CD" },
         { medium: "DIGITAL", format: null },
@@ -116,7 +117,7 @@ describe("toBarcodeResponse", () => {
       album: { id: 10, title: "Spirit of Eden", artistName: "Talk Talk", year: 1988, coverPath: null },
       medium: "CD",
     });
-    expect(res.match).toMatchObject({ kind: "album", scannedMedium: "CD", artistName: "Talk Talk", artwork: null });
+    expect(res.match).toMatchObject({ kind: "album", scannedMedium: "CD", artistName: "Talk Talk", artwork: null, add: null });
   });
 
   it("lists an owned film's discs and rip", async () => {
@@ -130,6 +131,8 @@ describe("toBarcodeResponse", () => {
       scannedMedium: null,
       artwork: "/api/poster/w342/heat.jpg",
       ownedAs: [{ medium: "UHD" }, { medium: "BLURAY" }, { medium: "DIGITAL" }],
+      // Already on disc, so nothing to add.
+      add: null,
     });
   });
 
@@ -139,7 +142,21 @@ describe("toBarcodeResponse", () => {
       type: "film",
       candidate: { tmdbId: 1, title: "Somebody Else's Film", year: 2001, posterPath: null },
     });
-    expect(res.match).toMatchObject({ libraryId: null, ownedAs: [], artwork: null });
+    expect(res.match).toMatchObject({ libraryId: null, ownedAs: [], artwork: null, add: { type: "film", tmdbId: 1 } });
+  });
+});
+
+describe("adding from a scan", () => {
+  it("offers to log the disc of a film owned only as a rip", async () => {
+    await testPrisma.film.create({
+      data: { id: 21, title: "Ronin", sortTitle: "ronin", year: 1998, tmdbId: 8195, owned: true },
+    });
+    const res = await toBarcodeResponse("5050582", {
+      status: "owned",
+      type: "film",
+      film: { id: 21, title: "Ronin", year: 1998, posterPath: null },
+    });
+    expect(res.match).toMatchObject({ ownedAs: [{ medium: "DIGITAL" }], add: { type: "film", tmdbId: 8195 } });
   });
 });
 

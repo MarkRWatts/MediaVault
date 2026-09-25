@@ -8,7 +8,7 @@ import { prisma } from "@/lib/db";
 import { findAlbumByDiscogsIdentity } from "@/lib/discogs";
 import { guessAlbumMedium } from "@/lib/album-medium";
 import type { LookupResult } from "@/lib/scan-resolve";
-import type { BarcodeLookupResponse, BarcodeMatch, BarcodeMedium, BarcodeOwnedCopy } from "@/lib/api-v1-types";
+import type { BarcodeAddRef, BarcodeLookupResponse, BarcodeMatch, BarcodeMedium, BarcodeOwnedCopy } from "@/lib/api-v1-types";
 
 // Most useful first: the scarcer, "better" physical formats ahead of the
 // everyday ones, and a digital rip last.
@@ -48,9 +48,19 @@ function posterArtwork(posterPath: string | null | undefined): string | null {
 async function filmOwnership(filmId: number) {
   const film = await prisma.film.findUnique({
     where: { id: filmId },
-    select: { owned: true, physicalCopies: { select: { medium: true } } },
+    select: { owned: true, tmdbId: true, physicalCopies: { select: { medium: true } } },
   });
-  return film ? ownedAsFrom(film.physicalCopies, film.owned) : [];
+  return {
+    ownedAs: film ? ownedAsFrom(film.physicalCopies, film.owned) : [],
+    tmdbId: film?.tmdbId ?? null,
+    onDisc: (film?.physicalCopies.length ?? 0) > 0,
+  };
+}
+
+/** A film can be logged on disc unless it already is (the barcode can't
+ *  say which disc, so any physical copy counts as "this one"). */
+function filmAdd(tmdbId: number | null, onDisc: boolean): BarcodeAddRef | null {
+  return tmdbId != null && !onDisc ? { type: "film", tmdbId } : null;
 }
 
 async function albumOwnership(albumId: number) {
@@ -74,6 +84,7 @@ export async function toBarcodeResponse(barcode: string, result: LookupResult): 
   let match: BarcodeMatch;
   if (result.type === "film" && status === "owned") {
     const film = result.film;
+    const owned = await filmOwnership(film.id);
     match = {
       kind: "film",
       title: film.title,
@@ -82,12 +93,15 @@ export async function toBarcodeResponse(barcode: string, result: LookupResult): 
       scannedMedium: asMedium(result.medium),
       libraryId: film.id,
       artwork: posterArtwork(film.posterPath),
-      ownedAs: await filmOwnership(film.id),
+      ownedAs: owned.ownedAs,
+      // Owned only as a rip: the disc in hand can still be logged.
+      add: filmAdd(owned.tmdbId, owned.onDisc),
     };
   } else if (result.type === "film") {
     const candidate = result.candidate;
     // An unowned placeholder row (a collection's missing entry) may exist.
     const film = await prisma.film.findUnique({ where: { tmdbId: candidate.tmdbId }, select: { id: true } });
+    const owned = film ? await filmOwnership(film.id) : null;
     match = {
       kind: "film",
       title: candidate.title,
@@ -96,7 +110,8 @@ export async function toBarcodeResponse(barcode: string, result: LookupResult): 
       scannedMedium: null,
       libraryId: film?.id ?? null,
       artwork: posterArtwork(candidate.posterPath),
-      ownedAs: film ? await filmOwnership(film.id) : [],
+      ownedAs: owned?.ownedAs ?? [],
+      add: filmAdd(candidate.tmdbId, owned?.onDisc ?? false),
     };
   } else if (status === "owned") {
     const album = result.album;
@@ -110,6 +125,7 @@ export async function toBarcodeResponse(barcode: string, result: LookupResult): 
       libraryId: album.id,
       artwork: owned?.artwork ?? null,
       ownedAs: owned?.ownedAs ?? [],
+      add: null,
     };
   } else {
     const candidate = result.candidate;
@@ -128,6 +144,11 @@ export async function toBarcodeResponse(barcode: string, result: LookupResult): 
       // The pressing actually scanned, rather than the library's own cover.
       artwork: candidate.coverArtUrl ?? owned?.artwork ?? null,
       ownedAs: owned?.ownedAs ?? [],
+      add: {
+        type: "album",
+        discogsMasterId: candidate.discogsMasterId ?? null,
+        discogsReleaseId: candidate.discogsReleaseId ?? null,
+      },
     };
   }
 
