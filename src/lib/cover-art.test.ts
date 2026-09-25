@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pickItunesHit, verifyArtistMatch } from "./cover-art";
+import { copyForAlbumCover, pickItunesHit, verifyArtistMatch } from "./cover-art";
 
 describe("verifyArtistMatch", () => {
   it("accepts an exact match", () => {
@@ -107,5 +107,49 @@ describe("pickItunesHit", () => {
     ];
     const best = pickItunesHit(hits, "Erasure", "Hits! The Very Best of Erasure");
     expect(best?.artworkUrl100).toBe("http://example.com/best-of.jpg");
+  });
+});
+
+describe("copyForAlbumCover", () => {
+  const cd = (over: Partial<{ discogsReleaseId: number | null; coverPath: string | null; addedAt: Date }> = {}) => ({
+    medium: "CD",
+    discogsReleaseId: 5824,
+    coverPath: "155-cd.jpg",
+    addedAt: new Date("2026-08-22"),
+    ...over,
+  });
+  const vinyl = { medium: "VINYL", discogsReleaseId: 99, coverPath: "155-vinyl.jpg", addedAt: new Date("2026-08-23") };
+  const album = (over: Partial<{ digitalSource: string | null; coverSource: string | null; hasAlacTracks: boolean }> = {}) => ({
+    digitalSource: null,
+    coverSource: "discogs",
+    hasAlacTracks: true,
+    ...over,
+  });
+
+  it("takes an ALAC rip's cover from its CD — said or not", () => {
+    expect(copyForAlbumCover(album(), [vinyl, cd()])?.medium).toBe("CD");
+    expect(copyForAlbumCover(album({ digitalSource: "cd", hasAlacTracks: false }), [cd()])?.medium).toBe("CD");
+  });
+
+  it("takes a vinyl download code's cover from its LP", () => {
+    expect(copyForAlbumCover(album({ digitalSource: "vinyl-code", hasAlacTracks: false }), [cd(), vinyl])?.medium).toBe("VINYL");
+  });
+
+  it("leaves MP3s, downloads and iTunes purchases alone", () => {
+    expect(copyForAlbumCover(album({ hasAlacTracks: false }), [cd()])).toBeNull();
+    expect(copyForAlbumCover(album({ digitalSource: "itunes" }), [cd()])).toBeNull();
+    expect(copyForAlbumCover(album({ digitalSource: "download" }), [cd()])).toBeNull();
+  });
+
+  it("never replaces art from the files or set by hand", () => {
+    expect(copyForAlbumCover(album({ coverSource: "embedded" }), [cd()])).toBeNull();
+    expect(copyForAlbumCover(album({ coverSource: "manual" }), [cd()])).toBeNull();
+  });
+
+  it("needs the copy's own edition and cover, and prefers the newest copy", () => {
+    expect(copyForAlbumCover(album(), [cd({ discogsReleaseId: null })])).toBeNull();
+    expect(copyForAlbumCover(album(), [cd({ coverPath: null })])).toBeNull();
+    const older = cd({ coverPath: "old.jpg", addedAt: new Date("2025-01-01") });
+    expect(copyForAlbumCover(album(), [older, cd()])?.coverPath).toBe("155-cd.jpg");
   });
 });

@@ -41,7 +41,7 @@ const MIN_EMBEDDED_COVER_BYTES = 2 * 1024;
 // mandatory artist-name check below.
 const ITUNES_TITLE_THRESHOLD = 0.6;
 
-export type CoverSource = "embedded" | "itunes" | "discogs" | "manual";
+export type CoverSource = "embedded" | "itunes" | "discogs" | "manual" | "physical";
 
 export interface CoverTarget {
   id: number;
@@ -355,6 +355,50 @@ export async function fetchDiscogsPhysicalCopyCover(copy: {
  * the album genuinely has none yet — never overwrites an existing or
  * manually-set one.
  */
+/**
+ * The copy an album's own cover should come from, when its files were made
+ * from a copy on the shelf: a CD rip looks like that CD (Mark, 25 Sep 2026:
+ * "all ALAC rips come from the CD"), a vinyl download code like that LP.
+ * Discogs keys an album by its master, whose picture is whichever edition
+ * Discogs chose (William Orbit's Pieces in a Modern Style: the withdrawn
+ * 1995 Electric Chamber sleeve); the copy has the edition actually owned.
+ *
+ * The files' origin is `digitalSource` when it's been said; unsaid, lossless
+ * ALAC files are taken as a CD rip, and anything else (MP3s, downloads) as
+ * having no copy to follow. Only a copy linked to a specific Discogs
+ * release with a cover of its own counts — the newest, if several — and
+ * never over art from the files themselves or one set by hand.
+ */
+export function copyForAlbumCover<C extends { medium: string; discogsReleaseId: number | null; coverPath: string | null; addedAt: Date }>(
+  album: { digitalSource: string | null; coverSource: string | null; hasAlacTracks: boolean },
+  copies: C[],
+): C | null {
+  if (album.coverSource === "embedded" || album.coverSource === "manual") return null;
+  const medium =
+    album.digitalSource === "cd" || (album.digitalSource == null && album.hasAlacTracks)
+      ? "CD"
+      : album.digitalSource === "vinyl-code"
+        ? "VINYL"
+        : null;
+  if (!medium) return null;
+  const candidates = copies
+    .filter((c) => c.medium === medium && c.discogsReleaseId != null && c.coverPath != null)
+    .sort((a, b) => b.addedAt.getTime() - a.addedAt.getTime());
+  return candidates[0] ?? null;
+}
+
+/** The album's own cover made from a copy's (see copyForAlbumCover): the
+ *  copy's cached file, copied to the album's name — no new download. */
+export async function adoptCopyCover(albumId: number, copyCoverPath: string): Promise<CoverResult | null> {
+  try {
+    const fileName = `${albumId}.jpg`;
+    await fs.copyFile(path.join(COVERS_DIR, copyCoverPath), path.join(COVERS_DIR, fileName));
+    return { fileName, source: "physical" };
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchDiscogsAlbumCover(albumId: number, coverUrl: string): Promise<CoverResult | null> {
   try {
     const buf = await fetchImage(coverUrl, {
