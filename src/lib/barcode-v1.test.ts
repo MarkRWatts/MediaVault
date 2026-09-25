@@ -16,6 +16,7 @@ vi.mock("@/lib/db", () => ({
 }));
 
 const { toBarcodeResponse, ownedAsFrom } = await import("@/lib/barcode-v1");
+const { resolveOwned, barcodeVariants } = await import("@/lib/scan-resolve");
 
 beforeAll(async () => {
   const db = await createTempTestDb();
@@ -139,5 +140,13 @@ describe("toBarcodeResponse", () => {
       candidate: { tmdbId: 1, title: "Somebody Else's Film", year: 2001, posterPath: null },
     });
     expect(res.match).toMatchObject({ libraryId: null, ownedAs: [], artwork: null });
+  });
+});
+
+describe("resolveOwned", () => {
+  it("matches a stored EAN-13 from its 12-digit UPC-A, and back", async () => {
+    expect(barcodeVariants("077774615626")).toEqual(["077774615626", "0077774615626"]);
+    const res = await resolveOwned("077774615626");
+    expect(res).toMatchObject({ status: "owned", type: "album", medium: "CD" });
   });
 });

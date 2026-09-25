@@ -176,9 +176,19 @@ export async function resolveMovie(barcode: string): Promise<LookupResult | null
  * owned/physical-only Film or Album. Checked unconditionally regardless of
  * a caller's `type` hint (cheap, and protects against a mislabeled scan).
  */
+/** A UPC-A and the EAN-13 it becomes with a leading 0 are one barcode;
+ *  scanners disagree on which they report (the iPhone's gives the EAN-13,
+ *  a browser's often the UPC-A), so a stored copy is matched by either. */
+export function barcodeVariants(barcode: string): string[] {
+  if (barcode.length === 12) return [barcode, `0${barcode}`];
+  if (barcode.length === 13 && barcode.startsWith("0")) return [barcode, barcode.slice(1)];
+  return [barcode];
+}
+
 export async function resolveOwned(barcode: string): Promise<LookupResult | null> {
+  const variants = barcodeVariants(barcode);
   const filmCopy = await prisma.filmPhysicalCopy.findFirst({
-    where: { barcode },
+    where: { barcode: { in: variants } },
     include: { film: { select: { id: true, title: true, year: true, posterPath: true } } },
   });
   if (filmCopy) {
@@ -186,7 +196,7 @@ export async function resolveOwned(barcode: string): Promise<LookupResult | null
   }
 
   const albumCopy = await prisma.physicalCopy.findFirst({
-    where: { barcode },
+    where: { barcode: { in: variants } },
     include: { album: { include: { artist: { select: { name: true } } } } },
   });
   if (albumCopy) {
