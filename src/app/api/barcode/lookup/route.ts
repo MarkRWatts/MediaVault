@@ -9,6 +9,7 @@ import { withLookupSlot } from "@/lib/semaphore";
 import { readJsonObject } from "@/lib/validation";
 import { normalizeBarcode } from "@/lib/discogs";
 import { resolveBarcode } from "@/lib/scan-resolve";
+import { UpcBusyError } from "@/lib/barcode-lookup";
 import { requireOwnerOrResponse } from "@/lib/require-member";
 
 async function handlePost(req: NextRequest) {
@@ -25,7 +26,17 @@ async function handlePost(req: NextRequest) {
   }
 
   const type = body.type === "film" || body.type === "album" ? body.type : null;
-  const result = await resolveBarcode(barcode, type);
+  let result;
+  try {
+    result = await resolveBarcode(barcode, type);
+  } catch (err) {
+    // UPCitemdb throttling: the barcode may well be known, so say "try
+    // again", never "not recognised".
+    if (err instanceof UpcBusyError) {
+      return NextResponse.json({ error: err.message }, { status: 503, headers: { "Retry-After": "15" } });
+    }
+    throw err;
+  }
   return NextResponse.json(result);
 }
 
