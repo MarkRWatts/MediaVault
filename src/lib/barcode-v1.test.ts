@@ -131,7 +131,6 @@ describe("toBarcodeResponse", () => {
       scannedMedium: null,
       artwork: "/api/poster/w342/heat.jpg",
       ownedAs: [{ medium: "UHD" }, { medium: "BLURAY" }, { medium: "DIGITAL" }],
-      // Already on disc, so nothing to add.
       add: null,
     });
   });
@@ -142,21 +141,27 @@ describe("toBarcodeResponse", () => {
       type: "film",
       candidate: { tmdbId: 1, title: "Somebody Else's Film", year: 2001, posterPath: null },
     });
-    expect(res.match).toMatchObject({ libraryId: null, ownedAs: [], artwork: null, add: { type: "film", tmdbId: 1 } });
+    // A film joins the collection by being ripped: never offered as an add.
+    expect(res.match).toMatchObject({ libraryId: null, ownedAs: [], artwork: null, add: null });
   });
 });
 
 describe("adding from a scan", () => {
-  it("offers to log the disc of a film owned only as a rip", async () => {
-    await testPrisma.film.create({
-      data: { id: 21, title: "Ronin", sortTitle: "ronin", year: 1998, tmdbId: 8195, owned: true },
+  it("never offers to add a CD, which joins the collection by being ripped", async () => {
+    const res = await toBarcodeResponse("5012345678900", {
+      status: "not_owned",
+      type: "album",
+      candidate: {
+        discogsMasterId: 777,
+        discogsReleaseId: 778,
+        title: "Colour of Spring",
+        artistName: "Talk Talk",
+        year: 1986,
+        format: "CD, Album",
+        coverArtUrl: null,
+      },
     });
-    const res = await toBarcodeResponse("5050582", {
-      status: "owned",
-      type: "film",
-      film: { id: 21, title: "Ronin", year: 1998, posterPath: null },
-    });
-    expect(res.match).toMatchObject({ ownedAs: [{ medium: "DIGITAL" }], add: { type: "film", tmdbId: 8195 } });
+    expect(res.match).toMatchObject({ scannedMedium: "CD", add: null });
   });
 });
 

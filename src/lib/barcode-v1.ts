@@ -3,12 +3,16 @@
 // one thing the web page doesn't need but a shop-aisle "do I have this?"
 // check does: every format the matched film or album is already owned in,
 // so a not-owned LP can say "you have it on CD".
+//
+// Films and CDs count as collected once they're ripped, so a scan never
+// offers to add one; vinyl, logged as a physical copy, is the exception
+// (`add`).
 
 import { prisma } from "@/lib/db";
 import { findAlbumByDiscogsIdentity } from "@/lib/discogs";
 import { guessAlbumMedium } from "@/lib/album-medium";
 import type { LookupResult } from "@/lib/scan-resolve";
-import type { BarcodeAddRef, BarcodeLookupResponse, BarcodeMatch, BarcodeMedium, BarcodeOwnedCopy } from "@/lib/api-v1-types";
+import type { BarcodeLookupResponse, BarcodeMatch, BarcodeMedium, BarcodeOwnedCopy } from "@/lib/api-v1-types";
 
 // Most useful first: the scarcer, "better" physical formats ahead of the
 // everyday ones, and a digital rip last.
@@ -48,20 +52,12 @@ function posterArtwork(posterPath: string | null | undefined): string | null {
 async function filmOwnership(filmId: number) {
   const film = await prisma.film.findUnique({
     where: { id: filmId },
-    select: { owned: true, tmdbId: true, physicalCopies: { select: { medium: true } } },
+    select: { owned: true, physicalCopies: { select: { medium: true } } },
   });
-  return {
-    ownedAs: film ? ownedAsFrom(film.physicalCopies, film.owned) : [],
-    tmdbId: film?.tmdbId ?? null,
-    onDisc: (film?.physicalCopies.length ?? 0) > 0,
-  };
+  return film ? ownedAsFrom(film.physicalCopies, film.owned) : [];
 }
 
-/** A film can be logged on disc unless it already is (the barcode can't
- *  say which disc, so any physical copy counts as "this one"). */
-function filmAdd(tmdbId: number | null, onDisc: boolean): BarcodeAddRef | null {
-  return tmdbId != null && !onDisc ? { type: "film", tmdbId } : null;
-}
+
 
 async function albumOwnership(albumId: number) {
   const album = await prisma.album.findUnique({
@@ -84,7 +80,6 @@ export async function toBarcodeResponse(barcode: string, result: LookupResult): 
   let match: BarcodeMatch;
   if (result.type === "film" && status === "owned") {
     const film = result.film;
-    const owned = await filmOwnership(film.id);
     match = {
       kind: "film",
       title: film.title,
@@ -93,15 +88,13 @@ export async function toBarcodeResponse(barcode: string, result: LookupResult): 
       scannedMedium: asMedium(result.medium),
       libraryId: film.id,
       artwork: posterArtwork(film.posterPath),
-      ownedAs: owned.ownedAs,
-      // Owned only as a rip: the disc in hand can still be logged.
-      add: filmAdd(owned.tmdbId, owned.onDisc),
+      ownedAs: await filmOwnership(film.id),
+      add: null,
     };
   } else if (result.type === "film") {
     const candidate = result.candidate;
     // An unowned placeholder row (a collection's missing entry) may exist.
     const film = await prisma.film.findUnique({ where: { tmdbId: candidate.tmdbId }, select: { id: true } });
-    const owned = film ? await filmOwnership(film.id) : null;
     match = {
       kind: "film",
       title: candidate.title,
@@ -110,8 +103,9 @@ export async function toBarcodeResponse(barcode: string, result: LookupResult): 
       scannedMedium: null,
       libraryId: film?.id ?? null,
       artwork: posterArtwork(candidate.posterPath),
-      ownedAs: owned?.ownedAs ?? [],
-      add: filmAdd(candidate.tmdbId, owned?.onDisc ?? false),
+      ownedAs: film ? await filmOwnership(film.id) : [],
+      // A film joins the collection when it's ripped, not when it's bought.
+      add: null,
     };
   } else if (status === "owned") {
     const album = result.album;
@@ -129,6 +123,7 @@ export async function toBarcodeResponse(barcode: string, result: LookupResult): 
     };
   } else {
     const candidate = result.candidate;
+    const scannedMedium = guessAlbumMedium(candidate.format ?? null);
     const album = await findAlbumByDiscogsIdentity({
       discogsMasterId: candidate.discogsMasterId ?? null,
       discogsReleaseId: candidate.discogsMasterId == null ? (candidate.discogsReleaseId ?? null) : null,
@@ -139,16 +134,21 @@ export async function toBarcodeResponse(barcode: string, result: LookupResult): 
       title: candidate.title,
       artistName: candidate.artistName ?? null,
       year: candidate.year ?? null,
-      scannedMedium: guessAlbumMedium(candidate.format ?? null),
+      scannedMedium,
       libraryId: album?.id ?? null,
       // The pressing actually scanned, rather than the library's own cover.
       artwork: candidate.coverArtUrl ?? owned?.artwork ?? null,
       ownedAs: owned?.ownedAs ?? [],
-      add: {
-        type: "album",
-        discogsMasterId: candidate.discogsMasterId ?? null,
-        discogsReleaseId: candidate.discogsReleaseId ?? null,
-      },
+      // Vinyl is the one medium logged as a physical copy; a CD, like a
+      // film, joins the collection when it's ripped.
+      add:
+        scannedMedium === "VINYL"
+          ? {
+              type: "album",
+              discogsMasterId: candidate.discogsMasterId ?? null,
+              discogsReleaseId: candidate.discogsReleaseId ?? null,
+            }
+          : null,
     };
   }
 
