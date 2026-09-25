@@ -259,3 +259,54 @@ export interface AddPlaylistItemsBody {
 export interface ReorderPlaylistItemsBody {
   itemIds: number[];
 }
+
+/** A format something is owned in, for GET /api/v1/barcode/:code. The
+ *  physical ones are PhysicalCopy.medium (CD, VINYL) and
+ *  FilmPhysicalCopy.medium (DVD, BLURAY, UHD); DIGITAL is a rip in the
+ *  library (Album.owned / Film.owned). */
+export type BarcodeMedium = "CD" | "VINYL" | "DVD" | "BLURAY" | "UHD" | "DIGITAL";
+
+/** One way the matched film or album is already in the collection. */
+export interface BarcodeOwnedCopy {
+  medium: BarcodeMedium;
+  /** PhysicalCopy.format for music ("2xLP", "7\"", "CD"…); null otherwise. */
+  format: string | null;
+}
+
+/** What a barcode turned out to be. */
+export interface BarcodeMatch {
+  kind: "film" | "album";
+  title: string;
+  /** Albums only. */
+  artistName: string | null;
+  year: number | null;
+  /** The medium the scanned barcode is for, when it can be told: a
+   *  pressing's Discogs format for music, or the copy the barcode was
+   *  logged against. Null for a film identified by UPC lookup, which
+   *  doesn't say DVD from Blu-ray. */
+  scannedMedium: BarcodeMedium | null;
+  /** Film.id / Album.id when the library has a row for it at all (owned,
+   *  or an unowned back-catalogue placeholder); null for a stranger. */
+  libraryId: number | null;
+  /** A server path (`/api/poster/…`, `/api/cover/…`, needing the session)
+   *  or an absolute Discogs image URL. Null when there's no art. */
+  artwork: string | null;
+  /** Every format it's already owned in, most useful first. Can be
+   *  non-empty for `not_owned`: an album owned on CD when the barcode is
+   *  an LP's. */
+  ownedAs: BarcodeOwnedCopy[];
+}
+
+/** GET /api/v1/barcode/:code — is the thing in your hand already in the
+ *  collection? The same resolution as the web's Scan page
+ *  (src/lib/scan-resolve.ts), read-only: nothing is added.
+ *
+ *  - `owned`: yes, in the medium scanned.
+ *  - `not_owned`: recognised, but not owned in this medium (see ownedAs).
+ *  - `unknown`: nothing recognised the barcode; `match` is null. */
+export interface BarcodeLookupResponse {
+  /** Digits only, as normalised. */
+  barcode: string;
+  status: "owned" | "not_owned" | "unknown";
+  match: BarcodeMatch | null;
+}
