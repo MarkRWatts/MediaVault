@@ -102,6 +102,7 @@ describe("toBarcodeResponse", () => {
       scannedMedium: "VINYL",
       libraryId: 10,
       artwork: "https://i.discogs.com/x.jpg",
+      add: { type: "album", discogsMasterId: 555, discogsReleaseId: 999 },
       ownedAs: [
         { medium: "CD", format: "CD" },
         { medium: "DIGITAL", format: null },
@@ -116,7 +117,7 @@ describe("toBarcodeResponse", () => {
       album: { id: 10, title: "Spirit of Eden", artistName: "Talk Talk", year: 1988, coverPath: null },
       medium: "CD",
     });
-    expect(res.match).toMatchObject({ kind: "album", scannedMedium: "CD", artistName: "Talk Talk", artwork: null });
+    expect(res.match).toMatchObject({ kind: "album", scannedMedium: "CD", artistName: "Talk Talk", artwork: null, add: null });
   });
 
   it("lists an owned film's discs and rip", async () => {
@@ -130,6 +131,7 @@ describe("toBarcodeResponse", () => {
       scannedMedium: null,
       artwork: "/api/poster/w342/heat.jpg",
       ownedAs: [{ medium: "UHD" }, { medium: "BLURAY" }, { medium: "DIGITAL" }],
+      add: null,
     });
   });
 
@@ -139,7 +141,27 @@ describe("toBarcodeResponse", () => {
       type: "film",
       candidate: { tmdbId: 1, title: "Somebody Else's Film", year: 2001, posterPath: null },
     });
-    expect(res.match).toMatchObject({ libraryId: null, ownedAs: [], artwork: null });
+    // A film joins the collection by being ripped: never offered as an add.
+    expect(res.match).toMatchObject({ libraryId: null, ownedAs: [], artwork: null, add: null });
+  });
+});
+
+describe("adding from a scan", () => {
+  it("never offers to add a CD, which joins the collection by being ripped", async () => {
+    const res = await toBarcodeResponse("5012345678900", {
+      status: "not_owned",
+      type: "album",
+      candidate: {
+        discogsMasterId: 777,
+        discogsReleaseId: 778,
+        title: "Colour of Spring",
+        artistName: "Talk Talk",
+        year: 1986,
+        format: "CD, Album",
+        coverArtUrl: null,
+      },
+    });
+    expect(res.match).toMatchObject({ scannedMedium: "CD", add: null });
   });
 });
 

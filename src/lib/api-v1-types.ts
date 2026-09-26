@@ -295,7 +295,15 @@ export interface BarcodeMatch {
    *  non-empty for `not_owned`: an album owned on CD when the barcode is
    *  an LP's. */
   ownedAs: BarcodeOwnedCopy[];
+  /** What POST /api/barcode/add needs to log this as a physical copy
+   *  (the web Scan page's add). Only ever set for a vinyl pressing not yet
+   *  owned on vinyl: films and CDs join the collection by being ripped. */
+  add: BarcodeAddRef | null;
 }
+
+/** The identity POST /api/barcode/add takes, alongside `medium` and the
+ *  barcode itself. */
+export type BarcodeAddRef = { type: "album"; discogsMasterId: number | null; discogsReleaseId: number | null };
 
 /** GET /api/v1/barcode/:code — is the thing in your hand already in the
  *  collection? The same resolution as the web's Scan page
