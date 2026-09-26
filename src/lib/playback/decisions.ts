@@ -341,8 +341,12 @@ export function throttleAction(input: ThrottleInput): "pause" | "resume" | null 
  *  those segments don't contain. The audio choice doesn't move the segment
  *  boundaries, so the table hash is identical and the directory looks clean.
  *  Chrome played the video in silence with the speaker greyed out; Safari
- *  hid it entirely by decoding the AC-3 anyway (22 Sep 2026). */
-export const PLAN_VERSION = 3;
+ *  hid it entirely by decoding the AC-3 anyway (22 Sep 2026).
+ *
+ *  4 (head-args.ts): copied AAC-LC is snapped onto its 1024-sample frame
+ *  grid. Segments cut before carry the source's jittered audio timestamps,
+ *  which glitched the Apple TV every few seconds (26 Sep 2026). */
+export const PLAN_VERSION = 4;
 
 /** What `<key>/plan.json` holds: enough to prove the directory's segments
  *  were produced from the file that is on the share *now*, and against the

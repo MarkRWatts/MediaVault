@@ -30,6 +30,10 @@ export interface ProbedAudioTrack {
   /** Music-scanner fields — unused by the movie/TV probe callers. */
   sampleRate: number | null;
   bitDepth: number | null;
+  /** The stream's first timestamp, in seconds (ffprobe's stream
+   *  start_time). Anchors the grid a copied AAC track's timestamps are
+   *  snapped to (playback/head-args.ts). Optional so older fixtures type. */
+  startTime?: number | null;
 }
 
 export interface ProbeResult {
@@ -78,7 +82,7 @@ export interface ProbeResult {
 // decides deinterlacing. All three are container-header fields, so asking
 // for them costs nothing extra.
 const SHOW_ENTRIES =
-  "format=duration,size:format_tags=date,year:stream=index,codec_type,codec_name,profile,width,height,channels,channel_layout,color_transfer,side_data_list,sample_rate,bits_per_raw_sample,avg_frame_rate,pix_fmt,field_order:stream_tags=language,title:stream_disposition=default,comment,visual_impaired,hearing_impaired,descriptions";
+  "format=duration,size:format_tags=date,year:stream=index,codec_type,codec_name,profile,width,height,channels,channel_layout,color_transfer,side_data_list,sample_rate,bits_per_raw_sample,start_time,avg_frame_rate,pix_fmt,field_order:stream_tags=language,title:stream_disposition=default,comment,visual_impaired,hearing_impaired,descriptions";
 
 const FFPROBE_ARGS = ["-hide_banner", "-loglevel", "error", "-show_entries", SHOW_ENTRIES, "-of", "json"];
 
@@ -111,6 +115,7 @@ interface FfprobeStream {
   side_data_list?: FfprobeSideData[];
   sample_rate?: string;
   bits_per_raw_sample?: string;
+  start_time?: string;
   avg_frame_rate?: string;
   pix_fmt?: string;
   field_order?: string;
@@ -170,6 +175,7 @@ export function parseFfprobeJson(stdout: string): ProbeResult {
       s.disposition?.visual_impaired === 1 || s.disposition?.descriptions === 1 || s.disposition?.comment === 1,
     sampleRate: s.sample_rate ? Number(s.sample_rate) : null,
     bitDepth: s.bits_per_raw_sample ? Number(s.bits_per_raw_sample) : null,
+    startTime: s.start_time !== undefined && Number.isFinite(Number(s.start_time)) ? Number(s.start_time) : null,
   }));
 
   const durationSecs = data.format?.duration ? Number(data.format.duration) : null;

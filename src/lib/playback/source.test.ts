@@ -1,7 +1,7 @@
 // The pure parts of source.ts. resolveSource itself needs a database, a
 // share and an ffprobe, and is covered by engine.integration.test.ts.
 import { describe, expect, it } from "vitest";
-import { LruCache, labelAudioTracks, probeCacheKey, sourceFactsFromProbe, transcodeReasonsFor } from "./source";
+import { LruCache, audioFrameGridFor, labelAudioTracks, probeCacheKey, sourceFactsFromProbe, transcodeReasonsFor } from "./source";
 import type { ProbeResult, ProbedAudioTrack } from "@/lib/ffprobe";
 import type { VideoPlaybackPlan } from "@/lib/video-playback";
 
@@ -147,5 +147,22 @@ describe("LruCache", () => {
     cache.set("a", 2);
     expect(cache.size).toBe(1);
     expect(cache.get("a")).toBe(2);
+  });
+});
+
+describe("audioFrameGridFor", () => {
+  const aac = { codec: "aac", profile: "LC", sampleRate: 48000, startTime: -0.044 };
+
+  it("anchors a copied AAC-LC track's 1024-sample grid at its first timestamp", () => {
+    expect(audioFrameGridFor(aac, "copy")).toEqual({ sampleRate: 48000, startSamples: -2112, frameSamples: 1024 });
+  });
+
+  it("returns null for transcodes, other codecs, HE-AAC and unknown timing", () => {
+    expect(audioFrameGridFor(aac, "transcode")).toBeNull();
+    expect(audioFrameGridFor(null, "copy")).toBeNull();
+    expect(audioFrameGridFor({ ...aac, codec: "eac3" }, "copy")).toBeNull();
+    expect(audioFrameGridFor({ ...aac, profile: "HE-AAC" }, "copy")).toBeNull();
+    expect(audioFrameGridFor({ ...aac, sampleRate: null }, "copy")).toBeNull();
+    expect(audioFrameGridFor({ ...aac, startTime: null }, "copy")).toBeNull();
   });
 });

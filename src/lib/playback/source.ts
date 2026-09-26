@@ -28,7 +28,7 @@ import {
 } from "@/lib/video-playback";
 import { tierFor } from "./decisions";
 import { resolveInterlaced } from "./interlace";
-import type { MediaKind, SourceFacts } from "./types";
+import type { AudioFrameGrid, MediaKind, SourceFacts } from "./types";
 
 /** One audio stream as the player's Audio dropdown shows it -- the same
  *  `{ streamIdx, label }` shape the Jellyfin session returns today
@@ -64,6 +64,32 @@ export interface ResolvedSource {
    *  the planner's own pick only, so it is recomputed here for the case
    *  where the caller overrode it. Feeds the master playlist's CODECS. */
   audioCodec: string | null;
+  /** The chosen stream's frame grid when it is copied AAC-LC, else null --
+   *  see audioFrameGridFor. */
+  audioGrid: AudioFrameGrid | null;
+}
+
+/**
+ * A copied AAC-LC track's frame grid, or null when it doesn't have one we
+ * can trust. Every AAC-LC frame is 1024 samples, but a file remuxed from
+ * Matroska carries its millisecond timestamps: the library's converted
+ * 1080p films step 1008, 1016, 1072, 1080 samples between frames (The
+ * Three Musketeers, 26 Sep 2026). An MP4 player plays those frames back to
+ * back regardless; in HLS every audio PES carries its own timestamp, and
+ * the Apple TV glitched sound and picture every few seconds on them.
+ * HE-AAC's frames are 2048 output samples, so it is left alone rather than
+ * guessed at.
+ */
+export function audioFrameGridFor(
+  track: Pick<ProbedAudioTrack, "codec" | "profile" | "sampleRate" | "startTime"> | null,
+  action: StreamAction | "none",
+): AudioFrameGrid | null {
+  if (!track || action !== "copy") return null;
+  if ((track.codec ?? "").toLowerCase() !== "aac" || track.profile !== "LC") return null;
+  const { sampleRate, startTime } = track;
+  if (!sampleRate || !Number.isInteger(sampleRate) || sampleRate <= 0) return null;
+  if (startTime === null || startTime === undefined || !Number.isFinite(startTime)) return null;
+  return { sampleRate, startSamples: Math.round(startTime * sampleRate), frameSamples: 1024 };
 }
 
 /** Typed failures the routes turn into a status code, rather than strings
@@ -367,5 +393,6 @@ export async function resolveSource(
     audioChannels: chosenTrack?.channels ?? null,
     audioCodec:
       chosenAction === "none" ? null : chosenAction === "transcode" ? "aac" : ((chosenTrack?.codec ?? "").toLowerCase() || null),
+    audioGrid: audioFrameGridFor(chosenTrack, chosenAction),
   };
 }
