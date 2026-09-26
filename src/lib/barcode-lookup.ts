@@ -5,26 +5,62 @@
 // caller to fuzzy-match against TMDB. Never throws — a failed/rate-limited
 // lookup just means "couldn't identify this barcode", not a hard error.
 //
-// UPCitemdb's trial tier throttles aggressively (observed: back-to-back
-// calls a couple of seconds apart return {code:"TOO_FAST"} instead of data)
-// — a batch scanning session that processes several barcodes in a row was
-// silently losing most of them to this, indistinguishable from a genuine
-// "not found". throttle()/RETRY_BACKOFF_MS mirror the same pattern
-// discogs.ts already uses for Discogs' own rate limit.
+// UPCitemdb's trial tier throttles bursts, and says so two ways: a 200
+// whose body is {code:"TOO_FAST"}, or (measured 2026-09-25, from the
+// production VM) an HTTP 429 with the same body — three calls inside about
+// two seconds trip it, and the block lasts somewhere between 10 and 20
+// seconds. The 429 form used to fall through as "not found", so a batch
+// scan, or the Scan app re-reading one disc, got a confident "not
+// recognised" for a barcode the service knows perfectly well.
+//
+// So: calls are spaced (MIN_INTERVAL_MS, measured safe), answers are
+// cached (a re-scan never costs a call), a block is waited out once, and a
+// block that outlasts that is thrown as UpcBusyError — "try again in a
+// moment", never "unknown".
 
 const UPCITEMDB_URL = "https://api.upcitemdb.com/prod/trial/lookup";
-const MIN_INTERVAL_MS = 1200;
-const RETRY_BACKOFF_MS = 2000;
+const MIN_INTERVAL_MS = 1500;
+/** How long a TOO_FAST block is assumed to last before one retry. */
+const BLOCK_MS = 12_000;
+const HIT_TTL_MS = 24 * 60 * 60 * 1000;
+const MISS_TTL_MS = 60 * 60 * 1000;
+const CACHE_MAX = 500;
+
+/** UPCitemdb is refusing calls for now; the barcode may well be known. */
+export class UpcBusyError extends Error {
+  constructor() {
+    super("The film barcode service is busy. Try again in a few seconds.");
+    this.name = "UpcBusyError";
+  }
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Module state is per server process, which is the unit UPCitemdb limits
+// (by IP) anyway.
 let lastCallAt = 0;
+let blockedUntil = 0;
+const cache = new Map<string, { result: UpcLookupResult | null; expiresAt: number }>();
+
 async function throttle(): Promise<void> {
-  const wait = lastCallAt + MIN_INTERVAL_MS - Date.now();
-  if (wait > 0) await sleep(wait);
-  lastCallAt = Date.now();
+  const now = Date.now();
+  const next = Math.max(lastCallAt + MIN_INTERVAL_MS, blockedUntil);
+  lastCallAt = Math.max(now, next);
+  if (next > now) await sleep(next - now);
+}
+
+function remember(barcode: string, result: UpcLookupResult | null) {
+  if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value!);
+  cache.set(barcode, { result, expiresAt: Date.now() + (result ? HIT_TTL_MS : MISS_TTL_MS) });
+}
+
+/** Test hook: forget the cache and any throttle/block state. */
+export function resetUpcLookupState() {
+  lastCallAt = 0;
+  blockedUntil = 0;
+  cache.clear();
 }
 
 export interface UpcLookupResult {
@@ -84,23 +120,36 @@ export function parseUpcItemDbResponse(data: any, barcode?: string): UpcLookupRe
   return { title, year };
 }
 
+/**
+ * The retailer title UPCitemdb has for `barcode`, or null when it has
+ * none (or answered with an error that retrying won't fix). Throws
+ * UpcBusyError when UPCitemdb is still throttling after one wait.
+ */
 export async function lookupMovieByBarcode(barcode: string): Promise<UpcLookupResult | null> {
+  const cached = cache.get(barcode);
+  if (cached && cached.expiresAt > Date.now()) return cached.result;
+
   for (let attempt = 0; attempt < 2; attempt++) {
     await throttle();
+    let res: Response;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let data: any;
     try {
-      const res = await fetch(`${UPCITEMDB_URL}?upc=${encodeURIComponent(barcode)}`, {
+      res = await fetch(`${UPCITEMDB_URL}?upc=${encodeURIComponent(barcode)}`, {
         signal: AbortSignal.timeout(10_000),
       });
-      if (!res.ok) return null;
-      const data = await res.json();
-      if (data?.code === "TOO_FAST" && attempt === 0) {
-        await sleep(RETRY_BACKOFF_MS);
-        continue;
-      }
-      return parseUpcItemDbResponse(data, barcode);
+      data = await res.json().catch(() => null);
     } catch {
       return null;
     }
+    if (res.status === 429 || data?.code === "TOO_FAST") {
+      blockedUntil = Date.now() + BLOCK_MS;
+      continue;
+    }
+    if (!res.ok) return null;
+    const result = parseUpcItemDbResponse(data, barcode);
+    remember(barcode, result);
+    return result;
   }
-  return null;
+  throw new UpcBusyError();
 }

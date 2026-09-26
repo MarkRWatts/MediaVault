@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { parseUpcItemDbResponse } from "./barcode-lookup";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { UpcBusyError, lookupMovieByBarcode, parseUpcItemDbResponse, resetUpcLookupState } from "./barcode-lookup";
 
 describe("parseUpcItemDbResponse", () => {
   it("returns null with no items", () => {
@@ -93,5 +93,48 @@ describe("parseUpcItemDbResponse", () => {
         ),
       ).toEqual({ title: "The Bourne Supremacy", year: null });
     });
+  });
+});
+
+describe("lookupMovieByBarcode", () => {
+  const ok = { code: "OK", items: [{ title: "The Mechanic [blu-ray], 5060116726428, Jason Statham" }] };
+  const tooFast = { code: "TOO_FAST" };
+  const reply = (status: number, body: unknown) =>
+    Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }));
+
+  beforeEach(() => {
+    resetUpcLookupState();
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("waits out a 429 TOO_FAST and retries, instead of reporting not found", async () => {
+    const fetchMock = vi.fn().mockImplementationOnce(() => reply(429, tooFast)).mockImplementationOnce(() => reply(200, ok));
+    vi.stubGlobal("fetch", fetchMock);
+    const pending = lookupMovieByBarcode("5060116726428");
+    await vi.runAllTimersAsync();
+    await expect(pending).resolves.toEqual({ title: "The Mechanic", year: null });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("throws UpcBusyError when still throttled after the wait", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => reply(429, tooFast)));
+    const pending = lookupMovieByBarcode("5060116726428");
+    const assertion = expect(pending).rejects.toBeInstanceOf(UpcBusyError);
+    await vi.runAllTimersAsync();
+    await assertion;
+  });
+
+  it("answers a re-scan from the cache without calling UPCitemdb", async () => {
+    const fetchMock = vi.fn().mockImplementation(() => reply(200, ok));
+    vi.stubGlobal("fetch", fetchMock);
+    const first = lookupMovieByBarcode("5060116726428");
+    await vi.runAllTimersAsync();
+    await first;
+    await expect(lookupMovieByBarcode("5060116726428")).resolves.toEqual({ title: "The Mechanic", year: null });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

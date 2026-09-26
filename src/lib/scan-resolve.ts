@@ -226,11 +226,16 @@ export async function resolveBarcode(barcode: string, type: string | null): Prom
   const owned = await resolveOwned(barcode);
   if (owned) return owned;
 
-  const [musicResult, movieResult] = await Promise.all([
+  const [music, movie] = await Promise.allSettled([
     type === "film" ? null : resolveMusic(barcode),
     type === "album" ? null : resolveMovie(barcode),
   ]);
-  return musicResult ?? movieResult ?? { status: "unknown" };
+  const musicResult = music.status === "fulfilled" ? music.value : null;
+  if (musicResult) return musicResult;
+  // A busy film lookup (UpcBusyError) is thrown on rather than read as
+  // "unknown" — the callers turn it into "try again".
+  if (movie.status === "rejected") throw movie.reason;
+  return movie.value ?? { status: "unknown" };
 }
 
 // --- Scan queue row <-> API shape ---

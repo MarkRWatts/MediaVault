@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { withLookupSlot } from "@/lib/semaphore";
 import { normalizeBarcode } from "@/lib/discogs";
 import { resolveBarcode } from "@/lib/scan-resolve";
+import { UpcBusyError } from "@/lib/barcode-lookup";
 import { requireOwnerOrResponse } from "@/lib/require-member";
 import { toBarcodeResponse } from "@/lib/barcode-v1";
 
@@ -24,7 +25,17 @@ async function handleGet(req: NextRequest, ctx: { params: Promise<{ code: string
 
   const typeParam = req.nextUrl.searchParams.get("type");
   const type = typeParam === "film" || typeParam === "album" ? typeParam : null;
-  const result = await resolveBarcode(barcode, type);
+  let result;
+  try {
+    result = await resolveBarcode(barcode, type);
+  } catch (err) {
+    // UPCitemdb throttling: the barcode may well be known, so say "try
+    // again", never "not recognised".
+    if (err instanceof UpcBusyError) {
+      return NextResponse.json({ error: err.message }, { status: 503, headers: { "Retry-After": "15" } });
+    }
+    throw err;
+  }
   return NextResponse.json(await toBarcodeResponse(barcode, result));
 }
 
