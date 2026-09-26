@@ -1,5 +1,5 @@
 // The Search page's matching rule — the iPhone and Apple TV apps' own
-// (MediaVaultiOS, Shared/Library/SearchMatch.swift), so a word finds the
+// (MediaVault-Player, Shared/Library/SearchMatch.swift), so a word finds the
 // same things everywhere. Case- and accent-insensitive ("amelie" finds
 // "Amélie"), and every word typed must begin some word of the item
 // ("bourne ult" finds The Bourne Ultimatum; "ace" finds Ace of Base but not

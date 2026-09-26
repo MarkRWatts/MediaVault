@@ -1,5 +1,5 @@
 // Under Home's active row: what the open card's title is and what it's
-// about — the web's TVPickInfo (MediaVaultiOS). A film gets its meta line
+// about — the web's TVPickInfo (MediaVault-Player). A film gets its meta line
 // (year, certificate, runtime, best resolution and audio, genres) and its
 // overview; an episode the same line from its show (air year, the show's
 // certificate and genres, its runtime) and its overview, led by which one

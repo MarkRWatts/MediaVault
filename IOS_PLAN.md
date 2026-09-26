@@ -54,7 +54,7 @@ the native side a real auth flow and a real API, which tvOS can then adopt.
 
 ## Shape of the app
 
-- **A new repo, `MediaVaultiOS`**, SwiftUI, iOS 17+, one Xcode project
+- **A new repo, `MediaVault-Player`**, SwiftUI, iOS 17+, one Xcode project
   with a Swift package `MediaVaultKit` (API client, DTOs, token store,
   playback-queue model) that MediaVaultTV can depend on later, and an
   app target that owns the UI and the players. Same posture as
@@ -247,7 +247,7 @@ the web (same rpID: the hostname of `BETTER_AUTH_URL`). It needs:
 ### Modules
 
 ```
-MediaVaultiOS/
+MediaVault-Player/
   MediaVaultKit/            Swift package, no UIKit
     API/        APIClient (URLSession, bearer, 401 → signed-out, ETag cache)
                 DTOs (Codable mirrors of api-v1-types.ts)
@@ -525,7 +525,7 @@ it a thing the household can rely on.
   row per start, and an anonymous per-day play log
   (`src/lib/play-log.ts`). Phase 6 (passkeys) is not started — see
   "Blocked on the paid Developer Program" below.
-- **App: `MarkRWatts/MediaVaultiOS`, phases 2, 3 and 4 done.** It runs against the live server in the simulators, on a
+- **App: `MarkRWatts/MediaVault-Player`, phases 2, 3 and 4 done.** It runs against the live server in the simulators, on a
   physical iPhone and on a physical iPad mini; device testing is where
   the Picture in Picture, canvas-drag and Stage Manager faults below were
   found.

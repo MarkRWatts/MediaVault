@@ -20,7 +20,7 @@
  * ------------------------------------------------------------------------ */
 :root {
   /* The brown ramp every neutral is taken from, lightest to darkest. Shared
-     verbatim with the iOS app (MediaVaultiOS, MediaVault/Theme.swift
+     verbatim with the iOS app (MediaVault-Player, MediaVault/Theme.swift
      `ramp`), which derived it from this file's original hand-picked values —
      the two are now the same seven steps rather than two sets that drift.
      Nothing outside this block should name a neutral hex: surfaces and text

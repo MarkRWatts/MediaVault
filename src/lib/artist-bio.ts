@@ -37,7 +37,7 @@ import { fetchImage } from "@/lib/fetch-image";
 const AUDIODB_BASE = "https://www.theaudiodb.com/api/v1/json";
 const FANART_BASE = "https://webservice.fanart.tv/v3/music";
 const WIKIPEDIA_SUMMARY_BASE = "https://en.wikipedia.org/api/rest_v1/page/summary";
-const USER_AGENT = "MediaVault/1.4 (https://github.com/MarkRWatts/MediaVault)";
+const USER_AGENT = "MediaVault/1.4 (https://github.com/MarkRWatts/MediaVault-Server)";
 
 const POSTER_CACHE_DIR = process.env.POSTER_CACHE_DIR ?? "./data/posters";
 const ARTISTS_DIR = path.join(POSTER_CACHE_DIR, "artists");

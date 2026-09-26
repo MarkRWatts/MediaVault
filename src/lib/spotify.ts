@@ -21,7 +21,7 @@ import { normalizeTitle } from "@/lib/parse";
 
 const SPOTIFY_ACCOUNTS_BASE = "https://accounts.spotify.com";
 const SPOTIFY_API_BASE = "https://api.spotify.com/v1";
-const USER_AGENT = "MediaVault/1.4 (https://github.com/MarkRWatts/MediaVault)";
+const USER_AGENT = "MediaVault/1.4 (https://github.com/MarkRWatts/MediaVault-Server)";
 
 interface CachedToken {
   token: string;

@@ -3,7 +3,7 @@
 // A title as its own artwork — the film's or show's TMDB logo, a
 // transparent PNG of the title styling on the poster — over an open Home
 // card's backdrop; the plain title in the display font where there's no
-// logo or it won't load. The web's TVTitleArt (MediaVaultiOS). Sized off
+// logo or it won't load. The web's TVTitleArt (MediaVault-Player). Sized off
 // the row's --row-h, as the TV sizes it off the card's height: the logo
 // fits a box about the card's height wide and a third of it tall.
 //

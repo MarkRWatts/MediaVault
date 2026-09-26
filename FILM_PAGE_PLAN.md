@@ -101,7 +101,7 @@ titles.
 
 ## Apple TV
 
-The same page, laid out for the TV (MediaVaultiOS `TVFilmDetailView`): the
+The same page, laid out for the TV (MediaVault-Player `TVFilmDetailView`): the
 backdrop and logo fill the screen, the text sits bottom-left rather than
 centred, and Play keeps its width to its label (a full-width button reads
 oddly on a television). Otherwise as above: chips, then the quiet line;

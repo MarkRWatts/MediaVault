@@ -30,9 +30,9 @@ use a real `.xcodeproj`, not a bare package).
 
 ## Where the app lives
 
-A second target, `MediaVaultTV`, in the **MediaVaultiOS** repo's
+A second target, `MediaVaultTV`, in the **MediaVault-Player** repo's
 `project.yml`, bundle id `com.markrwatts.mediavault.tv`, same team. The
-MediaVaultTV repo is archived with a README pointing there.
+old MediaVaultTV prototype repo has been deleted.
 
 - `MediaVaultKit` already compiles for tvOS unchanged (checked with
   `xcodebuild` against the tvOS Simulator SDK). Both targets depend on it.
@@ -244,7 +244,7 @@ Audio-track choice (default AAC only), subtitles, playlist editing beyond
 | 3 | **Video.** Movies and Shows browse and detail, `AVPlayerViewController` over `VideoSession`, resume and progress. Exit: a converted mp4 plays with no transcode reasons, stops, and resumes where it left off. | 2–3 |
 | 4 | **Music.** Browse, the shared `AudioPlayer`, Now Playing, background audio. Exit: a gapless ALAC album and an MP3 album play through, continuing after leaving the app. | 2 |
 | 5 | **Polish.** Home rows, Search, focus behaviour, error surfaces (401 → sign-in, the server's refusal messages shown verbatim). | 1–2 |
-| 6 | **Ship.** TestFlight, archive MediaVaultTV, delete `/api/films`, `/api/films/[id]` and the legacy `/api/video/*/{status,prepare,stream}` routes once nothing calls them. | 0.5 |
+| 6 | **Ship.** TestFlight, delete the MediaVaultTV prototype repo (done), delete `/api/films`, `/api/films/[id]` and the legacy `/api/video/*/{status,prepare,stream}` routes once nothing calls them. | 0.5 |
 
 Simulator verification needs no Siri Remote: the iOS app's `DebugLaunch`
 switches (initial tab, open a video directly, play N seconds) come across

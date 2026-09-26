@@ -2,7 +2,7 @@
 
 // One of Home's rows: a horizontally scrolling line of 2:3 posters in which
 // the open one widens into a 16:9 card of its backdrop, its title artwork
-// and why it's there — the Apple TV's TVExpandingRow (MediaVaultiOS), drawn
+// and why it's there — the Apple TV's TVExpandingRow (MediaVault-Player), drawn
 // for a browser. With the row's details (HomeDetails) underneath while the
 // row is the active one.
 //
