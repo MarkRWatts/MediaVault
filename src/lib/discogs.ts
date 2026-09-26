@@ -21,7 +21,7 @@ import { fetchArtistEnrichment, type DiscogsArtistData } from "@/lib/artist-bio"
 import { isSpotifyConfigured, matchSpotifyArtist, fetchSpotifyArtistImages } from "@/lib/spotify";
 
 const DISCOGS_API_BASE = "https://api.discogs.com";
-const USER_AGENT = "MediaVault/1.4 (https://github.com/MarkRWatts/MediaVault)";
+const USER_AGENT = "MediaVault/1.4 (https://github.com/MarkRWatts/MediaVault-Server)";
 const PROGRESS_UPDATE_EVERY = 3;
 const RETRY_BACKOFF_MS = 3000;
 // Discogs' unauthenticated rate limit is 25/min (60/min with DISCOGS_TOKEN

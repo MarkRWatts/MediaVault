@@ -1,5 +1,5 @@
 // What one card on Home shows, whatever kind of thing it is — the web's
-// half of the Apple TV's TVPick (MediaVaultiOS, TVHomePicks.swift): where it
+// half of the Apple TV's TVPick (MediaVault-Player, TVHomePicks.swift): where it
 // links, which artwork it wears as a poster and which when it opens wide,
 // the title artwork over the backdrop, the little badges in its corner and
 // an episode's progress bar. Pure, so the labels are tested without a

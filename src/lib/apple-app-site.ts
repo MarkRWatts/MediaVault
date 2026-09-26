@@ -9,7 +9,7 @@
 // approve with the session it already has) rather than Safari.
 // `webcredentials`: lets the app use passkeys registered on the web.
 
-/** Team ID + bundle id of the iPhone/iPad app (MediaVaultiOS project.yml). */
+/** Team ID + bundle id of the iPhone/iPad app (MediaVault-Player project.yml). */
 export const IOS_APP_ID = "2Y2TMF4L4P.com.markrwatts.mediavault";
 
 export function appleAppSiteAssociation() {

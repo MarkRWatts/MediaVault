@@ -26,7 +26,7 @@ const execFileAsync = promisify(execFile);
 const POSTER_CACHE_DIR = process.env.POSTER_CACHE_DIR ?? "./data/posters";
 const COVERS_DIR = path.join(POSTER_CACHE_DIR, "covers");
 const ITUNES_SEARCH_BASE = "https://itunes.apple.com/search";
-const USER_AGENT = "MediaVault/1.4 (https://github.com/MarkRWatts/MediaVault)";
+const USER_AGENT = "MediaVault/1.4 (https://github.com/MarkRWatts/MediaVault-Server)";
 // Sanity floor for the online sources — a real cover is comfortably above
 // this; a source occasionally serving a tiny placeholder/error image on a
 // technicality 200, or a truncated/failed download, would land under this.

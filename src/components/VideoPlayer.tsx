@@ -181,7 +181,7 @@ function hasNativePlayerBridge(): boolean {
 // own /stream URL instead of an engine stream -- no segments, no cache.
 // Asked inside an app's web view too: the native player the bridge hands
 // off to is AVPlayer, which the iOS/tvOS apps have shown plays /stream URLs
-// with the session cookie (MediaVaultiOS#38, 23 Sep 2026).
+// with the session cookie (MediaVault-Player#38, 23 Sep 2026).
 function directPlayQuery(): string {
   if (typeof document === "undefined") return "";
   const probe = document.createElement("video");

@@ -61,7 +61,7 @@ page's owner tools), not on the page itself.
 
 ## Apple TV
 
-MediaVaultiOS `TVShowDetailView`: the backdrop and logo fill the screen with
+MediaVault-Player `TVShowDetailView`: the backdrop and logo fill the screen with
 the text bottom-left; chips and quiet line; Resume/Play and labelled
 Favourite · Watched; three lines of synopsis; the text tabs for seasons;
 episode rows as above (still, number and title, runtime · ends at, two

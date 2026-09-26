@@ -351,7 +351,7 @@ Still to do in phase B, in order:
    switch `UHD_PLAYBACK_ENABLED` on.
 2. ~~**Native apps opt in**~~ — **done 23 Sep.** The iOS and tvOS apps send
    `direct=1` and play /stream as a plain AVURLAsset with the session cookie
-   (MediaVaultiOS#38), verified on the Apple TV 4K (No Time to Die from
+   (MediaVault-Player#38), verified on the Apple TV 4K (No Time to Die from
    /stream, no ffmpeg on the VM). Direct play there first lost its sound ~10 s
    in and after every seek: AVFoundation leaves open-ended ranges half-read,
    and they held the HTTP/3 connection's flow-control window. So /stream now
