@@ -71,7 +71,7 @@ import {
   type VideoPlaybackPlan,
 } from "../video-playback";
 import type { SegmentContainer } from "./decisions";
-import type { HwAccel, SegmentEntry, SourceFacts } from "./types";
+import type { AudioFrameGrid, HwAccel, SegmentEntry, SourceFacts } from "./types";
 
 export const DEFAULT_RENDER_DEVICE = "/dev/dri/renderD128";
 
@@ -109,6 +109,29 @@ export interface HeadAudioInput {
   /** Source channel count, for sizing a transcoded track -- see
    *  audioTranscodeChannels in video-playback.ts. Unused for "copy"/"none". */
   sourceChannels: number | null;
+  /** A copied AAC track's frame grid (source.ts's audioFrameGridFor); its
+   *  timestamps are snapped to it. Unused unless the audio is copied. */
+  grid?: AudioFrameGrid | null;
+}
+
+/**
+ * `setts` for a copied AAC track: put every packet back on its frame grid.
+ * The anchor is the file's own first audio timestamp, not this head's first
+ * packet, so a head restarted at segment N stamps the same frame with the
+ * same time as one that ran from 0 (the "Heads" restart-consistency rule).
+ * Off-grid packets sit within a couple of milliseconds of their slot, far
+ * inside the half-frame rounding would need to put two frames in one slot.
+ * prescale converts to 1/sampleRate first, so the arithmetic is in samples
+ * whatever the container's time base.
+ */
+function audioGridFilter(grid: AudioFrameGrid): string {
+  const { sampleRate, startSamples, frameSamples } = grid;
+  for (const n of [sampleRate, startSamples, frameSamples]) {
+    if (!Number.isInteger(n)) throw new Error(`audio grid values must be integers, got: ${n}`);
+  }
+  if (sampleRate <= 0 || frameSamples <= 0) throw new Error("audio grid sample rate and frame size must be positive");
+  const ts = `round((TS-(${startSamples}))/${frameSamples})*${frameSamples}+(${startSamples})`;
+  return `setts=time_base=1/${sampleRate}:prescale=1:ts=${ts}:duration=${frameSamples}`;
 }
 
 export interface BuildHeadArgsInput {
@@ -350,6 +373,7 @@ export function buildHeadArgs(input: BuildHeadArgsInput): string[] {
       args.push("-c:a", "aac", "-ac", "2", "-b:a", REMOTE_AUDIO_BITRATE);
     } else if (audio.action === "copy") {
       args.push("-c:a", "copy");
+      if (audio.grid) args.push("-bsf:a", audioGridFilter(audio.grid));
     } else {
       const outputChannels = audioTranscodeChannels(audio.sourceChannels);
       args.push("-c:a", "aac", "-ac", String(outputChannels), "-b:a", audioTranscodeBitrate(outputChannels));

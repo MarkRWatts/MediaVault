@@ -56,6 +56,16 @@ export interface StreamKeyParts {
  * deinterlacing and the 10-bit software-decode fallback. `width`/`height`
  * are the source's own, pre-scale, dimensions.
  */
+/** Where a copied AAC track's frames belong on the timeline: every frame is
+ *  exactly `frameSamples` long, so frame n starts at `startSamples + n *
+ *  frameSamples`, in 1/`sampleRate` units. head-args.ts snaps each packet's
+ *  timestamp to that grid. */
+export interface AudioFrameGrid {
+  sampleRate: number;
+  startSamples: number;
+  frameSamples: number;
+}
+
 export interface SourceFacts {
   fps: number | null;
   pixFmt: string | null;

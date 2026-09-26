@@ -382,6 +382,32 @@ describe("buildHeadArgs -- audio", () => {
     expect(args).toEqual(expect.arrayContaining(["-c:a", "copy"]));
   });
 
+  it("snaps copied AAC onto its frame grid, anchored at the file's first audio timestamp", () => {
+    const grid = { sampleRate: 48000, startSamples: -2112, frameSamples: 1024 };
+    const args = buildHeadArgs(baseInput({ audio: { streamIndex: 1, action: "copy", sourceChannels: 6, grid } }));
+    expect(argValue(args, "-bsf:a")).toBe(
+      "setts=time_base=1/48000:prescale=1:ts=round((TS-(-2112))/1024)*1024+(-2112):duration=1024",
+    );
+  });
+
+  it("leaves copied audio without a grid untouched, and never applies a grid to a transcode", () => {
+    const grid = { sampleRate: 48000, startSamples: 0, frameSamples: 1024 };
+    expect(buildHeadArgs(baseInput())).not.toContain("-bsf:a");
+    expect(
+      buildHeadArgs(baseInput({ audio: { streamIndex: 1, action: "transcode", sourceChannels: 6, grid } })),
+    ).not.toContain("-bsf:a");
+    expect(
+      buildHeadArgs(baseInput({ variant: "remote", audio: { streamIndex: 1, action: "copy", sourceChannels: 6, grid } })),
+    ).not.toContain("-bsf:a");
+  });
+
+  it("throws on a non-integer grid", () => {
+    const grid = { sampleRate: 48000, startSamples: 0.5, frameSamples: 1024 };
+    expect(() => buildHeadArgs(baseInput({ audio: { streamIndex: 1, action: "copy", sourceChannels: 6, grid } }))).toThrow(
+      /integers/,
+    );
+  });
+
   it("transcodes audio using the shared channel/bitrate helpers", () => {
     const args = buildHeadArgs(baseInput({ audio: { streamIndex: 1, action: "transcode", sourceChannels: 8 } }));
     expect(args).toEqual(expect.arrayContaining(["-c:a", "aac", "-ac", "6", "-b:a", "384k"]));
