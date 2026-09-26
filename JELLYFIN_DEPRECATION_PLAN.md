@@ -13,6 +13,17 @@ phase 6 left off, and replaces them where the two disagree.
 
 Planning only. Nothing below is implemented yet.
 
+Decided 26 Sep 2026:
+
+1. **The household's Jellyfin server is being retired**, not just
+   MediaVault's use of it. So there is nothing left to link to, and no
+   client left for the OIDC provider.
+2. **The "Play in Jellyfin" button on Adult scenes goes.** Scenes play in
+   the app through the engine instead.
+3. **Extensions are switched on in two places.** The environment decides
+   which are available, and the app owner turns each one on or off from
+   `/admin` without a redeploy.
+
 ## Where things stand
 
 - **Production no longer plays through Jellyfin.** The VM has run
@@ -68,40 +79,49 @@ cap that we control, and nothing depends on it. Keeping it as a pluggable
 path we never want to take again. If it is ever wanted, the code is at the
 `jellyfin-final` tag (below).
 
-**Move the rest of Jellyfin into a `jellyfin` extension that is off by
-default.** That is:
+**Move the rest of Jellyfin into a `jellyfin` extension that ships
+disabled everywhere, production included.** With the server retired this is
+kept purely so Jellyfin can come back. The extension holds:
 - library sync, rewritten to use extension-owned link tables (below);
-- the deep link;
 - the adult-policy sync;
 - the admin relink card.
 
-It is cheap to keep because it only reads the library and calls an HTTP
-API, and it is exactly what a future "sync watch state with Jellyfin"
-([PLAN.md](PLAN.md) backlog) would build on.
+The "Play in Jellyfin" deep link is **deleted, not moved** (decision 2).
+The extension is cheap to keep because it only reads the library and calls
+an HTTP API. It is exactly what a future "sync watch state with Jellyfin"
+([PLAN.md](PLAN.md) backlog) would build on. Its tests run in CI against a
+stubbed server, as `jellyfin.test.ts` does today, so it cannot rot unnoticed
+while it has no server to talk to.
 
-**Generalise the OIDC provider in core rather than move it.** The provider,
-`/consent` and the `oauthQuery` sign-in path are generic BetterAuth and OAuth
-machinery. Only the admin form and a few labels say "Jellyfin". Rename them
-to "Trusted OAuth clients" and keep them in core, gated by an
-`OIDC_PROVIDER` switch that is on while the household's Jellyfin server is.
-Moving auth plumbing into an extension would put an extension on the
-sign-in path. That is the one place where a disabled or broken module must
-not be able to change behaviour.
+**Keep the OIDC provider code in core, generalised and switched off.** The
+provider, `/consent` and the `oauthQuery` sign-in path are generic
+BetterAuth and OAuth machinery. Only the admin form and a few labels say
+"Jellyfin". Rename them to "Trusted OAuth clients" and keep them in core
+behind an `OIDC_PROVIDER` switch. The switch **defaults to off** in 4.0.0,
+because the server is retired (decision 1) and Jellyfin is the only client
+it has ever had.
+- Moving auth plumbing into an extension would put an extension on the
+  sign-in path. That is the one place where a disabled or broken module
+  must not be able to change behaviour.
+- Deleting the provider outright was considered. Keeping it off costs
+  little: the code is small, and BetterAuth owns its tables. It is also the
+  piece a reinstated Jellyfin needs first for SSO.
 
 **Extensions are compile-time modules, switched on at runtime.** The App
 Router discovers routes from the file system at build time, so there is no
 honest way to load code that isn't in the build. An extension is:
 - a folder in the repository (`src/extensions/<id>/`);
 - a manifest registered statically in one file;
-- turned on by `MEDIAVAULT_EXTENSIONS`.
+- **made available** by `MEDIAVAULT_EXTENSIONS`, then **turned on or off**
+  by the app owner on `/admin` (decision 3).
 
 "Deleting" an extension means removing its folder and its route shims.
 The boundary rules below make that a clean deletion.
 
 **A disabled extension keeps its data.** Its tables stay migrated and are
 left alone. Its routes answer 404, its nav, account and admin
-contributions disappear, and its jobs don't run. Turning it back on is a
-config change, with no restore step.
+contributions disappear, and its jobs don't run. Turning it back on is one
+click on `/admin`, with no restore step.
 
 **Extensions never add columns to core models.** Prisma cannot split one
 model across files, and a column on `Version` or `User` is exactly the kind
@@ -127,6 +147,7 @@ src/extensions/
                       import extensions may take from src/extensions)
   registry.ts         static list of every manifest + enabled() filtering
   events.ts           the tiny typed event bus (below)
+  settings.ts         the owner's on/off state (ExtensionSetting), cached
   adult/
     manifest.ts
     server/…          scanner, ThePornDB enricher, queries, actions
@@ -134,7 +155,7 @@ src/extensions/
     README.md
   jellyfin/
     manifest.ts
-    server/…          sync, API client, policy sync, deep link
+    server/…          sync, API client, policy sync
     ui/…              relink card, integration row
     README.md
 prisma/schema/
@@ -150,15 +171,60 @@ extension's tables still exist.
 
 ### Enabling
 
-- `MEDIAVAULT_EXTENSIONS=adult,jellyfin` is an explicit, comma-separated
-  list. The default is empty.
-- On boot, each manifest's `requiredEnv` is checked
-  (`ADULT_PATH`, `JELLYFIN_URL` and so on). An enabled extension with
-  missing config is loaded but marked **misconfigured**. It shows on
-  `/admin` with the missing variables named, which is today's behaviour for
-  unset library paths, and contributes nothing else.
-- For one release, adult is enabled implicitly when `ADULT_PATH` is set,
-  with a deprecation warning, so the upgrade needs no `.env` edit.
+Two layers, because the owner wants to switch extensions without a
+redeploy but the environment still has to hold paths and API keys.
+
+1. **Available.** `MEDIAVAULT_EXTENSIONS=adult,jellyfin` is an explicit,
+   comma-separated list, empty by default. An extension missing from it
+   doesn't appear anywhere, `/admin` included. That is how a household that
+   never wants Adult content keeps it invisible even to the owner. For one
+   release, adult is available implicitly when `ADULT_PATH` is set, with a
+   deprecation warning, so the upgrade needs no `.env` edit.
+2. **Configured.** Each manifest's `requiredEnv` (`ADULT_PATH`,
+   `JELLYFIN_URL` and so on) is checked at boot. An available extension
+   with missing config shows on `/admin` as **misconfigured**, with the
+   missing variables named, which is today's behaviour for unset library
+   paths. Its toggle is disabled and it contributes nothing.
+3. **Enabled.** An on/off switch per extension in a new "Extensions"
+   section on `/admin`, for the app owner only (`requireOwnerOrRedirect`).
+   - Stored in a core table,
+     `ExtensionSetting(id TEXT PRIMARY KEY, enabled BOOLEAN,
+     updatedAt DATETIME, updatedBy TEXT)`.
+   - Each change writes an `extension.enable` or `extension.disable`
+     audit-log row.
+   - With no row, an extension counts as **off**, so making one available
+     never switches it on by itself. The one exception is the 4.0.0
+     upgrade migration, which writes `adult = on` so the existing library
+     doesn't disappear on deploy.
+
+**The effective state is available ∧ configured ∧ enabled**, from
+`isExtensionEnabled(id)` in `registry.ts`. Everything reads through that
+one function, never the env or the table directly.
+
+What a runtime toggle forces on the design:
+- **Nothing may decide at module load.** Nav, slots, the scheduler tick,
+  job hooks, `canPlay` and every shim ask `isExtensionEnabled` per
+  request. It reads an in-memory cache that the toggle action invalidates.
+  MediaVault runs as one container, so a process-local cache is
+  sufficient; the cache also re-reads the table every 60 s, in case of a
+  second process such as a script.
+- **The stream-key regex is built from *available* kinds**, not enabled
+  ones. It is a syntax check and stays fixed for the process's lifetime.
+  Whether a `scene-…` key may be served is decided per request by the
+  shim, which 404s when adult is off.
+- **Switching an extension off mid-use:**
+  - Its engine sessions are stopped through the engine's existing session
+    registry, so a playing scene ends within one segment rather than when
+    the head finishes.
+  - A running scan or sync is allowed to finish.
+  - Its pages 404 on the next navigation.
+  - `revalidatePath("/", "layout")` refreshes the nav, as the Adult opt-in
+    already does.
+- **Switching on** runs nothing by itself. The next scheduler tick picks it
+  up, or the owner presses the library's Scan button.
+- **A member's own opt-in is still required.** Turning Adult on for the
+  house does not grant anyone access. `AdultAccess` and the
+  no-date-of-birth rule still decide per member.
 
 ### The manifest
 
@@ -188,7 +254,7 @@ Each hook replaces a hard-coded list that exists today:
 | `libraries` | `SCAN_MEDIA_TYPES`, `SCAN_KIND`, `SCAN_RUNNER`, `SCAN_PATH_ENV` (`scanner.ts:1287-1313`); `ENRICH_STARTER` (`scheduler.ts:40`); `RunKind` and positional `ALL_KINDS` (`runs.ts`); `RUN_KINDS` (`constants.ts:38`); the library rows in `ScanControls` | scanner, scheduler, runs, `/admin`, `/api/scan/*`, `/api/enrich/*` |
 | `mediaSources` | `MediaKind = "film" \| "scene" \| "episode"` (`playback/types.ts:37`), `KINDS` and `STREAM_KEY_RE` (`stream-key.ts`), `loadRow`'s fall-through (`source.ts:179-209`), `mediaRootEnv` | the engine |
 | `nav` | `ADULT_ITEM` and `NavFlags.hasAdultAccess` (`nav-items.ts`) | `navItemsFor` and `app-shell` |
-| `accountSections` / `adminSections` | the inline `AdultAccessToggle` and `JellyfinClientForm` blocks | `/account` and `/admin` render the slot list |
+| `accountSections` / `adminSections` | the inline `AdultAccessToggle` block and the Jellyfin relink card (`JellyfinClientForm` stays in core as the Trusted OAuth clients form, phase 6) | `/account` and `/admin` render the slot list |
 | `integrations` | the ThePornDB and Jellyfin rows on `/admin` | `/admin` |
 | `jobs` | `triggerJellyfinSync()` after scans (`scanner.ts:689-696`); the "Jellyfin relink" step (`scheduler.ts:98`) | scanner and scheduler |
 | `ageGate` | `if (kind === "scene") return false` (`age-gate.ts:70`) | `canPlay` |
@@ -252,11 +318,15 @@ ESLint `no-restricted-imports`:
   another extension or a route file.
 - **A shim** may import only its own extension and `@/extensions/registry`.
 
-A unit test also imports each extension with it disabled, and asserts that:
+A unit test runs each extension through all three states: not available,
+available but switched off, and on. With it unavailable or off, it asserts
+that:
 - it contributes nothing;
 - its shims 404;
-- `navItemsFor`, `getLatestRuns` and the stream-key regex are identical to
-  a build without it.
+- `navItemsFor` and `getLatestRuns` are identical to a build without it.
+
+A further test flips the `/admin` switch within one process and checks
+that nav, shims and `canPlay` follow on the next request, with no restart.
 
 ## Phases
 
@@ -264,16 +334,26 @@ A unit test also imports each extension with it disabled, and asserts that:
 |---|---|---|
 | 0 | Make the default match production | 0.5 day |
 | 1 | Announce the deprecation | 0.5 day |
-| 2 | Build the extension seam (no behaviour change) | 3 days |
+| 2 | Build the extension seam and the `/admin` switches (no behaviour change) | 4 days |
 | 3 | Adult → extension, and onto the engine | 3 days |
 | 4 | Delete Jellyfin playback | 1.5 days |
-| 5 | Jellyfin → extension, off by default | 2.5 days |
-| 6 | OIDC provider: rename and gate | 1 day |
-| 7 | Docs and the 4.0.0 release | 1 day |
+| 5 | Jellyfin → extension, shipped disabled | 1.5 days |
+| 6 | OIDC provider: generalise and switch off | 1 day |
+| 7 | Docs, the 4.0.0 release, and switching the server off | 1 day |
 
 Phases 0–1 can ship this week. Phase 2 must land before 3 and 5. Phases 3
 and 4 are independent of each other. Phase 5 needs 4, because the sync must
-stop feeding `isFilePlayable` before its columns move.
+stop feeding `isFilePlayable` before its columns go.
+
+**When the Jellyfin server can be switched off.** Once phases 3 and 4 are
+deployed, nothing MediaVault shows or plays depends on it:
+- phase 3 removes the scene page's deep link;
+- phase 4 removes the playback proxy.
+
+The nightly relink and the Adult policy sync keep calling it until phase 5,
+so unset `JELLYFIN_URL` in production at that point. Both then skip quietly,
+as they do today on an unconfigured server. The server can then be stopped
+whenever suits; the infrastructure clean-up is in phase 7.
 
 ### 0. Make the default match production
 
@@ -292,9 +372,10 @@ stop feeding `isFilePlayable` before its columns move.
 
 ### 1. Announce the deprecation
 
-- `/admin` shows a "Jellyfin integration is deprecated and will move to an
-  optional extension in 4.0.0" note on the Jellyfin row whenever
-  `JELLYFIN_URL` is set.
+- `/admin` shows a note on the Jellyfin row whenever `JELLYFIN_URL` is
+  set: "Jellyfin support is deprecated. The server is being retired, and
+  4.0.0 removes playback through it and moves library sync into an
+  extension that is off by default".
 - Log one warning at boot for each of `JELLYFIN_URL`,
   `JELLYFIN_MAX_SESSIONS` and `PLAYBACK_ENGINE=jellyfin`.
 - README: mark the "Jellyfin" section deprecated. The "What it does"
@@ -305,10 +386,22 @@ stop feeding `isFilePlayable` before its columns move.
 Pure refactor. Core behaviour and URLs don't change, and adult and Jellyfin
 stay where they are.
 
-- `src/extensions/{types,registry,events}.ts`, with an empty registry.
-- The Prisma schema becomes a folder (`prisma/schema/core.prisma`). There is
-  no migration. Check that `prisma migrate diff` against the current
-  database is empty.
+- `src/extensions/{types,registry,events,settings}.ts`, with an empty
+  registry.
+- The Prisma schema becomes a folder (`prisma/schema/core.prisma`). Check
+  that `prisma migrate diff` against the current database shows only the
+  one new table.
+- The one migration adds `ExtensionSetting`.
+- An "Extensions" section on `/admin` lists every available extension:
+  - its state (on, off or misconfigured, with the missing variables named);
+  - a switch, for the owner only;
+  - the audit rows for each change.
+
+  It is empty until phase 3.
+- `isExtensionEnabled(id)` has the per-request cache and invalidation
+  described under "Enabling".
+- The engine gains `stopSessionsOfKind(kind)`, which the off switch
+  calls.
 - Core consumers read from the registry, with core's own entries as the
   first contributions:
   - scanner, scheduler and runs tables (`libraries`);
@@ -345,6 +438,13 @@ stay where they are.
     `requireAdultAccessOrResponse`.
   - `AdultPlayButton` switches to `source="jellyfin"` with
     `trackProgress={false}`, as today.
+- **Delete the "Play in Jellyfin" link** on the scene page
+  (`adult/[id]/page.tsx:21-38, 98-108`) and its `jellyfinPlayUrl` import.
+  It has no replacement (decision 2).
+- **Switch state on upgrade.** The same migration writes
+  `ExtensionSetting('adult', enabled = 1)` **only if** any `Scene` rows or
+  `adultLibraryAccess = 1` users exist, so the existing library stays
+  visible after the deploy. A fresh install starts with Adult off.
   - Verify seek, the Remote variant and direct play for MP4 scenes before
     deleting the old routes.
 - **Schema:** move `Scene`, `Performer`, `Studio` and `ScenePerformer` into
@@ -415,10 +515,14 @@ This is V4_PLAN's "Removing Jellyfin" list, with the sync split off:
     PRIMARY KEY(kind, localId))`, where kind is `version`, `episodeFile`
     or `scene`;
   - `JellyfinUserLink(userId TEXT PRIMARY KEY, jellyfinUserId TEXT)`.
-- **Migration:** copy the four existing columns into the link tables, then
-  drop them from `Version`, `EpisodeFile`, `Scene` and `User`. SQLite
-  rebuilds each table, so check it against a copy of the production
-  database, as the two earlier `user` rebuilds were.
+- **Migration:** create the two tables **empty**, then drop the four
+  columns from `Version`, `EpisodeFile`, `Scene` and `User`.
+  - Nothing is copied: with the server retired, the item and user ids
+    point at nothing. If Jellyfin ever returns, a relink rebuilds every
+    link from scratch, and users are re-resolved by email, as
+    `linkJellyfinUserId` does today.
+  - SQLite rebuilds each table, so check the migration against a copy of
+    the production database, as the two earlier `user` rebuilds were.
 - **Code:** move `src/lib/jellyfin.ts` into
   `src/extensions/jellyfin/server/`:
   - The sync writes link rows instead of columns. Its safety guard
@@ -428,35 +532,42 @@ This is V4_PLAN's "Removing Jellyfin" list, with the sync split off:
   - It is contributed as a `jobs` entry: after a scan of the kinds it
     links, and as a scheduler step.
   - Its run kind is `jellyfin:SYNC`, and old `JELLYFIN` rows alias to it.
-- **UI:**
-  - The relink card and the integration row are contributed to `/admin`.
-  - The "Play in Jellyfin" deep link on the scene page becomes a
-    `sceneActions` slot that the adult extension exposes and Jellyfin
-    fills. The adult extension doesn't know Jellyfin exists.
+- **UI:** the relink card and the integration row are contributed to
+  `/admin`, and appear only when the extension is available.
 - **Adult policy sync:** subscribes to `adult.accessChanged`.
   `resolveJellyfinUserId` and `linkJellyfinUserId` write
   `JellyfinUserLink`.
 - `/api/jellyfin-sync` becomes a shim at the same URL, because the README's
   `curl` recipe uses it, and returns 404 when the extension is disabled.
-- **Off by default.** Production turns it off at this release unless the
-  household still wants the adult deep link. That is an open question,
-  below.
+- **Shipped disabled everywhere.** Production removes `JELLYFIN_*` from its
+  env and does not list `jellyfin` in `MEDIAVAULT_EXTENSIONS`, so it
+  doesn't even appear on `/admin`. CI still builds and tests it.
 
-### 6. OIDC provider: rename and gate
+### 6. OIDC provider: generalise and switch off
 
 - `registerJellyfinClient` becomes `registerTrustedOAuthClient`, and
-  `JellyfinClientForm` becomes `TrustedClientForm`. The audit event
+  `JellyfinClientForm` becomes `TrustedClientForm`, with a **Remove**
+  action that deletes the client and revokes its tokens. The audit event
   `jellyfin-client.register` gets a new name, and old rows still render.
-- `OIDC_PROVIDER=on|off`. It defaults to `on` if a trusted client exists,
-  so behaviour doesn't change. When it is off, the BetterAuth
-  `oauthProvider` plugin isn't mounted, `/consent` returns 404, and
-  `/signin` ignores `oauthQuery`.
+- `OIDC_PROVIDER=on|off`, **default off**. When it is off:
+  - the BetterAuth `oauthProvider` plugin isn't mounted;
+  - `/consent` and the `.well-known` OIDC endpoints return 404;
+  - `/signin` ignores `oauthQuery`;
+  - the Trusted OAuth clients section on `/admin` is hidden.
+- On deploy, the owner removes the Jellyfin client from `/admin` before the
+  switch goes off. The `Jwks`, `Oauth*` tables and their rows are left to
+  BetterAuth; nothing is dropped.
 - Fix the stale `scripts/register-jellyfin-client.ts` references in
   `auth.ts` and `consent/page.tsx`.
-- [PASSKEYS_PLAN.md](PASSKEYS_PLAN.md) phase 5 (SSO via passkey) and test
-  B4 in [TEST_PLAN_2026-09.md](docs/TEST_PLAN_2026-09.md) are unaffected.
+- [PASSKEYS_PLAN.md](PASSKEYS_PLAN.md) phase 5 (SSO via passkey) is
+  shelved, since it has no client to test against. Test B4 in
+  [TEST_PLAN_2026-09.md](docs/TEST_PLAN_2026-09.md) is marked "only with
+  `OIDC_PROVIDER=on`".
+- The passkey-nudge and OTP code paths that skip themselves when
+  `oauthQuery` is set stay as they are. They are inert with the provider
+  off, and they are correct if it comes back.
 
-### 7. Docs and release 4.0.0
+### 7. Docs, release 4.0.0 and switching the server off
 
 - Drop `user.adultLibraryAccess` (see phase 3).
 - **README:**
@@ -464,10 +575,16 @@ This is V4_PLAN's "Removing Jellyfin" list, with the sync split off:
   - "Playback" describes the engine.
   - A new "Extensions" section lists `adult` and `jellyfin`, what each
     needs and how to enable it.
-- **DEPLOYMENT.md:**
-  - The firewall rule for TCP 8096 is needed only with the Jellyfin
-    extension.
-  - The `jellyfin.markrwatts.com` Caddy site follows the OIDC decision.
+- **DEPLOYMENT.md:** remove the `JELLYFIN_URL` lines, the SSO section, the
+  `jellyfin.markrwatts.com` Caddy site and its ACME DNS record, and the
+  firewall rule for TCP 8096. Point to the Jellyfin extension's README for
+  what they were.
+- **`ansible-homelab`** (its own change, deployed with or after 4.0.0):
+  - drop the Caddy site and the `_acme-challenge.jellyfin` DNS record;
+  - drop the 192.168.6.53 → 192.168.1.11:8096 firewall rule;
+  - retire `roles/jellyfin` and the `jellyfin-vm`.
+
+  Keep a Proxmox backup of the VM until 4.0.0 has soaked for a week.
 - Mark as historical: PLAN.md, PLAYBACK_PLAN.md "Status", and
   IOS_PLAN.md's video section. V4_PLAN.md phase 6 points here.
 - Each extension's `README.md` covers its env, tables, routes, events and
@@ -478,7 +595,9 @@ This is V4_PLAN's "Removing Jellyfin" list, with the sync split off:
 
 | Want | Do |
 |---|---|
-| Deep links, adult policy sync, nightly relink | `MEDIAVAULT_EXTENSIONS=…,jellyfin`, set `JELLYFIN_URL` and `JELLYFIN_API_KEY`, press Relink on `/admin`. The link tables are repopulated from scratch, so nothing is lost. |
+| Library sync, adult policy sync, nightly relink | Add `jellyfin` to `MEDIAVAULT_EXTENSIONS`, set `JELLYFIN_URL` and `JELLYFIN_API_KEY`, switch it on under Extensions on `/admin`, and press Relink. The link tables fill from scratch. |
+| Sign in to Jellyfin with MediaVault accounts | `OIDC_PROVIDER=on`, register the plugin's redirect URI under Trusted OAuth clients, restore the Caddy site for the HTTPS name. |
+| A "Play in Jellyfin" button | Deleted by decision 2. It would come back as a slot the Adult (or film) page exposes and the Jellyfin extension fills, so neither page imports Jellyfin. |
 | Watch-state sync with Jellyfin | A new job in the Jellyfin extension, plus an `on.playbackProgress` event core would emit from `play-events.ts`. It fits the seam and needs no core change beyond the event. |
 | Jellyfin as the playback backend again | Not supported by the seam on purpose. It would need a `playbackBackend` hook in `playback/routes.ts`; start from the `jellyfin-final` tag. |
 
@@ -486,23 +605,34 @@ This is V4_PLAN's "Removing Jellyfin" list, with the sync split off:
 
 - Every phase keeps `npm run lint`, `typecheck` and `test` green, and runs
   `scripts/e2e-engine.ts` against a real ffmpeg.
-- **Phase 2:** snapshot tests show that `navItemsFor`, the runs summary,
-  the stream-key regex and `/api/v1/me` are byte-identical before and after
-  the refactor.
+- **Phase 2:**
+  - Snapshot tests show that `navItemsFor`, the runs summary, the
+    stream-key regex and `/api/v1/me` are byte-identical before and after
+    the refactor.
+  - Only the owner can flip a switch: the action refuses a member, and the
+    audit row is written.
+  - The cache is invalidated on toggle.
 - **Phase 3:**
   - An adult on/off matrix: nav, `/adult` (200 or 404), the image route,
     session, `/api/v1/me`, and the scanner tick.
   - An age-restricted member with an `AdultAccess` row is refused
     everywhere.
   - Engine playback of a scene: seek, the Remote variant, and stop.
+  - Switching Adult off during playback stops the session and 404s the
+    next segment.
+  - Switching Adult on doesn't grant any member access.
+  - The upgrade migration switches Adult on for a database with scenes and
+    leaves it off for an empty one.
 - **Phase 5:**
-  - The migration round-trips against a copy of the production database,
-    and the link-table row counts equal the non-null column counts before
-    the drop.
+  - The migration runs cleanly against a copy of the production database,
+    and every other column survives the table rebuilds.
   - The existing `jellyfin.test.ts` cases, including the blocked-sweep
-    guard, pass against link tables.
-- **Phase 6:** SSO sign-in from Jellyfin still works with
-  `OIDC_PROVIDER=on`. With it off, `/consent` returns 404.
+    guard, pass against link tables and a stubbed server.
+- **Phase 6:**
+  - With `OIDC_PROVIDER` off, `/consent` and discovery return 404, and a
+    `/signin?…oauth_query` link behaves as a plain sign-in.
+  - With it on, a test client completes the flow. This is the check that
+    the path still works for a reinstated Jellyfin.
 
 ## Risks
 
@@ -518,19 +648,20 @@ This is V4_PLAN's "Removing Jellyfin" list, with the sync split off:
   hooks stay the ones listed. Add a hook when a third real extension needs
   it, not before.
 - **Shims drifting from manifests.** Covered by the route-prefix test.
+- **A runtime switch read at module load.** Anything that caches "is Adult
+  on" beyond one request survives a toggle, and reads as a leak: Adult
+  still showing after the owner switched it off. The rule is that every
+  read goes through `isExtensionEnabled`, and the toggle test above flips
+  it within one process to catch violations.
+- **Switching the server off too early.** Wait until phases 3 and 4 are
+  deployed, and unset `JELLYFIN_URL` first. Before then, the scene page's
+  deep link and `PLAYBACK_ENGINE=jellyfin` (the escape hatch) still point at
+  it.
 
 ## Open questions
 
-1. Is the household's Jellyfin **server** being retired, or only
-   MediaVault's use of it? This decides whether `OIDC_PROVIDER` ships on,
-   whether the Caddy site stays, and whether the Jellyfin extension is
-   enabled in production at 4.0.0.
-2. Is the adult "Play in Jellyfin" deep link still used, now that scenes
-   will play in-app through the engine? If not, the Jellyfin extension can
-   ship disabled everywhere.
-3. `MEDIAVAULT_EXTENSIONS` as the only switch, or also a per-household
-   toggle on `/admin`? Env-only is proposed: it is simpler, and there is
-   one household.
+None outstanding. The three from the first draft were answered on 26 Sep
+(see Status).
 
 ## Later
 
